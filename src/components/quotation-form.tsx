@@ -264,29 +264,24 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     if (!db || !existingActiveDoc || !profile || !pendingFormData) return;
     setIsProcessing(true);
     try {
-        const batch = writeBatch(db);
-        const docRef = doc(db, 'documents', existingActiveDoc.id);
-        
-        batch.update(docRef, { 
+        // 1. Cancel the existing document only (createDocument handles re-linking)
+        await updateDoc(doc(db, 'documents', existingActiveDoc.id), { 
             status: 'CANCELLED', 
             updatedAt: serverTimestamp(), 
-            notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่` 
+            notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
         });
 
-        if (existingActiveDoc.jobId) {
-            const jobRef = doc(db, 'jobs', existingActiveDoc.jobId);
-            batch.update(jobRef, { 
-                salesDocId: deleteField(), 
-                salesDocNo: deleteField(), 
-                salesDocType: deleteField(),
-                lastActivityAt: serverTimestamp()
-            });
+        // 2. Ensure jobId is present in final data
+        const finalData = { ...pendingFormData };
+        if (!finalData.jobId && existingActiveDoc.jobId) {
+            finalData.jobId = existingActiveDoc.jobId;
         }
-        
-        await batch.commit();
+
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
-        await executeSave(pendingFormData);
+        
+        // 3. Create new and link atomically
+        await executeSave(finalData);
     } catch(e: any) { 
         toast({ variant: 'destructive', title: "Error", description: e.message }); 
     } finally { 
@@ -303,15 +298,14 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     toast({ title: "ดึงข้อมูลจาก Template สำเร็จ" });
   };
 
-  const isLoading = isLoadingStore || isLoadingJob || isLoadingDocToEdit || isLoadingCustomers;
-  const isFormLoading = form.formState.isSubmitting || isLoading || isProcessing;
+  const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
     const lowercasedFilter = customerSearch.toLowerCase();
     return customers.filter(c => c.name.toLowerCase().includes(lowercasedFilter) || c.phone.includes(customerSearch));
   }, [customers, customerSearch]);
 
-  if (isLoading && !jobId && !editDocId) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
+  if (isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
   
   return (
     <Form {...form}>

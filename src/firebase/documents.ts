@@ -29,6 +29,7 @@ function normalizeYear(year: number): number {
  * Extracts sequence from strings like "DN2026-0012" -> 12
  */
 function extractSequence(docNo: string): number {
+  if (!docNo) return 0;
   const parts = docNo.split('-');
   if (parts.length < 2) return 0;
   const num = parseInt(parts[parts.length - 1], 10);
@@ -41,10 +42,10 @@ export async function createDocument(
   data: Omit<Document, 'id' | 'docNo' | 'docType' | 'createdAt' | 'updatedAt' | 'status'>,
   userProfile: UserProfile,
   newJobStatus?: JobStatus,
-  options?: { manualDocNo?: string; initialStatus?: string }
+  options?: { manualDocNo?: string; initialStatus?: string; providedDocId?: string }
 ): Promise<{ docId: string; docNo: string }> {
 
-  const newDocRef = doc(collection(db, 'documents'));
+  const newDocRef = options?.providedDocId ? doc(db, 'documents', options.providedDocId) : doc(collection(db, 'documents'));
   const docId = newDocRef.id;
 
   let year = new Date().getFullYear();
@@ -56,39 +57,7 @@ export async function createDocument(
     }
   }
 
-  // 1. Manual Doc No Handling
-  if (options?.manualDocNo) {
-    const qDuplicate = query(collection(db, "documents"), where("docNo", "==", options.manualDocNo), where("docType", "==", docType), limit(1));
-    const snapDuplicate = await getDocs(qDuplicate);
-    if (!snapDuplicate.empty) {
-      throw new Error(`เลขที่เอกสาร '${options.manualDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
-    }
-
-    const docData = sanitizeForFirestore({
-      ...data,
-      docDate: dateInput || new Date().toISOString().split('T')[0],
-      id: docId,
-      docNo: options.manualDocNo,
-      docType,
-      status: options?.initialStatus ?? 'DRAFT',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    
-    await setDoc(newDocRef, docData);
-    if (data.jobId) {
-      await updateDoc(doc(db, 'jobs', data.jobId), { 
-        status: newJobStatus || 'WAITING_CUSTOMER_PICKUP', 
-        salesDocId: docId, 
-        salesDocNo: options.manualDocNo, 
-        salesDocType: docType,
-        lastActivityAt: serverTimestamp() 
-      });
-    }
-    return { docId, docNo: options.manualDocNo };
-  }
-
-  // 2. Auto-Generated Number with Prefix Isolation
+  // Determine the prefix from settings
   const docSettingsSnap = await getDoc(doc(db, 'settings', 'documents'));
   
   const prefixes: Record<DocType, keyof DocumentSettings> = {
@@ -115,37 +84,54 @@ export async function createDocument(
     ? (docSettingsSnap.data()[prefixes[docType]] || defaultPrefixMap[docType]) 
     : defaultPrefixMap[docType]).toUpperCase();
 
-  // Baseline check: Find highest number actually existing in DB for THIS specific prefix and year
   const prefixSearch = `${prefix}${year}-`;
-  let collectionMax = 0;
-  try {
-    const highestQ = query(
-      collection(db, "documents"),
-      where("docType", "==", docType),
-      where("docNo", ">=", prefixSearch),
-      where("docNo", "<=", prefixSearch + "\uf8ff"),
-      orderBy("docNo", "desc"),
-      limit(1)
-    );
-    const highestSnap = await getDocs(highestQ);
-    if (!highestSnap.empty) {
-      collectionMax = extractSequence(highestSnap.docs[0].data().docNo);
-    }
-  } catch (e) {
-    console.warn("Baseline check failed (likely missing index), using counter only", e);
-  }
 
+  // Use Transaction for both manual and auto-generated numbers to ensure atomic Job link
   const result = await runTransaction(db, async (transaction) => {
-    const counterRef = doc(db, 'documentCounters', String(year));
-    const counterSnap = await transaction.get(counterRef);
-    let counters = counterSnap.exists() ? counterSnap.data() : { year };
+    let finalDocNo = options?.manualDocNo;
 
-    const countKey = `${docType}_${prefix}_count`;
-    let lastCount = counters[countKey] || 0;
-    
-    let nextCount = Math.max(lastCount, collectionMax) + 1;
-    let finalDocNo = `${prefix}${year}-${String(nextCount).padStart(4, '0')}`;
+    if (!finalDocNo) {
+      // 1. Find the highest existing sequence for this prefix/year
+      const highestQ = query(
+        collection(db, "documents"),
+        where("docType", "==", docType),
+        where("docNo", ">=", prefixSearch),
+        where("docNo", "<=", prefixSearch + "\uf8ff"),
+        orderBy("docNo", "desc"),
+        limit(1)
+      );
+      const highestSnap = await getDocs(highestQ);
+      let collectionMax = 0;
+      if (!highestSnap.empty) {
+        collectionMax = extractSequence(highestSnap.docs[0].data().docNo);
+      }
 
+      // 2. Check documentCounters
+      const counterRef = doc(db, 'documentCounters', String(year));
+      const counterSnap = await transaction.get(counterRef);
+      let counters = counterSnap.exists() ? counterSnap.data() : { year };
+
+      const countKey = `${docType}_${prefix}_count`;
+      let lastCount = counters[countKey] || 0;
+      
+      let nextCount = Math.max(lastCount, collectionMax) + 1;
+      finalDocNo = `${prefix}${year}-${String(nextCount).padStart(4, '0')}`;
+
+      // Update counters
+      transaction.set(counterRef, { 
+          ...counters, 
+          [countKey]: nextCount
+      }, { merge: true });
+    } else {
+      // Check for manual duplicate inside transaction
+      const qDuplicate = query(collection(db, "documents"), where("docNo", "==", finalDocNo), where("docType", "==", docType), limit(1));
+      const snapDuplicate = await getDocs(qDuplicate);
+      if (!snapDuplicate.empty) {
+        throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
+      }
+    }
+
+    // 3. Prepare and Set the Document
     const docData = sanitizeForFirestore({
       ...data,
       docDate: dateInput || new Date().toISOString().split('T')[0],
@@ -158,18 +144,19 @@ export async function createDocument(
     });
 
     transaction.set(newDocRef, docData);
-    transaction.set(counterRef, { 
-        ...counters, 
-        [countKey]: nextCount
-    }, { merge: true });
 
-    if (data.jobId) {
-      transaction.update(doc(db, 'jobs', data.jobId), {
+    // 4. Update the Job atomically (CRITICAL FIX)
+    // We check for truthy string to avoid empty string IDs
+    const targetJobId = data.jobId;
+    if (targetJobId && typeof targetJobId === 'string' && targetJobId.trim() !== '') {
+      const jobRef = doc(db, 'jobs', targetJobId);
+      transaction.update(jobRef, {
         status: newJobStatus || 'WAITING_APPROVE',
         salesDocId: docId,
         salesDocNo: finalDocNo,
         salesDocType: docType,
         lastActivityAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
     }
 

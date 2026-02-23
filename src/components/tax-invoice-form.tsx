@@ -278,16 +278,29 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     if (!db || !existingTi || !profile || !pendingData) return;
     setIsProcessing(true);
     try {
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'documents', existingTi.id), { status: 'CANCELLED', updatedAt: serverTimestamp(), notes: (existingTi.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่` });
-        if (existingTi.jobId) {
-            batch.update(doc(db, 'jobs', existingTi.jobId), { salesDocId: deleteField(), salesDocNo: deleteField(), salesDocType: deleteField(), lastActivityAt: serverTimestamp() });
+        // 1. Cancel the existing document only (Atomic update in createDocument will handle re-linking)
+        await updateDoc(doc(db, 'documents', existingTi.id), { 
+            status: 'CANCELLED', 
+            updatedAt: serverTimestamp(), 
+            notes: (existingTi.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yy HH:mm')} โดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
+        });
+
+        // 2. Ensure jobId is preserved
+        const finalData = { ...pendingData };
+        if (!finalData.jobId && existingTi.jobId) {
+            finalData.jobId = existingTi.jobId;
         }
-        await batch.commit();
+
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
-        await executeSave(pendingData, isReviewSubmission);
-    } catch(e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); } finally { setIsProcessing(false); }
+        
+        // 3. Execute save which creates new doc and atomically re-links the Job
+        await executeSave(finalData, isReviewSubmission);
+    } catch(e: any) { 
+        toast({ variant: 'destructive', title: "Error", description: e.message }); 
+    } finally { 
+        setIsProcessing(false); 
+    }
   };
 
   const handleFetchFromDoc = async (sourceDoc: DocumentType) => {

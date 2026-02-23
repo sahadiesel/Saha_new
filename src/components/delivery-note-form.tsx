@@ -274,16 +274,29 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     if (!db || !existingActiveDoc || !profile || !pendingFormData) return;
     setIsProcessing(true);
     try {
-        const batch = writeBatch(db);
-        batch.update(doc(db, 'documents', existingActiveDoc.id), { status: 'CANCELLED', updatedAt: serverTimestamp(), notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่` });
-        if (existingActiveDoc.jobId) {
-            batch.update(doc(db, 'jobs', existingActiveDoc.jobId), { salesDocId: deleteField(), salesDocNo: deleteField(), salesDocType: deleteField(), lastActivityAt: serverTimestamp() });
+        // 1. Cancel the existing document only (Don't clear Job fields manually to avoid race conditions)
+        await updateDoc(doc(db, 'documents', existingActiveDoc.id), { 
+            status: 'CANCELLED', 
+            updatedAt: serverTimestamp(), 
+            notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yy HH:mm')} โดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
+        });
+
+        // 2. Ensure jobId is set in the new form data
+        const finalData = { ...pendingFormData };
+        if (!finalData.jobId && existingActiveDoc.jobId) {
+            finalData.jobId = existingActiveDoc.jobId;
         }
-        await batch.commit();
+
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
-        await executeSave(pendingFormData, isReviewSubmission);
-    } catch(e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); } finally { setIsProcessing(false); }
+        
+        // 3. Execute save which will use createDocument transaction to atomically re-link the job
+        await executeSave(finalData, isReviewSubmission);
+    } catch(e: any) { 
+        toast({ variant: 'destructive', title: "Error", description: e.message }); 
+    } finally { 
+        setIsProcessing(false); 
+    }
   };
 
   const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
