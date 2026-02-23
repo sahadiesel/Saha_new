@@ -352,7 +352,27 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
               <div className="flex gap-2">
                 <Popover open={isQtSearchOpen} onOpenChange={setIsQtSearchOpen}>
                   <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => loadAllDocs('QUOTATION')} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
-                  <PopoverContent className="w-80 p-0" align="start"><div className="p-2 border-b"><Input placeholder="ค้นหา..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} /></div><ScrollArea className="h-60">{isSearchingQt ? <Loader2 className="animate-spin m-4" /> : allQuotations.filter(q => q.docNo.includes(qtSearchQuery)).map(q => (<Button key={q.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleFetchFromDoc(q)}><div className="flex flex-col"><span className="font-semibold">{q.docNo}</span><span className="text-[10px]">{q.customerSnapshot?.name}</span></div></Button>))}</ScrollArea></PopoverContent>
+                  <PopoverContent className="w-80 p-0" align="start">
+                    <div className="p-2 border-b">
+                      <Input placeholder="ค้นหาชื่อลูกค้า หรือเลขที่..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} />
+                    </div>
+                    <ScrollArea className="h-60">
+                      {isSearchingQt ? (
+                        <Loader2 className="animate-spin m-4" /> 
+                      ) : allQuotations.filter(q => 
+                          q.docNo.toLowerCase().includes(qtSearchQuery.toLowerCase()) || 
+                          q.customerSnapshot?.name?.toLowerCase().includes(qtSearchQuery.toLowerCase())
+                        ).map(q => (
+                          <Button key={q.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleFetchFromDoc(q)}>
+                            <div className="flex flex-col">
+                              <span className="font-semibold">{q.docNo}</span>
+                              <span className="text-[10px]">{q.customerSnapshot?.name}</span>
+                            </div>
+                          </Button>
+                        ))
+                      }
+                    </ScrollArea>
+                  </PopoverContent>
                 </Popover>
               </div>
             </CardHeader>
