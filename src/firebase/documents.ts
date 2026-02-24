@@ -127,7 +127,10 @@ export async function createDocument(
       const qDuplicate = query(collection(db, "documents"), where("docNo", "==", finalDocNo), where("docType", "==", docType), limit(1));
       const snapDuplicate = await getDocs(qDuplicate);
       if (!snapDuplicate.empty) {
-        throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
+        // If we are editing the same doc, it's fine.
+        if (snapDuplicate.docs[0].id !== docId) {
+          throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
+        }
       }
     }
 
@@ -145,8 +148,7 @@ export async function createDocument(
 
     transaction.set(newDocRef, docData);
 
-    // 4. Update the Job atomically (CRITICAL FIX)
-    // We check for truthy string to avoid empty string IDs
+    // 4. Update the Job atomically
     const targetJobId = data.jobId;
     if (targetJobId && typeof targetJobId === 'string' && targetJobId.trim() !== '') {
       const jobRef = doc(db, 'jobs', targetJobId);

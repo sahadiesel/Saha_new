@@ -37,6 +37,7 @@ import {
 
 import { createDocument } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
+import { safeFormat } from "@/lib/date-utils";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ"),
@@ -199,7 +200,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   const remainingAmount = useMemo(() => (grandTotal || 0) - currentSuggestedTotal, [grandTotal, currentSuggestedTotal]);
 
   const executeSave = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
-    const customerSnapshot = currentCustomer || docToEdit?.customerSnapshot || job?.customerSnapshot;
+    const customerSnapshot = customers.find(c => c.id === data.customerId) || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
@@ -274,14 +275,14 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     if (!db || !existingActiveDoc || !profile || !pendingFormData) return;
     setIsProcessing(true);
     try {
-        // 1. Cancel the existing document only (Don't clear Job fields manually to avoid race conditions)
+        // 1. Cancel the existing document only
         await updateDoc(doc(db, 'documents', existingActiveDoc.id), { 
             status: 'CANCELLED', 
             updatedAt: serverTimestamp(), 
             notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yy HH:mm')} โดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
         });
 
-        // 2. Ensure jobId is set in the new form data
+        // 2. Ensure jobId is preserved
         const finalData = { ...pendingFormData };
         if (!finalData.jobId && existingActiveDoc.jobId) {
             finalData.jobId = existingActiveDoc.jobId;
@@ -290,7 +291,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
         
-        // 3. Execute save which will use createDocument transaction to atomically re-link the job
+        // 3. Execute save which creates new doc and atomically re-links the Job
         await executeSave(finalData, isReviewSubmission);
     } catch(e: any) { 
         toast({ variant: 'destructive', title: "Error", description: e.message }); 
@@ -347,13 +348,11 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             </div>
             <div className="space-y-4">
               <h1 className="text-2xl font-bold text-right text-primary">ใบส่งของชั่วคราว</h1>
-              {isEditing && (
-                <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>
-              )}
+              {isEditing && <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>}
               <FormField control={form.control} name="issueDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>วันที่ออกเอกสาร</FormLabel>
-                  <FormControl><Input type="date" {...field} /></FormControl>
+                  <FormControl><Input type="date" {...field} disabled={isLocked} /></FormControl>
                 </FormItem>
               )} />
             </div>
@@ -417,10 +416,12 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                   </Popover>
                 </FormItem>
               )} />
-              <Table>
-                <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
-                <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
-              </Table>
+              <div className="border rounded-md overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
+                  <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
+                </Table>
+              </div>
               <Button type="button" variant="outline" size="sm" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
             </CardContent>
           </Card>

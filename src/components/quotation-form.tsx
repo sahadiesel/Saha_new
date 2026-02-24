@@ -264,14 +264,14 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     if (!db || !existingActiveDoc || !profile || !pendingFormData) return;
     setIsProcessing(true);
     try {
-        // 1. Cancel the existing document only (createDocument handles re-linking)
+        // 1. Cancel the existing document only
         await updateDoc(doc(db, 'documents', existingActiveDoc.id), { 
             status: 'CANCELLED', 
             updatedAt: serverTimestamp(), 
             notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
         });
 
-        // 2. Ensure jobId is present in final data
+        // 2. Ensure jobId is preserved
         const finalData = { ...pendingFormData };
         if (!finalData.jobId && existingActiveDoc.jobId) {
             finalData.jobId = existingActiveDoc.jobId;
@@ -326,9 +326,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             </div>
             <div className="space-y-4">
               <h1 className="text-2xl font-bold text-right text-primary">ใบเสนอราคา</h1>
-              {isEditing && (
-                <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>
-              )}
+              {isEditing && <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>}
               <FormField control={form.control} name="issueDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>วันที่ออกเอกสาร</FormLabel>
@@ -489,7 +487,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
               <Separator/>
               <div className="flex justify-between items-center text-lg font-bold">
-                <span>ยอดรวมสุทธิ</span>
+                <span>ยอดสุทธิรวมทั้งสิ้น</span>
                 <span>{formatCurrency(form.watch('grandTotal'))}</span>
               </div>
             </div>

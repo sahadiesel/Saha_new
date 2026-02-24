@@ -23,7 +23,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -39,6 +38,7 @@ import {
 
 import { createDocument } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
+import { safeFormat } from "@/lib/date-utils";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ"),
@@ -278,7 +278,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     if (!db || !existingTi || !profile || !pendingData) return;
     setIsProcessing(true);
     try {
-        // 1. Cancel the existing document only (Atomic update in createDocument will handle re-linking)
+        // 1. Cancel the existing document only
         await updateDoc(doc(db, 'documents', existingTi.id), { 
             status: 'CANCELLED', 
             updatedAt: serverTimestamp(), 
@@ -351,13 +351,11 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
             </div>
             <div className="space-y-4">
               <h1 className="text-2xl font-bold text-right text-primary">ใบกำกับภาษี</h1>
-              {isEditing && (
-                <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>
-              )}
+              {isEditing && <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>}
               <FormField control={form.control} name="issueDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>วันที่ออกเอกสาร</FormLabel>
-                  <FormControl><Input type="date" {...field} /></FormControl>
+                  <FormControl><Input type="date" {...field} disabled={isLocked} /></FormControl>
                 </FormItem>
               )} />
             </div>
@@ -421,10 +419,12 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
                   </Popover>
                 </FormItem>
               )} />
-              <Table>
-                <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
-                <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
-              </Table>
+              <div className="border rounded-md overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
+                  <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
+                </Table>
+              </div>
               <Button type="button" variant="outline" size="sm" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
             </CardContent>
           </Card>
