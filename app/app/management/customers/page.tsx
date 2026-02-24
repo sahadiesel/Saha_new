@@ -37,6 +37,7 @@ import { ACQUISITION_SOURCES } from "@/lib/constants";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn } from "@/lib/utils";
@@ -440,6 +441,42 @@ function CustomersContent() {
                                 <FormItem><FormLabel>เบอร์โทรศัพท์ (บิล)</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </div>
+
+                        <FormField
+                            control={form.control}
+                            name="taxBranchType"
+                            render={({ field }) => (
+                                <FormItem className="space-y-3">
+                                <FormLabel>สถานะสถานประกอบการ</FormLabel>
+                                <FormControl>
+                                    <RadioGroup
+                                    onValueChange={field.onChange}
+                                    value={field.value}
+                                    className="flex flex-col space-y-1"
+                                    >
+                                    <FormItem className="flex items-center space-x-3 space-y-0">
+                                        <FormControl><RadioGroupItem value="HEAD_OFFICE" /></FormControl>
+                                        <Label className="font-normal cursor-pointer">สำนักงานใหญ่</Label>
+                                    </FormItem>
+                                    <FormItem className="flex items-center space-x-3 space-y-0">
+                                        <FormControl><RadioGroupItem value="BRANCH" /></FormControl>
+                                        <Label className="font-normal cursor-pointer">สาขา</Label>
+                                    </FormItem>
+                                    </RadioGroup>
+                                </FormControl>
+                                </FormItem>
+                            )}
+                        />
+
+                        {taxBranchType === 'BRANCH' && (
+                            <FormField name="taxBranchNo" control={form.control} render={({ field }) => (
+                                <FormItem className="animate-in fade-in slide-in-from-left-1">
+                                    <FormLabel>รหัสสาขา (5 หลัก)</FormLabel>
+                                    <FormControl><Input {...field} value={field.value ?? ''} placeholder="เช่น 00001" maxLength={5} /></FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />
+                        )}
                     </div>
                 )}
                 </form>
