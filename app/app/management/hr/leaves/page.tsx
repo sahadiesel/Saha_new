@@ -327,7 +327,7 @@ export default function ManagementHRLeavesPage() {
         } catch (e: any) {
             console.error("Failed to fetch summary extras:", e);
             if (e.message?.includes('requires an index')) {
-                const urlMatch = error.message.match(/https?:\/\/[^\s]+/);
+                const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
                 if (urlMatch) setIndexCreationUrl(urlMatch[0]);
             }
         } finally {
@@ -397,27 +397,20 @@ export default function ManagementHRLeavesPage() {
             const dayStr = format(day, 'yyyy-MM-dd');
             const isToday = dayStr === format(today, 'yyyy-MM-dd');
             
-            // 1. Skip future days
             if (isAfter(day, today)) return;
             
-            // 2. Skip today if it's before the end-of-day cutoff AND they haven't scanned yet
             if (isToday) {
                 const now = new Date();
                 const cutoff = set(now, { hours: 23, minutes: 50, seconds: 0 });
                 if (isBefore(now, cutoff) && !attendanceDates.has(dayStr)) return;
             }
 
-            // Skip if before hire date
             if (user.hr?.startDate && isBefore(day, parseISO(user.hr.startDate))) return;
-            // Skip if after end date
             if (user.hr?.endDate && isBefore(parseISO(user.hr.endDate), day)) return;
-            // Skip holidays
             if (periodHolidays.has(dayStr)) return;
-            // Skip weekends
             const isWeekendDay = (weekendMode === 'SAT_SUN' && (isSaturday(day) || isSunday(day))) || (weekendMode === 'SUN_ONLY' && isSunday(day));
             if (isWeekendDay) return;
             
-            // Check for leave on this day (String comparison is more reliable)
             const onLeaveOnThisDay = userApprovedLeaves.find(l => dayStr >= l.startDate && dayStr <= l.endDate);
             
             let leaveUnits = 0;
@@ -433,10 +426,9 @@ export default function ManagementHRLeavesPage() {
                 else if (onLeaveOnThisDay.leaveType === 'VACATION') vacationDays += leaveUnits;
                 totalLeaveCount += leaveUnits;
                 
-                if (leaveUnits === 1) return; // Full day leave covers it
+                if (leaveUnits === 1) return;
             }
 
-            // If no clock-in record found for a work day -> Absent
             if (!attendanceDates.has(dayStr)) {
                 absentDays += (1 - leaveUnits);
             }
@@ -466,38 +458,8 @@ export default function ManagementHRLeavesPage() {
     return { leaveSummary: summary, filteredLeaves: filtered, yearOptions: sortedYears };
   }, [allLeaves, users, selectedYear, selectedMonth, filters, periodAttendance, periodAdjustments, periodHolidays, hrSettings]);
 
-  const overLimitDetails = useMemo(() => {
-    if (!approvingLeave || !hrSettings || !allLeaves || !users) return null;
-
-    const leave = approvingLeave;
-    const approvedLeavesThisYear = allLeaves.filter(l =>
-        l.userId === leave.userId && 
-        (l.year === leave.year || (l.startDate && getYear(parseISO(l.startDate)) === leave.year)) && 
-        l.leaveType === leave.leaveType && 
-        l.status === 'APPROVED'
-    );
-    const daysTaken = approvedLeavesThisYear.reduce((sum, l) => sum + (l.days || 0), 0);
-
-    const policy = hrSettings.leavePolicy?.leaveTypes?.[leave.leaveType];
-    const entitlement = policy?.annualEntitlement ?? 0;
-    
-    if (entitlement > 0 && (daysTaken + leave.days) > entitlement) {
-        const salary = users.find(u => u.id === leave.userId)?.hr?.salaryMonthly;
-        const deductionBaseDays = policy?.overLimitHandling?.salaryDeductionBaseDays ?? 26;
-        let deductionAmount = 0;
-        const overDays = (daysTaken + leave.days) - entitlement;
-        
-        if (policy?.overLimitHandling?.mode === 'DEDUCT_SALARY' && salary) {
-            deductionAmount = (salary / deductionBaseDays) * overDays;
-        }
-        return { mode: policy?.overLimitHandling?.mode, amount: deductionAmount, days: overDays };
-    }
-    return null;
-  }, [approvingLeave, hrSettings, allLeaves, users]);
-
   const handleApprove = async () => {
     if (!db || !adminProfile || !approvingLeave) return;
-
     setIsSubmitting(true);
     try {
       const leaveRef = doc(db, 'hrLeaves', approvingLeave.id);
@@ -505,7 +467,6 @@ export default function ManagementHRLeavesPage() {
         status: 'APPROVED',
         approvedByName: adminProfile.displayName,
         approvedAt: serverTimestamp(),
-        overLimit: !!overLimitDetails,
         updatedAt: serverTimestamp(),
       });
       toast({ title: 'อนุมัติใบลาสำเร็จ' });
@@ -545,16 +506,10 @@ export default function ManagementHRLeavesPage() {
     try {
         let days = differenceInCalendarDays(new Date(data.endDate), new Date(data.startDate)) + 1;
         if (data.isHalfDay) days = 0.5;
-        
         const year = getYear(new Date(data.startDate));
 
         if (editingLeave) {
-            await updateDoc(doc(db, 'hrLeaves', editingLeave.id), {
-                ...data,
-                days,
-                year,
-                updatedAt: serverTimestamp(),
-            });
+            await updateDoc(doc(db, 'hrLeaves', editingLeave.id), { ...data, days, year, updatedAt: serverTimestamp() });
             toast({ title: "แก้ไขใบลาสำเร็จ" });
             setEditingLeave(null);
         } else if (creatingForUser) {
@@ -575,9 +530,7 @@ export default function ManagementHRLeavesPage() {
         }
     } catch (e: any) {
         toast({ variant: 'destructive', title: "ทำรายการไม่สำเร็จ", description: e.message });
-    } finally {
-        setIsSubmitting(false);
-    }
+    } finally { setIsSubmitting(false); }
   };
 
   const confirmDelete = async () => {
@@ -591,16 +544,6 @@ export default function ManagementHRLeavesPage() {
     } finally {
       setIsSubmitting(false);
       setDeletingLeave(null);
-    }
-  };
-
-  const getStatusVariant = (status: LeaveStatus) => {
-    switch (status) {
-      case 'SUBMITTED': return 'secondary';
-      case 'APPROVED': return 'default';
-      case 'REJECTED': return 'destructive';
-      case 'CANCELLED': return 'outline';
-      default: return 'outline';
     }
   };
 
@@ -624,56 +567,25 @@ export default function ManagementHRLeavesPage() {
                     <CardTitle>สรุปวันลาและวันขาดสะสม</CardTitle>
                     <CardDescription>
                       {selectedMonth === "ALL" 
-                        ? `ข้อมูลเฉพาะพนักงานที่ต้องสแกนนิ้วประจำปี ${selectedYear}`
-                        : `ข้อมูลเฉพาะพนักงานที่ต้องสแกนนิ้วประจำเดือน ${monthOptions.find(m => m.value === selectedMonth)?.label} ${selectedYear}`
+                        ? `ประจำปี ${selectedYear}`
+                        : `ประจำเดือน ${monthOptions.find(m => m.value === selectedMonth)?.label} ${selectedYear}`
                       }
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
                     {isLoadingExtras && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-                    <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                        <SelectTrigger className="w-[150px]"><SelectValue placeholder="เลือกเดือน..." /></SelectTrigger>
-                        <SelectContent>{monthOptions.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
-                    </Select>
-                    <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number(v))}>
-                        <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
-                    </Select>
+                    <Select value={selectedMonth} onValueChange={setSelectedMonth}><SelectTrigger className="w-[150px]"><SelectValue placeholder="เลือกเดือน..." /></SelectTrigger><SelectContent>{monthOptions.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent></Select>
+                    <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number(v))}><SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger><SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
                   </div>
                 </div>
             </CardHeader>
             <CardContent>
-                {indexCreationUrl && (
-                    <Alert variant="destructive" className="mb-4">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertTitle>ต้องสร้างดัชนี (Index) ก่อนดูสรุป</AlertTitle>
-                        <AlertDescription className="flex flex-col gap-2">
-                            <span>ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงข้อมูลสแกนนิ้ว กรุณากดปุ่มด้านล่างเพื่อสร้าง Index</span>
-                            <Button asChild variant="outline" size="sm" className="w-fit">
-                                <a href={indexCreationUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> สร้าง Index</a>
-                            </Button>
-                        </AlertDescription>
-                    </Alert>
-                )}
                 <Table>
-                <TableHeader>
-                    <TableRow>
-                    <TableHead>พนักงาน</TableHead>
-                    <TableHead className="text-center">ป่วย (วัน)</TableHead>
-                    <TableHead className="text-center">กิจ (วัน)</TableHead>
-                    <TableHead className="text-center">พักร้อน (วัน)</TableHead>
-                    <TableHead className="text-center">รวมลา (วัน)</TableHead>
-                    <TableHead className="text-center text-destructive font-bold">วันขาด (Absent)</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
-                    </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead className="text-center">ป่วย (วัน)</TableHead><TableHead className="text-center">กิจ (วัน)</TableHead><TableHead className="text-center">พักร้อน (วัน)</TableHead><TableHead className="text-center">รวมลา (วัน)</TableHead><TableHead className="text-center text-destructive font-bold">วันขาด (Absent)</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
                 <TableBody>
                     {leaveSummary.length > 0 ? leaveSummary.map(s => (
                     <TableRow key={s.userId} className="hover:bg-muted/30 transition-colors">
-                        <TableCell className="font-medium">
-                            {s.userName}
-                            <p className="text-[10px] text-muted-foreground">{deptLabel(s.user.department)}</p>
-                        </TableCell>
+                        <TableCell className="font-medium">{s.userName}<p className="text-[10px] text-muted-foreground">{deptLabel(s.user.department)}</p></TableCell>
                         <TableCell className="text-center">{s.SICK}</TableCell>
                         <TableCell className="text-center">{s.BUSINESS}</TableCell>
                         <TableCell className="text-center">{s.VACATION}</TableCell>
@@ -681,21 +593,15 @@ export default function ManagementHRLeavesPage() {
                         <TableCell className="text-center font-bold text-destructive bg-destructive/5">{s.ABSENT}</TableCell>
                         <TableCell className="text-right">
                             <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4"/></Button>
-                                </DropdownMenuTrigger>
+                                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4"/></Button></DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onSelect={() => { setFilters(f => ({ ...f, userId: s.userId })); setActiveTab('requests'); }}>
-                                        <FileText className="mr-2 h-4 w-4"/> ดูรายการใบลา
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => setCreatingForUser(s.user)}>
-                                        <PlusCircle className="mr-2 h-4 w-4"/> สร้างใบลาให้ (แก้ขาดงาน)
-                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => { setFilters(f => ({ ...f, userId: s.userId })); setActiveTab('requests'); }}><FileText className="mr-2 h-4 w-4"/> ดูรายการใบลา</DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => setCreatingForUser(s.user)}><PlusCircle className="mr-2 h-4 w-4"/> สร้างใบลาให้</DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground">ไม่พบข้อมูลพนักงานที่ต้องสแกนในคาบเวลาที่เลือก</TableCell></TableRow>}
+                    )) : <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground">ไม่พบข้อมูลพนักงาน</TableCell></TableRow>}
                 </TableBody>
                 </Table>
             </CardContent>
@@ -703,99 +609,30 @@ export default function ManagementHRLeavesPage() {
         </TabsContent>
         <TabsContent value="requests" className="space-y-4">
             <Card>
-            <CardHeader>
-                <CardTitle>คำขอลาทั้งหมด</CardTitle>
-                <CardDescription>ตรวจสอบและจัดการสถานะคำขอลา</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>คำขอลาทั้งหมด</CardTitle></CardHeader>
             <CardContent>
                 <div className="flex flex-wrap gap-4 mb-6">
-                <div className="flex flex-col gap-1.5 flex-1 min-w-[100px] max-w-[120px]">
-                  <Label className="text-xs">ปี</Label>
-                  <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number(v))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]">
-                  <Label className="text-xs">สถานะ</Label>
-                  <Select value={filters.status} onValueChange={(v) => setFilters(f => ({...f, status: v}))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="ALL">ทุกสถานะ</SelectItem>{LEAVE_STATUSES.map(s=><SelectItem key={s} value={s}>{leaveStatusLabel(s)}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
-                  <Label className="text-xs">พนักงาน</Label>
-                  <Select value={filters.userId} onValueChange={(v) => setFilters(f => ({...f, userId: v}))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>{users?.map(u=><SelectItem key={u.id} value={u.id}>{u.displayName}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-[100px] max-w-[120px]"><Label className="text-xs">ปี</Label><Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select></div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]"><Label className="text-xs">สถานะ</Label><Select value={filters.status} onValueChange={(v) => setFilters(f => ({...f, status: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">ทุกสถานะ</SelectItem>{LEAVE_STATUSES.map(s=><SelectItem key={s} value={s}>{leaveStatusLabel(s)}</SelectItem>)}</SelectContent></Select></div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]"><Label className="text-xs">พนักงาน</Label><Select value={filters.userId} onValueChange={(v) => setFilters(f => ({...f, userId: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>{users?.map(u=><SelectItem key={u.id} value={u.id}>{u.displayName}</SelectItem>)}</SelectContent></Select></div>
                 </div>
                 <Table>
-                <TableHeader>
-                    <TableRow>
-                    <TableHead>พนักงาน</TableHead>
-                    <TableHead>ประเภท</TableHead>
-                    <TableHead>วันที่ลา</TableHead>
-                    <TableHead className="text-center">จำนวนวัน</TableHead>
-                    <TableHead>สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {filteredLeaves.length > 0 ? filteredLeaves.map(leave => (
-                    <TableRow key={leave.id}>
-                        <TableCell className="font-medium">{leave.userName}</TableCell>
-                        <TableCell>
-                            {leaveTypeLabel(leave.leaveType)}
-                            {leave.isHalfDay && <Badge variant="outline" className="ml-2 text-[9px] h-4">0.5 วัน</Badge>}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                            {safeFormat(parseISO(leave.startDate), 'dd/MM/yy')} 
-                            {!leave.isHalfDay && leave.endDate !== leave.startDate && ` - ${safeFormat(parseISO(leave.endDate), 'dd/MM/yy')}`}
-                            {leave.isHalfDay && <span className="ml-1 text-muted-foreground text-[10px]">({leave.halfDaySession === 'MORNING' ? 'ครึ่งเช้า' : 'ครึ่งบ่าย'})</span>}
-                        </TableCell>
-                        <TableCell className="text-center">{leave.days}</TableCell>
-                        <TableCell><Badge variant={getStatusVariant(leave.status)}>{leaveStatusLabel(leave.status)}</Badge></TableCell>
+                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead>ประเภท</TableHead><TableHead>วันที่ลา</TableHead><TableHead className="text-center">จำนวนวัน</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+                <TableBody>{filteredLeaves.length > 0 ? filteredLeaves.map(leave => (
+                    <TableRow key={leave.id}><TableCell className="font-medium">{leave.userName}</TableCell><TableCell>{leaveTypeLabel(leave.leaveType)}{leave.isHalfDay && <Badge variant="outline" className="ml-2 text-[9px] h-4">0.5 วัน</Badge>}</TableCell><TableCell className="text-sm">{safeFormat(parseISO(leave.startDate), 'dd/MM/yy')} {!leave.isHalfDay && leave.endDate !== leave.startDate && ` - ${safeFormat(parseISO(leave.endDate), 'dd/MM/yy')}`}</TableCell><TableCell className="text-center">{leave.days}</TableCell><TableCell><Badge variant={leave.status === 'APPROVED' ? 'default' : leave.status === 'REJECTED' ? 'destructive' : 'secondary'}>{leaveStatusLabel(leave.status)}</Badge></TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
+                            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                                <DropdownMenuItem onSelect={() => setEditingLeave(leave)}>
-                                    <Edit className="mr-2 h-4 w-4" />
-                                    <span>แก้ไขข้อมูล</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator/>
-                                <DropdownMenuItem onSelect={() => setApprovingLeave(leave)} disabled={leave.status !== 'SUBMITTED'}>
-                                    <CheckCircle className="mr-2 h-4 w-4 text-green-600" />
-                                    <span>อนุมัติการลา</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => setRejectingLeave(leave)} className="text-destructive focus:text-destructive" disabled={leave.status !== 'SUBMITTED'}>
-                                    <XCircle className="mr-2 h-4 w-4" />
-                                    <span>ไม่อนุมัติ</span>
-                                </DropdownMenuItem>
-                              {adminProfile?.role === 'ADMIN' && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onSelect={() => setDeletingLeave(leave)}
-                                  >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    <span>ลบรายการ</span>
-                                  </DropdownMenuItem>
-                                </>
-                              )}
+                                <DropdownMenuItem onSelect={() => setEditingLeave(leave)}><Edit className="mr-2 h-4 w-4" />แก้ไข</DropdownMenuItem>
+                                <DropdownMenuSeparator/><DropdownMenuItem onSelect={() => setApprovingLeave(leave)} disabled={leave.status !== 'SUBMITTED'}><CheckCircle className="mr-2 h-4 w-4 text-green-600" />อนุมัติ</DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => setRejectingLeave(leave)} className="text-destructive" disabled={leave.status !== 'SUBMITTED'}><XCircle className="mr-2 h-4 w-4" />ไม่อนุมัติ</DropdownMenuItem>
+                                <DropdownMenuSeparator /><DropdownMenuItem className="text-destructive" onSelect={() => setDeletingLeave(leave)}><Trash2 className="mr-2 h-4 w-4" />ลบ</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={6} className="text-center h-24 text-muted-foreground">ไม่พบคำขอที่ตรงกับตัวกรอง</TableCell></TableRow>}
-                </TableBody>
+                    )) : <TableRow><TableCell colSpan={6} className="text-center h-24 text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
                 </Table>
             </CardContent>
             </Card>
@@ -803,78 +640,21 @@ export default function ManagementHRLeavesPage() {
         
         {(editingLeave || creatingForUser) && (
             <LeaveManageDialog 
-                leave={editingLeave} 
-                targetUser={creatingForUser}
-                isOpen={!!editingLeave || !!creatingForUser} 
-                onClose={() => { setEditingLeave(null); setCreatingForUser(null); }} 
-                onConfirm={handleAdminManageSave} 
-                isSubmitting={isSubmitting} 
+                leave={editingLeave} targetUser={creatingForUser}
+                isOpen={!!editingLeave || !!creatingForUser} onClose={() => { setEditingLeave(null); setCreatingForUser(null); }} 
+                onConfirm={handleAdminManageSave} isSubmitting={isSubmitting} 
             />
         )}
 
         <AlertDialog open={!!approvingLeave} onOpenChange={(open) => !open && setApprovingLeave(null)}>
-            <AlertDialogContent>
-            <AlertDialogHeader>
-                <AlertDialogTitle>ยืนยันการอนุมัติ</AlertDialogTitle>
-                <AlertDialogDescription>
-                คุณต้องการอนุมัติใบลาของ <span className="font-bold">{approvingLeave?.userName}</span> ใช่หรือไม่?
-                </AlertDialogDescription>
-            </AlertDialogHeader>
-            {overLimitDetails && (
-                <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                    <div className="flex items-start gap-3">
-                        <ShieldAlert className="h-5 w-5 text-destructive mt-0.5" />
-                        <div>
-                            <h4 className="font-semibold text-destructive">คำเตือน: วันลาเกินสิทธิ์</h4>
-                            <p className="text-destructive/80 text-sm">การอนุมัตินี้จะทำให้วันลาเกินจำนวนสิทธิ์ {overLimitDetails.days} วัน</p>
-                            {overLimitDetails.mode === 'DEDUCT_SALARY' && (
-                                <p className="text-destructive/80 text-sm mt-1">ยอดหักเงินเดือนโดยประมาณ: {overLimitDetails.amount.toLocaleString('th-TH', { style: 'currency', currency: 'THB' })}</p>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-            <AlertDialogFooter>
-                <AlertDialogCancel disabled={isSubmitting}>ยกเลิก</AlertDialogCancel>
-                <AlertDialogAction onClick={handleApprove} disabled={isSubmitting}>
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันการอนุมัติ'}
-                </AlertDialogAction>
-            </AlertDialogFooter>
-            </AlertDialogContent>
+            <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยืนยันการอนุมัติ</AlertDialogTitle><AlertDialogDescription>ต้องการอนุมัติใบลาของ <span className="font-bold">{approvingLeave?.userName}</span> หรือไม่?</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={handleApprove}>ยืนยัน</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
         </AlertDialog>
+        
         <Dialog open={!!rejectingLeave} onOpenChange={(open) => !open && setRejectingLeave(null)}>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>ระบุเหตุผลที่ไม่อนุมัติ</DialogTitle>
-                    <DialogDescription>สำหรับ: {rejectingLeave?.userName}</DialogDescription>
-                </DialogHeader>
-                <div className="py-4">
-                    <Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="ระบุรายละเอียดเหตุผล..."/>
-                </div>
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => setRejectingLeave(null)} disabled={isSubmitting}>ยกเลิก</Button>
-                    <Button variant="destructive" onClick={handleReject} disabled={isSubmitting || !rejectReason}>
-                        {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : 'ยืนยันไม่อนุมัติ'}
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
+            <DialogContent><DialogHeader><DialogTitle>เหตุผลที่ไม่อนุมัติ</DialogTitle></DialogHeader><div className="py-4"><Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="ระบุรายละเอียด..."/></div>
+            <DialogFooter><Button variant="outline" onClick={() => setRejectingLeave(null)}>ยกเลิก</Button><Button variant="destructive" onClick={handleReject} disabled={!rejectReason}>ยืนยันไม่อนุมัติ</Button></DialogFooter></DialogContent>
         </Dialog>
-         <AlertDialog open={!!deletingLeave} onOpenChange={(open) => !open && setDeletingLeave(null)}>
-            <AlertDialogContent>
-            <AlertDialogHeader>
-                <AlertDialogTitle>ยืนยันการลบรายการ</AlertDialogTitle>
-                <AlertDialogDescription>
-                ต้องการลบรายการลาของ {deletingLeave?.userName} ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้
-                </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-                <AlertDialogCancel disabled={isSubmitting}>ยกเลิก</AlertDialogCancel>
-                <AlertDialogAction onClick={confirmDelete} disabled={isSubmitting} className="bg-destructive hover:bg-destructive/90">
-                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : 'ยืนยันลบข้อมูล'}
-                </AlertDialogAction>
-            </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
         </Tabs>
     </>
   );
