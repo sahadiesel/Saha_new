@@ -12,10 +12,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, HelpCircle } from "lucide-react";
+import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, Filter } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { PurchaseDoc } from "@/lib/types";
 import { WithId } from "@/firebase/firestore/use-collection";
 import { safeFormat } from "@/lib/date-utils";
@@ -54,6 +55,7 @@ export default function PurchaseDocsListPage() {
   const [docs, setDocs] = useState<WithId<PurchaseDoc>[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const [docToDelete, setDocToDelete] = useState<WithId<PurchaseDoc> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -75,15 +77,24 @@ export default function PurchaseDocsListPage() {
   }, [db, toast]);
 
   const filteredDocs = useMemo(() => {
-    if (!searchTerm.trim()) return docs;
-    const lowercasedFilter = searchTerm.toLowerCase();
-    return docs.filter(doc =>
-      doc.docNo.toLowerCase().includes(lowercasedFilter) ||
-      doc.vendorSnapshot.shortName.toLowerCase().includes(lowercasedFilter) ||
-      doc.vendorSnapshot.companyName.toLowerCase().includes(lowercasedFilter) ||
-      (doc.invoiceNo && doc.invoiceNo.toLowerCase().includes(lowercasedFilter))
-    );
-  }, [docs, searchTerm]);
+    let result = [...docs];
+
+    if (statusFilter !== "ALL") {
+      result = result.filter(doc => doc.status === statusFilter);
+    }
+
+    if (searchTerm.trim()) {
+      const lowercasedFilter = searchTerm.toLowerCase();
+      result = result.filter(doc =>
+        doc.docNo.toLowerCase().includes(lowercasedFilter) ||
+        doc.vendorSnapshot.shortName.toLowerCase().includes(lowercasedFilter) ||
+        doc.vendorSnapshot.companyName.toLowerCase().includes(lowercasedFilter) ||
+        (doc.invoiceNo && doc.invoiceNo.toLowerCase().includes(lowercasedFilter))
+      );
+    }
+    
+    return result;
+  }, [docs, searchTerm, statusFilter]);
 
   const handleDelete = async () => {
     if (!db || !docToDelete) return;
@@ -112,14 +123,34 @@ export default function PurchaseDocsListPage() {
 
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="ค้นหาจากเลขที่เอกสาร, ชื่อร้านค้า, เลขที่บิล..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหาจากเลขที่เอกสาร, ชื่อร้านค้า, เลขที่บิล..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-full sm:w-[200px]">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <SelectValue placeholder="กรองตามสถานะ..." />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">ทุกสถานะ</SelectItem>
+                <SelectItem value="DRAFT">ฉบับร่าง</SelectItem>
+                <SelectItem value="PENDING_REVIEW">รอตรวจสอบ</SelectItem>
+                <SelectItem value="REJECTED">ตีกลับแก้ไข</SelectItem>
+                <SelectItem value="APPROVED">อนุมัติแล้ว</SelectItem>
+                <SelectItem value="UNPAID">รอชำระเงิน</SelectItem>
+                <SelectItem value="PAID">จ่ายแล้ว</SelectItem>
+                <SelectItem value="CANCELLED">ยกเลิก</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="border rounded-md">
