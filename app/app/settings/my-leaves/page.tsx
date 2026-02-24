@@ -193,7 +193,8 @@ export default function MyLeavesPage() {
     if (!db) return;
     setCancellingId(leaveId);
     try {
-      await updateDoc(doc(db, 'hrLeaves', leaveId), {
+      const payslipRef = doc(db, 'hrLeaves', leaveId);
+      await updateDoc(payslipRef, {
         status: 'CANCELLED',
         updatedAt: serverTimestamp()
       });
@@ -236,7 +237,7 @@ export default function MyLeavesPage() {
               <AlertCircle className="h-10 w-10 text-destructive" />
               <h3 className="font-semibold text-lg">ต้องสร้างดัชนี (Index) ก่อน</h3>
               <p className="text-muted-foreground text-sm max-w-md">
-                ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงประวัติการลาของคุณ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index (ใช้เวลา 2-3 นาที)
+                ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงประวัติการลาของคุณ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index
               </p>
               <Button asChild>
                 <a href={indexCreationUrl} target="_blank" rel="noopener noreferrer">
@@ -442,7 +443,7 @@ export default function MyLeavesPage() {
                       <FormItem>
                         <FormLabel>เหตุผลการลา</FormLabel>
                         <FormControl>
-                          <Textarea placeholder="ระบุเหตุผล เช่น ลาป่วยมีใบรับรองแพทย์, ลากิจไปทำธุระครอบครัว..." {...field} />
+                          <Textarea placeholder="ระบุเหตุผล เช่น ลาป่วยมีใบรับรองแพทย์..." {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -487,7 +488,7 @@ export default function MyLeavesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>จำนวนวันลาของคุณเกินสิทธิ์ที่กำหนด</AlertDialogTitle>
             <AlertDialogDescription>
-              การลาครั้งนี้จะทำให้วันลาสะสมเกินจำนวนวันที่บริษัทกำหนด คุณต้องการยืนยันการส่งใบลาต่อหรือไม่? (ทางบริษัทอาจมีการหักเงินเดือนตามนโยบาย)
+              การลาครั้งนี้จะทำให้วันลาสะสมเกินจำนวนวันที่บริษัทกำหนด คุณต้องการยืนยันการส่งใบลาต่อหรือไม่?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
