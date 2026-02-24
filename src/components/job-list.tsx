@@ -264,9 +264,18 @@ export function JobList({
     setSelectedWorkerId("");
     setIsLoadingWorkers(true);
     try {
-      const q = query(collection(db, "users"), where("department", "==", job.department), where("status", "==", "ACTIVE"));
-      const snapshot = await getDocs(q);
-      setDeptWorkers(snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as UserProfile)).filter(u => u.role === 'WORKER'));
+      if (job.department === 'OUTSOURCE') {
+        const q = query(collection(db, "vendors"), where("vendorType", "==", "CONTRACTOR"), where("isActive", "==", true));
+        const snapshot = await getDocs(q);
+        setDeptWorkers(snapshot.docs.map(d => ({ 
+          uid: d.id, 
+          displayName: d.data().companyName 
+        } as any)));
+      } else {
+        const q = query(collection(db, "users"), where("department", "==", job.department), where("status", "==", "ACTIVE"));
+        const snapshot = await getDocs(q);
+        setDeptWorkers(snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as UserProfile)).filter(u => u.role === 'WORKER'));
+      }
     } catch (e) { toast({ variant: 'destructive', title: "ไม่สามารถโหลดรายชื่อได้" }); } finally { setIsLoadingWorkers(false); }
   };
 
@@ -327,7 +336,58 @@ export function JobList({
         })}
       </div>
       {!searchTerm && (<div className="flex justify-between items-center bg-muted/30 p-4 rounded-lg border"><span className="text-xs font-medium text-muted-foreground uppercase tracking-widest">หน้า {currentPage + 1}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4 mr-1" /> ก่อนหน้า</Button><Button variant="outline" size="sm" onClick={handleNextPage} disabled={isLastPage}>ถัดไป <ChevronRight className="h-4 w-4 ml-1" /></Button></div></div>)}
-      <Dialog open={!!assigningJob} onOpenChange={(open) => !open && setAssigningJob(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5 text-amber-500" />มอบหมายผู้รับผิดชอบงาน</DialogTitle><DialogDescription>เลือกพนักงานเพื่อรับผิดชอบงานของ <b>{assigningJob?.customerSnapshot.name}</b></DialogDescription></DialogHeader><div className="py-4 space-y-4"><div className="space-y-2"><Label>พนักงานตำแหน่งช่าง</Label>{isLoadingWorkers ? (<div className="flex items-center justify-center p-4 border rounded-md border-dashed"><Loader2 className="h-5 w-5 animate-spin mr-2" /><span>กำลังโหลดรายชื่อ...</span></div>) : (<Select value={selectedWorkerId} onValueChange={setSelectedWorkerId}><SelectTrigger className="w-full"><SelectValue placeholder="เลือกรายชื่อพนักงาน..." /></SelectTrigger><SelectContent>{deptWorkers.length > 0 ? (deptWorkers.map((worker) => (<SelectItem key={worker.uid} value={worker.uid}>{worker.displayName}</SelectItem>))) : (<div className="p-4 text-center text-sm text-muted-foreground italic">ไม่พบพนักงานในแผนกนี้</div>)}</SelectContent></Select>)}</div></div><DialogFooter className="gap-2 sm:gap-0"><Button variant="outline" onClick={() => setAssigningJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleConfirmAssign} disabled={!selectedWorkerId || !!isProcessing}>{isProcessing === assigningJob?.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันการมอบหมาย</Button></DialogFooter></DialogContent></Dialog>
+      
+      <Dialog open={!!assigningJob} onOpenChange={(open) => !open && setAssigningJob(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-amber-500" />
+              {assigningJob?.department === 'OUTSOURCE' ? 'มอบหมายผู้รับเหมางานนอก' : 'มอบหมายผู้รับผิดชอบงาน'}
+            </DialogTitle>
+            <DialogDescription>
+              {assigningJob?.department === 'OUTSOURCE' 
+                ? `เลือกร้านผู้รับเหมาเพื่อส่งงานของ ${assigningJob?.customerSnapshot.name}`
+                : `เลือกพนักงานเพื่อรับผิดชอบงานของ ${assigningJob?.customerSnapshot.name}`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label>{assigningJob?.department === 'OUTSOURCE' ? 'รายชื่อผู้รับเหมา (Vendors)' : 'พนักงานตำแหน่งช่าง'}</Label>
+              {isLoadingWorkers ? (
+                <div className="flex items-center justify-center p-4 border rounded-md border-dashed">
+                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  <span>กำลังโหลดรายชื่อ...</span>
+                </div>
+              ) : (
+                <Select value={selectedWorkerId} onValueChange={setSelectedWorkerId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={assigningJob?.department === 'OUTSOURCE' ? "เลือกผู้รับเหมา..." : "เลือกรายชื่อพนักงาน..."} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deptWorkers.length > 0 ? (
+                      deptWorkers.map((worker) => (
+                        <SelectItem key={worker.uid} value={worker.uid}>{worker.displayName}</SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-4 text-center text-sm text-muted-foreground italic">
+                        {assigningJob?.department === 'OUTSOURCE' ? 'ไม่พบรายชื่อผู้รับเหมาในระบบ' : 'ไม่พบพนักงานในแผนกนี้'}
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setAssigningJob(null)} disabled={!!isProcessing}>ยกเลิก</Button>
+            <Button onClick={handleConfirmAssign} disabled={!selectedWorkerId || !!isProcessing}>
+              {isProcessing === assigningJob?.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              ยืนยันการมอบหมาย
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={!!billingJob} onOpenChange={(open) => !open && setBillingJob(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>เลือกประเภทเอกสาร</AlertDialogTitle><AlertDialogDescription>กรุณาเลือกประเภทเอกสารที่ต้องการออกสำหรับงานซ่อมของ <b>{billingJob?.customerSnapshot.name}</b></AlertDialogDescription></AlertDialogHeader><AlertDialogFooter className="flex flex-col sm:flex-row gap-2"><Button variant="outline" onClick={() => setBillingJob(null)} className="w-full sm:w-auto">ยกเลิก</Button><Button variant="secondary" onClick={() => { if (billingJob) router.push(`/app/office/documents/delivery-note/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบส่งของชั่วคราว</Button><Button onClick={() => { if (billingJob) router.push(`/app/office/documents/tax-invoice/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบกำกับภาษี</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
