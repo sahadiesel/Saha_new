@@ -24,8 +24,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import Image from "next/image";
 
@@ -80,7 +80,6 @@ export function PurchaseDocForm() {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Consistent ID for new docs to prevent duplicates on double-click
   const [creationId] = useState(() => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let autoId = '';
@@ -96,7 +95,9 @@ export function PurchaseDocForm() {
   const form = useForm<PurchaseFormData>({
     resolver: zodResolver(purchaseFormSchema),
     defaultValues: {
+      vendorId: "",
       docDate: new Date().toISOString().split("T")[0],
+      invoiceNo: "",
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       withTax: true,
       paymentMode: "CASH",
@@ -105,6 +106,9 @@ export function PurchaseDocForm() {
       net: 0,
       vatAmount: 0,
       grandTotal: 0,
+      note: "",
+      suggestedAccountId: "",
+      suggestedPaymentMethod: "CASH",
     },
   });
 
@@ -129,19 +133,19 @@ export function PurchaseDocForm() {
   useEffect(() => {
     if (docToEdit) {
       form.reset({
-        vendorId: docToEdit.vendorId,
-        docDate: docToEdit.docDate,
-        invoiceNo: docToEdit.invoiceNo,
-        items: docToEdit.items.map(i => ({ ...i })),
-        subtotal: docToEdit.subtotal,
-        discountAmount: docToEdit.discountAmount,
-        net: docToEdit.net,
-        withTax: docToEdit.withTax,
-        vatAmount: docToEdit.vatAmount,
-        grandTotal: docToEdit.grandTotal,
-        paymentMode: docToEdit.paymentMode,
-        dueDate: docToEdit.dueDate,
-        note: docToEdit.note,
+        vendorId: docToEdit.vendorId || "",
+        docDate: docToEdit.docDate || new Date().toISOString().split("T")[0],
+        invoiceNo: docToEdit.invoiceNo || "",
+        items: docToEdit.items?.map(i => ({ ...i })) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
+        subtotal: docToEdit.subtotal || 0,
+        discountAmount: docToEdit.discountAmount || 0,
+        net: docToEdit.net || 0,
+        withTax: docToEdit.withTax ?? true,
+        vatAmount: docToEdit.vatAmount || 0,
+        grandTotal: docToEdit.grandTotal || 0,
+        paymentMode: docToEdit.paymentMode || "CASH",
+        dueDate: docToEdit.dueDate || null,
+        note: docToEdit.note || "",
         suggestedAccountId: docToEdit.suggestedAccountId || '',
         suggestedPaymentMethod: docToEdit.suggestedPaymentMethod || 'CASH',
       });
@@ -203,7 +207,6 @@ export function PurchaseDocForm() {
 
     setIsSubmitting(true);
     try {
-      // 1. Photo Upload
       const uploadedPhotos: string[] = docToEdit?.billPhotos || [];
       if (photos.length > 0) {
         for (const file of photos) {
@@ -233,7 +236,6 @@ export function PurchaseDocForm() {
       let finalDocId = editDocId || creationId;
       let finalDocNo: string;
 
-      // 2. Save PurchaseDoc
       if (editDocId) {
         await updateDoc(doc(db, "purchaseDocs", editDocId), sanitizeForFirestore(docData));
         finalDocNo = docToEdit?.docNo || "Unknown";
@@ -241,7 +243,6 @@ export function PurchaseDocForm() {
         finalDocNo = await createPurchaseDoc(db, docData, profile, targetStatus, creationId);
       }
 
-      // 3. Create or Update Purchase Claim for Accounting
       if (isSubmitForReview && finalDocId && finalDocNo) {
         const claimsQuery = query(collection(db, "purchaseClaims"), where("purchaseDocId", "==", finalDocId));
         const claimsSnap = await getDocs(claimsQuery);
@@ -383,8 +384,8 @@ export function PurchaseDocForm() {
                     </div>
                     
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล</FormLabel><FormControl><Input {...field} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
-                      <FormField name="docDate" render={({ field }) => (<FormItem><FormLabel>วันที่ในบิล</FormLabel><FormControl><Input type="date" {...field} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
+                      <FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล</FormLabel><FormControl><Input {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
+                      <FormField name="docDate" render={({ field }) => (<FormItem><FormLabel>วันที่ในบิล</FormLabel><FormControl><Input type="date" {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
                     </div>
                 </CardContent>
             </Card>
@@ -414,7 +415,7 @@ export function PurchaseDocForm() {
                             <FormField name="suggestedPaymentMethod" render={({ field }) => (
                               <FormItem>
                                 <FormLabel>จ่ายโดย</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting}>
+                                <Select onValueChange={field.onChange} value={field.value}>
                                   <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
                                   <SelectContent>
                                     <SelectItem value="CASH">เงินสด</SelectItem>
@@ -426,7 +427,7 @@ export function PurchaseDocForm() {
                             <FormField name="suggestedAccountId" render={({ field }) => (
                               <FormItem>
                                 <FormLabel>บัญชีที่จ่าย</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting}>
+                                <Select onValueChange={field.onChange} value={field.value}>
                                   <FormControl><SelectTrigger><SelectValue placeholder="เลือก..."/></SelectTrigger></FormControl>
                                   <SelectContent>
                                     {accounts.map(a=><SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
@@ -449,9 +450,9 @@ export function PurchaseDocForm() {
                         <TableBody>
                             {fields.map((field, index) => (
                                 <TableRow key={field.id}>
-                                    <TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} disabled={isSubmitting} />)}/></TableCell>
-                                    <TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell>
-                                    <TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell>
+                                    <TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} value={field.value ?? ''} disabled={isSubmitting} />)}/></TableCell>
+                                    <TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell>
+                                    <TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell>
                                     <TableCell className="text-right font-medium">{(form.watch(`items.${index}.total`) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                                     <TableCell><Button type="button" variant="ghost" size="icon" disabled={isSubmitting} onClick={()=>remove(index)}><Trash2 className="h-4 w-4 text-destructive"/></Button></TableCell>
                                 </TableRow>
@@ -488,14 +489,14 @@ export function PurchaseDocForm() {
                             </div>
                         ))}
                     </div>
-                    <FormField name="note" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
+                    <FormField name="note" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl></FormItem>)} />
                 </CardContent>
             </Card>
             <div className="space-y-4 p-6 border rounded-lg bg-muted/30 h-fit">
                 <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">รวมเป็นเงิน</span><span className="font-medium">{(form.watch('subtotal') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                 <div className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">ส่วนลด (บาท)</span>
-                    <FormField name="discountAmount" render={({ field }) => (<Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} disabled={isSubmitting}/>)} />
+                    <FormField name="discountAmount" render={({ field }) => (<Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} value={field.value || ''} disabled={isSubmitting}/>)} />
                 </div>
                 <div className="flex justify-between items-center py-2">
                     <FormField name="withTax" render={({ field }) => (
