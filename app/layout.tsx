@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { Viewport } from 'next';
 import { AppShellClient } from "@/components/app-shell-client";
 import { Providers } from "@/components/providers";
+import { Toaster } from "@/components/ui/toaster";
 
 export const viewport: Viewport = {
   themeColor: "#2A9D8F",
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <Providers>
           <AppShellClient>{children}</AppShellClient>
+          <Toaster />
         </Providers>
       </body>
     </html>
