@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MoreHorizontal, PlusCircle, Search, Edit, Eye, Trash2, ChevronsUpDown } from "lucide-react";
+import { Loader2, MoreHorizontal, PlusCircle, Search, Edit, Eye, Trash2, ChevronsUpDown, Filter } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,6 +73,7 @@ function CustomersContent() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(searchParams.get("phone") || "");
+  const [taxFilter, setTaxFilter] = useState<string>("ALL");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -82,7 +83,6 @@ function CustomersContent() {
   const [currentPage, setCurrentPage] = useState(0);
   const PAGE_SIZE = 20;
 
-  // Updated permissions logic
   const canEdit = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE';
   const isAdmin = profile?.role === 'ADMIN';
 
@@ -113,7 +113,6 @@ function CustomersContent() {
       setCustomers(customersData);
       setLoading(false);
       
-      // Auto-open edit dialog if editPhone is present in URL
       const editPhone = searchParams.get("editPhone");
       if (editPhone && customersData.length > 0) {
         const target = customersData.find(c => c.phone === editPhone);
@@ -139,16 +138,24 @@ function CustomersContent() {
   }, [db, toast, searchParams]);
   
   const filteredCustomers = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return customers;
+    let result = [...customers];
+
+    if (taxFilter === "USED") {
+      result = result.filter(c => c.useTax === true);
+    } else if (taxFilter === "NOT_USED") {
+      result = result.filter(c => c.useTax === false);
     }
-    const lowercasedFilter = searchTerm.toLowerCase();
-    return customers.filter(customer =>
-      customer.name.toLowerCase().includes(lowercasedFilter) ||
-      customer.phone.includes(searchTerm) ||
-      (customer.detail || "").toLowerCase().includes(lowercasedFilter)
-    );
-  }, [customers, searchTerm]);
+
+    if (searchTerm.trim()) {
+      const lowercasedFilter = searchTerm.toLowerCase();
+      result = result.filter(customer =>
+        customer.name.toLowerCase().includes(lowercasedFilter) ||
+        customer.phone.includes(searchTerm) ||
+        (customer.detail || "").toLowerCase().includes(lowercasedFilter)
+      );
+    }
+    return result;
+  }, [customers, searchTerm, taxFilter]);
 
   const paginatedCustomers = useMemo(() => {
     const start = currentPage * PAGE_SIZE;
@@ -262,7 +269,7 @@ function CustomersContent() {
       })
       .finally(() => {
         setIsDeleteAlertOpen(false);
-        setUserToDelete(null);
+        setCustomerToDelete(null);
       });
   };
 
@@ -273,27 +280,43 @@ function CustomersContent() {
   return (
     <div className="space-y-6">
       <PageHeader title="รายชื่อลูกค้า" description="จัดการข้อมูลลูกค้าและรายละเอียดการออกบิล">
-        <div className="flex items-center gap-2">
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="ค้นหาชื่อ/เบอร์โทร..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <Button asChild>
-            <Link href="/app/office/customers/new">
-              <PlusCircle className="mr-2 h-4 w-4" />
-              เพิ่มลูกค้า
-            </Link>
-          </Button>
-        </div>
+        <Button asChild>
+          <Link href="/app/office/customers/new">
+            <PlusCircle className="mr-2 h-4 w-4" />
+            เพิ่มลูกค้า
+          </Link>
+        </Button>
       </PageHeader>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 space-y-4">
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหาชื่อ/เบอร์โทร..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-[200px]">
+              <Select value={taxFilter} onValueChange={setTaxFilter}>
+                <SelectTrigger>
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <SelectValue placeholder="สถานะภาษี" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">ลูกค้าทั้งหมด</SelectItem>
+                  <SelectItem value="USED">ใช้ใบกำกับภาษี</SelectItem>
+                  <SelectItem value="NOT_USED">ไม่ใช้ใบกำกับภาษี</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="border rounded-md">
             <Table>
               <TableHeader>
