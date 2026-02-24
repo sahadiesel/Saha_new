@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, Suspense } from "react";
-import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, where } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, where, getDocs } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -209,38 +209,50 @@ function CustomersContent() {
     if (!db || !editingCustomer) return;
     setIsSubmitting(true);
     
-    const customerDoc = doc(db, "customers", editingCustomer.id);
-    const updateData = { 
-      ...values, 
-      updatedAt: serverTimestamp(),
-      taxName: values.useTax ? values.taxName : "",
-      taxAddress: values.useTax ? values.taxAddress : "",
-      taxId: values.useTax ? values.taxId : "",
-      taxPhone: values.useTax ? values.taxPhone : "",
-      taxBranchType: values.useTax ? values.taxBranchType : null,
-      taxBranchNo: values.useTax && values.taxBranchType === 'BRANCH' ? values.taxBranchNo : (values.taxBranchType === 'HEAD_OFFICE' ? '00000' : null),
-    };
-
-    updateDoc(customerDoc, updateData)
-      .then(() => {
-        toast({ title: "อัปเดตข้อมูลลูกค้าสำเร็จ" });
-        setIsDialogOpen(false);
-      })
-      .catch(async (error: any) => {
-        if (error.code === 'permission-denied') {
-          const permissionError = new FirestorePermissionError({
-            path: customerDoc.path,
-            operation: 'update',
-            requestResourceData: updateData,
-          } satisfies SecurityRuleContext);
-          errorEmitter.emit('permission-error', permissionError);
-        } else {
-          toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: error.message });
-        }
-      })
-      .finally(() => {
+    try {
+      // Check for duplicate phone number (excluding this current customer)
+      const q = query(collection(db, "customers"), where("phone", "==", values.phone.trim()));
+      const querySnap = await getDocs(q);
+      
+      const duplicate = querySnap.docs.find(d => d.id !== editingCustomer.id);
+      if (duplicate) {
+        toast({ 
+          variant: "destructive", 
+          title: "เบอร์โทรศัพท์ซ้ำกับลูกค้าท่านอื่น", 
+          description: `เบอร์นี้ถูกใช้งานแล้วโดย: ${duplicate.data().name}` 
+        });
         setIsSubmitting(false);
-      });
+        return;
+      }
+
+      const customerDoc = doc(db, "customers", editingCustomer.id);
+      const updateData = { 
+        ...values, 
+        updatedAt: serverTimestamp(),
+        taxName: values.useTax ? values.taxName : "",
+        taxAddress: values.useTax ? values.taxAddress : "",
+        taxId: values.useTax ? values.taxId : "",
+        taxPhone: values.useTax ? values.taxPhone : "",
+        taxBranchType: values.useTax ? values.taxBranchType : null,
+        taxBranchNo: values.useTax && values.taxBranchType === 'BRANCH' ? values.taxBranchNo : (values.taxBranchType === 'HEAD_OFFICE' ? '00000' : null),
+      };
+
+      await updateDoc(customerDoc, updateData);
+      toast({ title: "อัปเดตข้อมูลลูกค้าสำเร็จ" });
+      setIsDialogOpen(false);
+    } catch (error: any) {
+      if (error.code === 'permission-denied') {
+        errorEmitter.emit('permission-error', new FirestorePermissionError({
+          path: `customers/${editingCustomer.id}`,
+          operation: 'update',
+          requestResourceData: values,
+        }));
+      } else {
+        toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: error.message });
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDeleteRequest = (customerId: string) => {
