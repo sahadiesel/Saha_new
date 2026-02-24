@@ -102,12 +102,12 @@ export default function AdminChatPage() {
       toast({ 
         variant: "destructive", 
         title: "จิมมี่ขัดข้อง", 
-        description: errorDetail === 'internal' ? "ระบบประมวลผลล้มเหลว (Internal Error)" : errorDetail 
+        description: errorDetail === 'internal' ? "เซิร์ฟเวอร์ขัดข้อง (CORS/Auth) กรุณาลองใหม่อีกครั้งค่ะ" : errorDetail 
       });
 
       setMessages(prev => [...prev, { 
         role: 'model', 
-        content: `ขอโทษทีค่ะพี่ ระบบจิมมี่ขัดข้อง: ${errorDetail === 'internal' ? "เซิร์ฟเวอร์ประมวลผลพลาด (Internal Error)" : errorDetail}\n\nหากอาการไม่ดีขึ้น รบกวนพี่ตรวจสอบ Gemini API Key ในหน้าตั้งค่า AI นะคะ`, 
+        content: `ขอโทษทีค่ะพี่ ระบบจิมมี่ขัดข้อง: ${errorDetail}\n\nหากพี่ใช้ Chrome รบกวนตรวจสอบว่าได้กด "Publish" หรือลองรีเฟรชหน้าจอใหม่อีกครั้งนะคะ หรือตรวจสอบ Gemini API Key ในหน้าตั้งค่า AI ค่ะ`, 
         timestamp: new Date() 
       }]);
     } finally {

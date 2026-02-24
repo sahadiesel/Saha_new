@@ -12,7 +12,10 @@ export const closeJobAfterAccounting = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "User must be authenticated.");
 
-    const { jobId, paymentStatus } = (request.data || {}) as { jobId: string; paymentStatus?: "PAID" | "UNPAID" };
+    const data = (request.data || {}) as any;
+    const jobId = data.jobId;
+    const paymentStatus = data.paymentStatus;
+
     if (!jobId) throw new HttpsError("invalid-argument", "Missing jobId.");
 
     try {
@@ -42,7 +45,7 @@ export const closeJobAfterAccounting = onCall(
         { merge: true }
       );
 
-      // Move activities subcollection (Simplified for MVP, assuming < 500 activities)
+      // Move activities subcollection
       const activitiesSnap = await jobRef.collection("activities").get();
       if (!activitiesSnap.empty) {
         const batch = db.batch();
@@ -59,7 +62,7 @@ export const closeJobAfterAccounting = onCall(
       return { ok: true, jobId };
     } catch (error: any) {
       console.error("Error in closeJobAfterAccounting:", error);
-      throw new HttpsError("internal", error?.message || "Unknown error");
+      throw new HttpsError("internal", error?.message || "Unknown error during closing");
     }
   }
 );
@@ -93,11 +96,9 @@ export const migrateClosedJobsToArchive2026 = onCall(
         const jobId = jobDoc.id;
         const jobData = jobDoc.data();
         
-        // Determine the archive year and closed date robustly
         let jobDate = jobData.closedDate || defaultClosedDate;
         if (!jobData.closedDate && jobData.updatedAt) {
             try {
-                // Handle both Firestore Timestamp and raw Date strings
                 const updatedVal = jobData.updatedAt;
                 const d = updatedVal.toDate ? updatedVal.toDate() : new Date(updatedVal);
                 jobDate = d.toISOString().split('T')[0];
@@ -106,7 +107,6 @@ export const migrateClosedJobsToArchive2026 = onCall(
             }
         }
         
-        // Ensure year is numeric and safe
         const rawYearStr = jobDate.split('-')[0];
         const archiveYear = parseInt(rawYearStr) || currentYear;
         
@@ -141,11 +141,10 @@ export const migrateClosedJobsToArchive2026 = onCall(
           skipped++;
         }
 
-        // Delete original job
         await db.recursiveDelete(jobDoc.ref);
       } catch (e: any) {
         console.error(`Migration error for job ${jobDoc.id}:`, e);
-        errors.push({ jobId: jobDoc.id, message: e?.message || "Unknown error" });
+        errors.push({ jobId: jobDoc.id, message: e?.message || "Unknown error during migration" });
       }
     }
 
@@ -153,37 +152,32 @@ export const migrateClosedJobsToArchive2026 = onCall(
   }
 );
 
-// --- 3. ฟังก์ชัน น้องจิมมี่ (Unified AI Engine) ---
+// --- 3. ฟังก์ชัน น้องจิมมี่ (Unified AI Engine with Robust Error Handling) ---
 export const chatWithJimmy = onCall(
   { region: "us-central1", cors: true },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "กรุณาเข้าสู่ระบบก่อนนะคะ");
 
-    // Check user role for management scope
-    const userRef = db.collection("users").doc(request.auth.uid);
-    const userSnap = await userRef.get();
-    const userData = userSnap.data();
-
-    const data = request.data || {};
-    const message = (data.message || "").toString().trim();
-    const history = data.history || [];
-    const scope = data.scope || 'TECHNICAL';
-    const contextData = data.contextData || {};
-    
-    if (!message) throw new HttpsError("invalid-argument", "กรุณาพิมพ์ข้อความด้วยนะคะ");
-
-    // Resolve API Key
-    let apiKey = process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        const aiSettings = await db.collection("settings").doc("ai").get();
-        apiKey = aiSettings.data()?.geminiApiKey;
-    }
-
-    if (!apiKey) {
-        throw new HttpsError("failed-precondition", "กรุณาตั้งค่า Gemini API Key ในหน้าแอปก่อนนะคะพี่โจ้");
-    }
-
     try {
+      const data = request.data || {};
+      const message = (data.message || "").toString().trim();
+      const history = data.history || [];
+      const scope = data.scope || 'TECHNICAL';
+      const contextData = data.contextData || {};
+      
+      if (!message) throw new HttpsError("invalid-argument", "กรุณาพิมพ์ข้อความด้วยนะคะ");
+
+      // Resolve API Key
+      let apiKey = process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+          const aiSettings = await db.collection("settings").doc("ai").get();
+          apiKey = aiSettings.data()?.geminiApiKey;
+      }
+
+      if (!apiKey) {
+          throw new HttpsError("failed-precondition", "กรุณาตั้งค่า Gemini API Key ในหน้าแอปก่อนนะคะพี่โจ้");
+      }
+
       const isTechnical = scope === 'TECHNICAL';
       
       const systemInstruction = isTechnical 
@@ -221,7 +215,6 @@ export const chatWithJimmy = onCall(
         systemInstruction: systemInstruction,
       });
 
-      // Prepare chat history for SDK format
       const chat = model.startChat({
         history: history.map((m: any) => ({
           role: m.role === 'model' ? 'model' : 'user',
@@ -235,9 +228,8 @@ export const chatWithJimmy = onCall(
       return { answer: responseText };
     } catch (e: any) {
       console.error("Jimmy AI Error Detail:", e);
-      // Construct a meaningful error message for the client
-      const errorMsg = e?.message || "Unknown AI error";
-      throw new HttpsError("internal", `น้องจิมมี่สับสนนิดหน่อยค่ะ: ${errorMsg}`);
+      if (e instanceof HttpsError) throw e;
+      throw new HttpsError("internal", `น้องจิมมี่สับสนนิดหน่อยค่ะ: ${e.message || "Unknown error"}`);
     }
   }
 );
