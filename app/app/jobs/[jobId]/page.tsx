@@ -152,7 +152,10 @@ function JobDetailsPageContent() {
   const allowEditing = searchParams.get('edit') === 'true' && isUserAdmin;
   const isViewOnly = (job?.status === 'CLOSED' && !allowEditing) || job?.isArchived || profile?.role === 'VIEWER';
   const canUpdateActivity = isStaff;
-  const canEditDetails = isStaff && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing);
+  
+  // New strict permission for main details: only Office, Management, or Admins can edit
+  const isManagementOrOffice = profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
+  const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing);
 
   const getJobRef = () => {
     if (!db || !job) return null;
@@ -535,7 +538,7 @@ function JobDetailsPageContent() {
           </Card>
           
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-lg flex items-center gap-2"><BookOpen className="h-5 w-5 text-primary" />สมุดบันทึก (Notebook)</CardTitle>{canEditDetails && <Button onClick={() => { setTechReport(job?.technicalReport || job?.officeNote || ""); setIsEditNotebookDialogOpen(true); }} variant="outline" size="sm" className="h-7" disabled={isViewOnly}><Edit className="h-3 w-3 mr-1"/> แก้ไข</Button>}</CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-lg flex items-center gap-2"><BookOpen className="h-5 w-5 text-primary" />สมุดบันทึก (Notebook)</CardTitle>{canUpdateActivity && <Button onClick={() => { setTechReport(job?.technicalReport || job?.officeNote || ""); setIsEditNotebookDialogOpen(true); }} variant="outline" size="sm" className="h-7" disabled={isViewOnly}><Edit className="h-3 w-3 mr-1"/> แก้ไข</Button>}</CardHeader>
             <CardContent><div className="min-h-[100px] p-4 bg-muted/30 rounded-md border border-dashed"><p className="whitespace-pre-wrap text-sm">{job.technicalReport || job.officeNote || 'ยังไม่มีบันทึก'}</p></div></CardContent>
           </Card>
 
@@ -616,7 +619,7 @@ function JobDetailsPageContent() {
                 (['QUOTATION', 'DELIVERY_NOTE', 'TAX_INVOICE', 'RECEIPT'] as DocType[]).map(docType => {
                     const label = { QUOTATION: 'ใบเสนอราคา', DELIVERY_NOTE: 'ใบส่งของชั่วคราว', TAX_INVOICE: 'ใบกำกับภาษี', RECEIPT: 'ใบเสร็จ' }[docType];
                     const latestDoc = relatedDocuments[docType]?.[0];
-                    return (<div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0"><span className="text-muted-foreground pt-1">{label}:</span>{latestDoc ? (<div className="flex flex-col items-end gap-1"><div className="flex items-center gap-2"><Button asChild variant="link" className="p-0 h-auto font-medium"><Link href={`/app/office/documents/${latestDoc.id}`}>{latestDoc.docNo}</Link></Button><Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge></div></div>) : <span className="pt-1">— ไม่มี —</span>}</div>);
+                    return (<div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0"><span className="text-muted-foreground pt-1">{label}:</span>{latestDoc ? (<div className="flex col items-end gap-1"><div className="flex items-center gap-2"><Button asChild variant="link" className="p-0 h-auto font-medium"><Link href={`/app/office/documents/${latestDoc.id}`}>{latestDoc.docNo}</Link></Button><Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge></div></div>) : <span className="pt-1">— ไม่มี —</span>}</div>);
                 })
               )}
             </CardContent></Card>
