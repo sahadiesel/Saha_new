@@ -5,13 +5,13 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from "zod";
 import { addDoc, collection, query, where, orderBy, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
-import { format, differenceInCalendarDays, getYear, isBefore, startOfToday, subMonths, parseISO } from 'date-fns';
+import { format, differenceInCalendarDays, getYear, isBefore, subMonths, parseISO } from 'date-fns';
 
 import { useFirebase, useCollection, useDoc } from '@/firebase';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { LEAVE_TYPES, type LeaveType, type LeaveStatus } from '@/lib/constants';
+import { LEAVE_TYPES, type LeaveStatus } from '@/lib/constants';
 import type { LeaveRequest, HRSettings } from '@/lib/types';
 import { leaveTypeLabel, leaveStatusLabel } from '@/lib/ui-labels';
 
@@ -35,9 +35,7 @@ import {
   AlertDialogTitle, 
   AlertDialogTrigger 
 } from '@/components/ui/alert-dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Calendar } from "@/components/ui/calendar";
-import { Loader2, Send, Trash2, AlertCircle, ExternalLink, CalendarIcon } from 'lucide-react';
+import { Loader2, Send, Trash2, AlertCircle, ExternalLink } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
 
 const leaveRequestSchema = z.object({
@@ -367,37 +365,11 @@ export default function MyLeavesPage() {
                       control={form.control}
                       name="startDate"
                       render={({ field }) => (
-                        <FormItem className="flex flex-col">
+                        <FormItem>
                           <FormLabel>วันเริ่มลา</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant={"outline"}
-                                  className={cn(
-                                    "w-full pl-3 text-left font-normal",
-                                    !field.value && "text-muted-foreground"
-                                  )}
-                                >
-                                  {field.value ? (
-                                    format(parseISO(field.value), "dd/MM/yyyy")
-                                  ) : (
-                                    <span>เลือกวันที่</span>
-                                  )}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={field.value ? parseISO(field.value) : undefined}
-                                onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
-                                disabled={(date) => isBefore(date, subMonths(new Date(), 1))}
-                                initialFocus
-                              />
-                            </PopoverContent>
-                          </Popover>
+                          <FormControl>
+                            <Input type="date" {...field} />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -406,41 +378,11 @@ export default function MyLeavesPage() {
                       control={form.control}
                       name="endDate"
                       render={({ field }) => (
-                        <FormItem className="flex flex-col">
+                        <FormItem>
                           <FormLabel>วันสิ้นสุด</FormLabel>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <FormControl>
-                                <Button
-                                  variant={"outline"}
-                                  className={cn(
-                                    "w-full pl-3 text-left font-normal",
-                                    !field.value && "text-muted-foreground"
-                                  )}
-                                  disabled={watchedIsHalfDay}
-                                >
-                                  {field.value ? (
-                                    format(parseISO(field.value), "dd/MM/yyyy")
-                                  ) : (
-                                    <span>เลือกวันที่</span>
-                                  )}
-                                  <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                                </Button>
-                              </FormControl>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar
-                                mode="single"
-                                selected={field.value ? parseISO(field.value) : undefined}
-                                onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
-                                disabled={(date) => {
-                                    const start = form.getValues('startDate');
-                                    return start ? isBefore(date, parseISO(start)) : false;
-                                }}
-                                initialFocus
-                              />
-                            </PopoverContent>
-                          </Popover>
+                          <FormControl>
+                            <Input type="date" {...field} disabled={watchedIsHalfDay} />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
