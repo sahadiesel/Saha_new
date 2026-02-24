@@ -5,12 +5,11 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from "zod";
 import { addDoc, collection, query, where, orderBy, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
-import { format, differenceInCalendarDays, getYear, isBefore, subMonths, parseISO } from 'date-fns';
+import { format, differenceInCalendarDays, getYear, isBefore, parseISO } from 'date-fns';
 
 import { useFirebase, useCollection, useDoc } from '@/firebase';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
 import { LEAVE_TYPES, type LeaveStatus } from '@/lib/constants';
 import type { LeaveRequest, HRSettings } from '@/lib/types';
 import { leaveTypeLabel, leaveStatusLabel } from '@/lib/ui-labels';
