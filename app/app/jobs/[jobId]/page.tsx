@@ -518,6 +518,65 @@ function JobDetailsPageContent() {
     }
   };
 
+  // Approval Handlers
+  const handleApproveJob = async () => {
+    if (!db || !profile || !job) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, { 
+      status: 'PENDING_PARTS', 
+      lastActivityAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { 
+      text: `ลูกค้าอนุมัติการซ่อมเรียบร้อยแล้ว (สถานะ: กำลังจัดอะไหล่)`, 
+      userName: profile.displayName, 
+      userId: profile.uid, 
+      createdAt: serverTimestamp() 
+    });
+    batch.commit().then(() => toast({ title: "อนุมัติงานสำเร็จ" })).finally(() => setIsSubmittingNote(false));
+  };
+
+  const handleRejectJob = async () => {
+    if (!db || !profile || !job) return;
+    if (!confirm("ยืนยันลูกค้าไม่อนุมัติงานนี้? งานจะถูกปิดทันที")) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, { 
+      status: 'CLOSED', 
+      lastActivityAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { 
+      text: `ลูกค้าไม่อนุมัติการซ่อม / ยกเลิกงาน`, 
+      userName: profile.displayName, 
+      userId: profile.uid, 
+      createdAt: serverTimestamp() 
+    });
+    batch.commit().then(() => toast({ title: "ปิดงานเรียบร้อย" })).finally(() => setIsSubmittingNote(false));
+  };
+
+  const handlePartsReady = async () => {
+    if (!db || !profile || !job) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, { 
+      status: 'IN_REPAIR_PROCESS', 
+      lastActivityAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { 
+      text: `อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม`, 
+      userName: profile.displayName, 
+      userId: profile.uid, 
+      createdAt: serverTimestamp() 
+    });
+    batch.commit().then(() => toast({ title: "เริ่มดำเนินการซ่อมแล้ว" })).finally(() => setIsSubmittingNote(false));
+  };
+
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
     setIsReassignDialogOpen(true);
@@ -670,6 +729,36 @@ function JobDetailsPageContent() {
         
         <div className="space-y-6">
           <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-base font-semibold">Status</CardTitle><Badge variant={getStatusVariant(job.status)}>{jobStatusLabel(job.status)}</Badge></CardHeader></Card>
+          
+          {/* Approval Actions Section */}
+          {(job.status === 'WAITING_APPROVE' || job.status === 'PENDING_PARTS') && canEditDetails && (
+            <Card className="border-primary/50 bg-primary/5 shadow-md animate-in fade-in zoom-in-95 duration-300">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-primary" /> 
+                    การดำเนินการ (Actions)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                    {job.status === 'WAITING_APPROVE' && (
+                        <>
+                            <Button className="w-full bg-green-600 hover:bg-green-700" onClick={handleApproveJob} disabled={isSubmittingNote}>
+                                <Check className="mr-2 h-4 w-4" /> อนุมัติเริ่มซ่อม
+                            </Button>
+                            <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/10" onClick={handleRejectJob} disabled={isSubmittingNote}>
+                                <Ban className="mr-2 h-4 w-4" /> ลูกค้าไม่อนุมัติ/ยกเลิก
+                            </Button>
+                        </>
+                    )}
+                    {job.status === 'PENDING_PARTS' && (
+                        <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={handlePartsReady} disabled={isSubmittingNote}>
+                            <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
+                        </Button>
+                    )}
+                </CardContent>
+            </Card>
+          )}
+
           <Card><CardHeader><CardTitle className="text-base font-semibold flex items-center gap-2"><FileText className="h-4 w-4"/> เอกสารอ้างอิง</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">
               {loadingDocs ? <div className="flex justify-center"><Loader2 className="animate-spin"/></div> : (
                 (['QUOTATION', 'DELIVERY_NOTE', 'TAX_INVOICE', 'RECEIPT'] as DocType[]).map(docType => {

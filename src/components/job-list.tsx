@@ -42,7 +42,10 @@ import {
   CheckCircle2,
   Users,
   Eye,
-  RotateCcw
+  RotateCcw,
+  Check,
+  Ban,
+  PackageCheck
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -248,6 +251,33 @@ export function JobList({
     }
   };
 
+  const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
+    if (!db || !profile || isProcessing) return;
+    setIsProcessing(jobId);
+    try {
+      const batch = writeBatch(db);
+      const jobRef = doc(db, "jobs", jobId);
+      batch.update(jobRef, { 
+        status: nextStatus, 
+        lastActivityAt: serverTimestamp(), 
+        updatedAt: serverTimestamp() 
+      });
+      batch.set(doc(collection(jobRef, "activities")), { 
+        text: activityText, 
+        userName: profile.displayName, 
+        userId: profile.uid, 
+        createdAt: serverTimestamp() 
+      });
+      await batch.commit();
+      toast({ title: "อัปเดตสถานะสำเร็จ" });
+      fetchData(currentPage);
+    } catch (e: any) { 
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message }); 
+    } finally { 
+      setIsProcessing(null); 
+    }
+  };
+
   const handleAcceptJob = async (job: Job) => {
     if (!db || !profile || isProcessing) return;
     setIsProcessing(job.id);
@@ -325,22 +355,48 @@ export function JobList({
               <CardContent className="px-4 pb-4 flex-grow"><p className="text-sm line-clamp-2 text-muted-foreground">{job.description}</p></CardContent>
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">
                 <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
-                {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold animate-in fade-in slide-in-from-bottom-1">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
-                {job.status === 'RECEIVED' && isOfficeOrAdmin && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
                 
-                {/* Quotation Logic */}
+                {/* Status-specific Quick Actions for Office/Admin */}
+                {isOfficeOrAdmin && (
+                  <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
+                    {job.status === 'RECEIVED' && (
+                      <Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default">
+                        <UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน
+                      </Button>
+                    )}
+                    
+                    {job.status === 'WAITING_APPROVE' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                          <Check className="mr-1 h-3 w-3" />อนุมัติ
+                        </Button>
+                        <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'CLOSED', 'ลูกค้าไม่อนุมัติ (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                          <Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ
+                        </Button>
+                      </div>
+                    )}
+
+                    {job.status === 'PENDING_PARTS' && (
+                      <Button className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]" onClick={() => handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                        <PackageCheck className="mr-2 h-4 w-4" />อะไหล่มาครบแล้ว
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {isWorker && isOwnDept && job.status === 'RECEIVED' && (
+                  <Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">
+                    {isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้
+                  </Button>
+                )}
+                
+                {/* Quotation/Billing Logic */}
                 {job.status === 'WAITING_QUOTATION' && !hasQuotation && (
                   <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "opacity-50 cursor-not-allowed")} variant="default" disabled={!canDoBilling}>
                     {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : <span className="flex items-center"><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</span>}
                   </Button>
                 )}
-                {hasQuotation && (
-                  <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "opacity-50 cursor-not-allowed")} variant="outline" disabled={!canDoBilling}>
-                    {canDoBilling ? <Link href={`/app/office/documents/quotation/${job.salesDocId}`}><FileText className="mr-2 h-4 w-4" />ดูใบเสนอราคา {job.salesDocNo}</Link> : <span className="flex items-center"><FileText className="mr-2 h-4 w-4" />ดูใบเสนอราคา {job.salesDocNo}</span>}
-                  </Button>
-                )}
 
-                {/* Billing Logic */}
                 {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && (
                   <div className="flex flex-col gap-2 w-full">
                     {hasBillingDoc ? (
@@ -353,7 +409,6 @@ export function JobList({
                       </Button>
                     )}
                     
-                    {/* Office can send back for revision directly from list */}
                     {canDoBilling && (
                       <Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold">
                         <Link href={`/app/jobs/${job.id}?action=revert`}>
