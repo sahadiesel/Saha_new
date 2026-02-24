@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Loader2, CheckCircle, XCircle, ShieldAlert, MoreHorizontal, Trash2, Edit, PlusCircle, FileText, Search, ExternalLink, AlertCircle } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, ShieldAlert, MoreHorizontal, Trash2, Edit, PlusCircle, FileText, Search, ExternalLink, AlertCircle, CalendarDays } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 
 import { LEAVE_STATUSES, LEAVE_TYPES } from "@/lib/constants";
 import type { UserProfile, LeaveRequest, HRSettings, LeaveStatus, Attendance, HRHoliday, AttendanceAdjustment } from "@/lib/types";
@@ -186,8 +189,66 @@ function LeaveManageDialog({
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
-                    <FormField control={form.control} name="startDate" render={({ field }) => (<FormItem><FormLabel>วันเริ่มลา</FormLabel><FormControl><Input type="date" {...field}/></FormControl></FormItem>)} />
-                    <FormField control={form.control} name="endDate" render={({ field }) => (<FormItem><FormLabel>วันสิ้นสุด</FormLabel><FormControl><Input type="date" {...field} disabled={watchedIsHalfDay}/></FormControl></FormItem>)} />
+                    <FormField control={form.control} name="startDate" render={({ field }) => (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>วันเริ่มลา</FormLabel>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <FormControl>
+                                <Button
+                                  variant={"outline"}
+                                  className={cn(
+                                    "w-full pl-3 text-left font-normal",
+                                    !field.value && "text-muted-foreground"
+                                  )}
+                                >
+                                  {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                  <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                                </Button>
+                              </FormControl>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={field.value ? parseISO(field.value) : undefined}
+                                onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </FormItem>
+                    )} />
+                    <FormField control={form.control} name="endDate" render={({ field }) => (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>วันสิ้นสุด</FormLabel>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <FormControl>
+                                <Button
+                                  variant={"outline"}
+                                  className={cn(
+                                    "w-full pl-3 text-left font-normal",
+                                    !field.value && "text-muted-foreground"
+                                  )}
+                                  disabled={watchedIsHalfDay}
+                                >
+                                  {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                  <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                                </Button>
+                              </FormControl>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={field.value ? parseISO(field.value) : undefined}
+                                onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                                disabled={(date) => isBefore(date, parseISO(watchedStartDate))}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </FormItem>
+                    )} />
                 </div>
                 <FormField control={form.control} name="reason" render={({ field }) => (<FormItem><FormLabel>เหตุผล/หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
             </form>
