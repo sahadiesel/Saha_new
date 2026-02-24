@@ -147,26 +147,25 @@ function JobDetailsPageContent() {
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
   
-  // Stricter check for office personnel who can issue bills
   const isOfficeDept = profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
   const canIssueBill = isOfficeDept && isStaff;
   
   const allowEditing = searchParams.get('edit') === 'true' && isUserAdmin;
   
-  // Custom logic for view-only based on job status and department
   const isTechnicalDept = profile?.department === 'CAR_SERVICE' || profile?.department === 'COMMONRAIL' || profile?.department === 'MECHANIC';
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
-  // Technicians are locked out when status is DONE or above.
-  // Office/Admin are NOT locked out.
+  // Strict View-Only logic: 
+  // Finished jobs are read-only for technicians.
+  // Office people can still add notes if needed, but per latest request "Cancel update work/photos for finished jobs", 
+  // we will hide the update card for finished jobs unless override editing is active.
   const isViewOnly = job?.isArchived || 
                      profile?.role === 'VIEWER' || 
                      (job?.status === 'CLOSED' && !allowEditing) ||
-                     (isJobInFinishedState && !allowEditing && isTechnicalDept && !isOfficeDept);
+                     (isJobInFinishedState && !allowEditing && isTechnicalDept);
 
-  const canUpdateActivity = isStaff;
+  const canUpdateActivity = isStaff && !isJobInFinishedState;
   
-  // New strict permission for main details: only Office, Management, or Admins can edit
   const isManagementOrOffice = profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
   const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing);
 
@@ -488,7 +487,6 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     
-    // Update status back to repair process so technicians can edit again
     batch.update(jobDocRef, {
       status: 'IN_REPAIR_PROCESS',
       lastActivityAt: serverTimestamp(),
@@ -610,46 +608,47 @@ function JobDetailsPageContent() {
             ) : <p className="text-muted-foreground text-sm">ยังไม่มีรูปตอนรับงาน</p>}</CardContent>
           </Card>
           
-          <Card>
-              <CardHeader><CardTitle>อัปเดทการทำงาน/รูปงาน</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <Textarea placeholder="พิมพ์บันทึกที่นี่..." value={newNote} onChange={e => setNewNote(e.target.value)} disabled={!canUpdateActivity || isViewOnly} />
-                {photoPreviews.length > 0 && (
-                  <div className="grid grid-cols-4 gap-2">{photoPreviews.map((src, i) => (
-                    <div key={i} className="relative"><Image src={src} alt="preview" width={100} height={100} className="rounded-md object-cover w-full aspect-square" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-5 w-5" onClick={() => { URL.revokeObjectURL(photoPreviews[i]); setNewPhotos(p=>p.filter((_,idx)=>idx!==i)); setPhotoPreviews(p=>p.filter((_,idx)=>idx!==i)); }}><X className="h-3 w-3" /></Button></div>
-                  ))}</div>
-                )}
-                 <div className="flex flex-wrap gap-2">
-                    <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
-                    <Button asChild variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isViewOnly}><label className="cursor-pointer flex items-center"><Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม<input type="file" className="hidden" multiple accept="image/*" capture="environment" onChange={handlePhotoChange} /></label></Button>
-                    
-                    {!isSubTask && !isViewOnly && (
-                        <Button variant="outline" className="border-amber-500 text-amber-600 hover:bg-amber-50" onClick={() => setIsSubTransferDialogOpen(true)}>
-                            <Forward className="mr-2 h-4 w-4" /> ส่งงานต่อ
-                        </Button>
-                    )}
+          {(!isJobInFinishedState || allowEditing) && (
+            <Card>
+                <CardHeader><CardTitle>อัปเดทการทำงาน/รูปงาน</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <Textarea placeholder="พิมพ์บันทึกที่นี่..." value={newNote} onChange={e => setNewNote(e.target.value)} disabled={!canUpdateActivity || isViewOnly} />
+                  {photoPreviews.length > 0 && (
+                    <div className="grid grid-cols-4 gap-2">{photoPreviews.map((src, i) => (
+                      <div key={i} className="relative"><Image src={src} alt="preview" width={100} height={100} className="rounded-md object-cover w-full aspect-square" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-5 w-5" onClick={() => { URL.revokeObjectURL(photoPreviews[i]); setNewPhotos(p=>p.filter((_,idx)=>idx!==i)); setPhotoPreviews(p=>p.filter((_,idx)=>idx!==i)); }}><X className="h-3 w-3" /></Button></div>
+                    ))}</div>
+                  )}
+                   <div className="flex flex-wrap gap-2">
+                      <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
+                      <Button asChild variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isViewOnly}><label className="cursor-pointer flex items-center"><Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม<input type="file" className="hidden" multiple accept="image/*" capture="environment" onChange={handlePhotoChange} /></label></Button>
+                      
+                      {!isSubTask && !isViewOnly && (
+                          <Button variant="outline" className="border-amber-500 text-amber-600 hover:bg-amber-50" onClick={() => setIsSubTransferDialogOpen(true)}>
+                              <Forward className="mr-2 h-4 w-4" /> ส่งงานต่อ
+                          </Button>
+                      )}
 
-                    {['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
-                        <Button 
-                          onClick={isSubTask ? handleReturnToMain : (canIssueBill ? () => router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`) : handleFinishJob)} 
-                          disabled={isSubmittingNote || isViewOnly} 
-                          className={isSubTask || !canIssueBill ? "bg-green-600 hover:bg-green-700 text-white" : ""} 
-                          variant={isSubTask || !canIssueBill ? "default" : "outline"}
-                        >
-                            <CheckCircle className="mr-2 h-4 w-4" /> 
-                            {isSubTask ? "ส่งงานกลับแผนกหลัก" : (canIssueBill ? "จบงาน/ออกบิล" : "จบงาน (Finish Job)")}
-                        </Button>
-                    )}
+                      {['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
+                          <Button 
+                            onClick={isSubTask ? handleReturnToMain : (canIssueBill ? () => router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`) : handleFinishJob)} 
+                            disabled={isSubmittingNote || isViewOnly} 
+                            className={isSubTask || !canIssueBill ? "bg-green-600 hover:bg-green-700 text-white" : ""} 
+                            variant={isSubTask || !canIssueBill ? "default" : "outline"}
+                          >
+                              <CheckCircle className="mr-2 h-4 w-4" /> 
+                              {isSubTask ? "ส่งงานกลับแผนกหลัก" : (canIssueBill ? "จบงาน/ออกบิล" : "จบงาน (Finish Job)")}
+                          </Button>
+                      )}
 
-                    {/* Send back for revision button - Only for Office/Admin when job is DONE */}
-                    {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && (
-                      <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10" onClick={() => setIsRevertDialogOpen(true)}>
-                        <RotateCcw className="mr-2 h-4 w-4" /> ส่งกลับแก้ไข
-                      </Button>
-                    )}
-                </div>
-              </CardContent>
-            </Card>
+                      {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && (
+                        <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10" onClick={() => setIsRevertDialogOpen(true)}>
+                          <RotateCcw className="mr-2 h-4 w-4" /> ส่งกลับแก้ไข
+                        </Button>
+                      )}
+                  </div>
+                </CardContent>
+              </Card>
+          )}
 
           <Card>
             <CardHeader><CardTitle>Activity Log</CardTitle></CardHeader>
@@ -697,7 +696,6 @@ function JobDetailsPageContent() {
             </div><DialogFooter><Button variant="outline" onClick={() => setIsEditVehicleDialogOpen(false)} disabled={isUpdatingVehicle}>ยกเลิก</Button><Button onClick={handleUpdateVehicleDetails} disabled={isUpdatingVehicle}>บันทึก</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={isReassignDialogOpen} onOpenChange={setIsReassignDialogOpen}><DialogContent><DialogHeader><DialogTitle>{job.department === 'OUTSOURCE' ? 'มอบหมายงานนอก' : 'มอบหมายพนักงาน'}</DialogTitle></DialogHeader>{isFetchingWorkers ? <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div> : (<div className="py-4"><Label>{job.department === 'OUTSOURCE' ? 'เลือกร้านผู้รับเหมา' : 'พนักงาน'}</Label><span className="block mt-2"><Select value={reassignWorkerId || ""} onValueChange={setReassignWorkerId}><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger><SelectContent>{departmentWorkers.length > 0 ? departmentWorkers.map(w => <SelectItem key={w.id} value={w.id}>{w.displayName}</SelectItem>) : <div className="p-4 text-center">ไม่พบรายการให้เลือก</div>}</SelectContent></Select></span></div>)}<DialogFooter><Button variant="outline" onClick={() => setIsReassignDialogOpen(false)} disabled={isReassigning}>ยกเลิก</Button><Button onClick={handleReassignJob} disabled={isReassigning || isFetchingWorkers || !reassignWorkerId}>ยืนยัน</Button></DialogFooter></DialogContent></Dialog>
 
-      {/* Dialog for Reverting to Repair Process */}
       <Dialog open={isRevertDialogOpen} onOpenChange={setIsRevertDialogOpen}>
         <DialogContent>
           <DialogHeader>
