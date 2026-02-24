@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField, setDoc } from "firebase/firestore";
 import { useFirebase, useCollection, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -298,6 +298,49 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     toast({ title: "ดึงข้อมูลจาก Template สำเร็จ" });
   };
 
+  const handleSaveAsTemplate = async () => {
+    if (!db || !profile) return;
+    
+    const items = form.getValues('items');
+    const notes = form.getValues('notes');
+    const discountAmount = form.getValues('discountAmount');
+    const withTax = form.getValues('isVat');
+
+    if (items.length === 0 || (items.length === 1 && !items[0].description)) {
+      toast({ 
+        variant: 'destructive', 
+        title: "ไม่สามารถบันทึกได้", 
+        description: "กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการก่อนบันทึกเป็น Template ค่ะ" 
+      });
+      return;
+    }
+
+    const templateName = prompt("กรุณาระบุชื่อ Template ที่ต้องการบันทึก:");
+    if (!templateName) return;
+
+    setIsProcessing(true);
+    try {
+      const newRef = doc(collection(db, "quotationTemplates"));
+      await setDoc(newRef, sanitizeForFirestore({
+        id: newRef.id,
+        name: templateName,
+        items,
+        notes,
+        discountAmount,
+        withTax,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdByUid: profile.uid,
+        createdByName: profile.displayName,
+      }));
+      toast({ title: "บันทึกเป็น Template สำเร็จแล้วค่ะ" });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: "บันทึกไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
@@ -497,6 +540,16 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
         <div className="flex justify-end gap-4">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             <ArrowLeft className="mr-2 h-4 w-4"/> กลับ
+          </Button>
+          <Button 
+            type="button" 
+            variant="outline" 
+            onClick={handleSaveAsTemplate} 
+            disabled={isFormLoading || isCancelled}
+            className="border-primary text-primary hover:bg-primary/5"
+          >
+            <LayoutTemplate className="mr-2 h-4 w-4" />
+            บันทึกเป็น Template
           </Button>
           <Button type="submit" onClick={form.handleSubmit(onSubmit)} disabled={isFormLoading || isCancelled}>
             {isFormLoading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
