@@ -179,13 +179,21 @@ export default function MyLeavesPage() {
       await submitToFirestore(data);
     }
   };
+
+  const handleConfirmOverLimit = async () => {
+    if (pendingLeaveData) {
+      await submitToFirestore(pendingLeaveData);
+      setPendingLeaveData(null);
+      setIsOverLimitConfirmOpen(false);
+    }
+  };
   
   async function handleCancel(leaveId: string) {
     if (!db) return;
     setCancellingId(leaveId);
     try {
-      const payslipRef = doc(db, 'hrLeaves', leaveId);
-      await updateDoc(payslipRef, {
+      const leaveRef = doc(db, 'hrLeaves', leaveId);
+      await updateDoc(leaveRef, {
         status: 'CANCELLED',
         updatedAt: serverTimestamp()
       });

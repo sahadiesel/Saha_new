@@ -31,7 +31,6 @@ const departmentNames: Record<Department, string> = {
     OUTSOURCE: "งานนอก",
 };
 
-// Helper components for navigation
 const SubNavLink = ({ href, label, icon: Icon, onClick }: { href: string; label: string; icon?: React.ElementType; onClick?: () => void }) => {
     const pathname = usePathname();
     const isActive = pathname === href;

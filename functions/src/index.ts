@@ -1,7 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 initializeApp();
 const db = getFirestore();
@@ -152,84 +151,10 @@ export const migrateClosedJobsToArchive2026 = onCall(
   }
 );
 
-// --- 3. ฟังก์ชัน น้องจิมมี่ (Unified AI Engine with Robust Error Handling) ---
+// --- 3. ฟังก์ชัน น้องจิมมี่ (DISABLED - High Cost API) ---
 export const chatWithJimmy = onCall(
   { region: "us-central1", cors: true },
   async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "กรุณาเข้าสู่ระบบก่อนนะคะ");
-
-    try {
-      const data = request.data || {};
-      const message = (data.message || "").toString().trim();
-      const history = data.history || [];
-      const scope = data.scope || 'TECHNICAL';
-      const contextData = data.contextData || {};
-      
-      if (!message) throw new HttpsError("invalid-argument", "กรุณาพิมพ์ข้อความด้วยนะคะ");
-
-      // Resolve API Key
-      let apiKey = process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-          const aiSettings = await db.collection("settings").doc("ai").get();
-          apiKey = aiSettings.data()?.geminiApiKey;
-      }
-
-      if (!apiKey) {
-          throw new HttpsError("failed-precondition", "กรุณาตั้งค่า Gemini API Key ในหน้าแอปก่อนนะคะพี่โจ้");
-      }
-
-      const isTechnical = scope === 'TECHNICAL';
-      
-      const systemInstruction = isTechnical 
-        ? `คุณคือ "น้องจิมมี่" (Diagnostic Expert) ผู้ช่วยช่างอัจฉริยะประจำร้าน Sahadiesel
-        
-        **บุคลิกและเป้าหมาย:**
-        - เป็นผู้หญิง เสียงหวาน ขี้เล่นนิดๆ แต่มีความรู้เรื่องเครื่องยนต์ดีเซลระดับวิศวกร
-        - แทนตัวเองว่า "จิมมี่" และลงท้ายว่า "ค่ะพี่" หรือ "นะคะ" เสมอ
-        
-        **หน้าที่ของคุณ:**
-        1. วิเคราะห์อาการทันที: ใช้ความรู้ AI วิเคราะห์รหัส DTC หรืออาการรถที่พี่ช่างพิมพ์มา
-        2. อ้างอิงข้อมูลร้าน: ใช้ข้อมูล 'บันทึกการซ่อม' ที่ได้รับมาบอกพี่ช่างว่า "ในร้านเราเคยแก้แบบนี้ค่ะ..."
-        3. ส่งมอบคู่มือ: หากเจอคู่มือที่เกี่ยวข้อง ให้ส่งลิงก์เพื่อให้พี่เปิดดูข้อมูลที่ถูกต้อง
-        
-        **ข้อมูลร้านที่จิมมี่เห็นตอนนี้:**
-        - บันทึกการซ่อมล่าสุด: ${JSON.stringify(contextData.experiences || [])}
-        - รายชื่อคู่มือในระบบ: ${JSON.stringify(contextData.manuals || [])}`
-        
-        : `คุณคือ "น้องจิมมี่" (Business Assistant) ผู้ช่วยอัจฉริยะประจำร้าน "สหดีเซล" ของพี่โจ้
-        
-        **บุคลิกและเป้าหมาย:**
-        - เป็นผู้หญิง เสียงหวาน ขี้เล่นนิดๆ และเอาใจใส่ "พี่โจ้" และ "พี่ถิน" มากๆ
-        - แทนตัวเองว่า "น้องจิมมี่" และลงท้ายด้วย "ค่ะ" หรือ "นะจ๊ะ" เสมอ
-        
-        **หน้าที่ของคุณ:**
-        1. วิเคราะห์ธุรกิจ: สรุปภาพรวมงานซ่อมและบัญชีจากข้อมูลที่ได้รับ
-        2. ให้คำแนะนำบริหาร: แจ้งเตือนหากพบงานค้างนาน หรือยอดใช้จ่ายผิดปกติ
-        
-        **ข้อมูลธุรกิจที่จิมมี่สรุปได้:**
-        ${JSON.stringify(contextData.businessSummary || {})}`;
-
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
-        systemInstruction: systemInstruction,
-      });
-
-      const chat = model.startChat({
-        history: history.map((m: any) => ({
-          role: m.role === 'model' ? 'model' : 'user',
-          parts: [{ text: m.content || "" }],
-        })),
-      });
-
-      const result = await chat.sendMessage(message);
-      const responseText = result.response.text();
-      
-      return { answer: responseText };
-    } catch (e: any) {
-      console.error("Jimmy AI Error Detail:", e);
-      if (e instanceof HttpsError) throw e;
-      throw new HttpsError("internal", `น้องจิมมี่สับสนนิดหน่อยค่ะ: ${e.message || "Unknown error"}`);
-    }
+    throw new HttpsError("failed-precondition", "ฟีเจอร์ AI นี้ถูกปิดการใช้งานชั่วคราวเพื่อลดค่าใช้จ่ายค่ะ");
   }
 );
