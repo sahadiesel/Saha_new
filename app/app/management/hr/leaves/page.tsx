@@ -632,7 +632,7 @@ export default function ManagementHRLeavesPage() {
                           </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={6} className="text-center h-24 text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
+                    )) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
                 </Table>
             </CardContent>
             </Card>
