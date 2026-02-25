@@ -165,13 +165,16 @@ function JobDetailsPageContent() {
   const canUpdateActivity = isStaff && !isJobInFinishedState;
   
   const isManagementOrOffice = profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
-  const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing);
+  
+  // RESTRICTION: Once job is in WAITING_CUSTOMER_PICKUP, details are locked for everyone except with 'edit' override.
+  const isLockedForBilled = job?.status === 'WAITING_CUSTOMER_PICKUP' && !allowEditing;
+  const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
   useEffect(() => {
-    if (searchParams.get('action') === 'revert' && isJobInFinishedState && canIssueBill) {
+    if (searchParams.get('action') === 'revert' && job?.status === 'DONE' && canIssueBill) {
       setIsRevertDialogOpen(true);
     }
-  }, [searchParams, isJobInFinishedState, canIssueBill]);
+  }, [searchParams, job?.status, canIssueBill]);
 
   const getJobRef = () => {
     if (!db || !job) return null;
@@ -641,7 +644,8 @@ function JobDetailsPageContent() {
                           {job.assigneeUid ? 'เปลี่ยนผู้รับผิดชอบ' : 'มอบหมายงาน'}
                       </Button>
                   )}
-                  {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && (
+                  {/* RESTRICTION: Revert button only for status DONE */}
+                  {job.status === 'DONE' && canIssueBill && (
                     <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10" onClick={() => setIsRevertDialogOpen(true)}>
                       <RotateCcw className="mr-2 h-4 w-4" /> ส่งกลับแก้ไข
                     </Button>

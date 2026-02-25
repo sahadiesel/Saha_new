@@ -158,7 +158,7 @@ export function JobList({
     };
   }, [status, excludeStatus]);
 
-  // RESTRICTION: Only Office/Management can see and use approval/parts actions
+  // RESTRICTION: Only Office/Management can see and use admin actions
   const isManagementOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const isWorker = profile?.role === 'WORKER';
   const canDoBilling = isManagementOrOffice;
@@ -409,7 +409,8 @@ export function JobList({
                       </Button>
                     )}
                     
-                    {canDoBilling && (
+                    {/* RESTRICTION: Only show Revert button when status is DONE (Not yet billed or just finished) */}
+                    {canDoBilling && job.status === 'DONE' && (
                       <Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold">
                         <Link href={`/app/jobs/${job.id}?action=revert`}>
                           <RotateCcw className="mr-1 h-3 w-3" /> ส่งกลับแก้ไข
