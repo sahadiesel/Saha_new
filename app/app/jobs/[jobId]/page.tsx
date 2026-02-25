@@ -126,10 +126,12 @@ function JobDetailsPageContent() {
   const [vehicleEditData, setVehicleEditData] = useState<any>({});
   const [isUpdatingVehicle, setIsUpdatingVehicle] = useState(false);
 
-  // New states for Reverting Job
   const [isRevertDialogOpen, setIsRevertDialogOpen] = useState(false);
   const [revertReason, setRevertReason] = useState("");
   const [isReverting, setIsReverting] = useState(false);
+
+  // New state for document type selection
+  const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -155,7 +157,6 @@ function JobDetailsPageContent() {
   const isTechnicalDept = profile?.department === 'CAR_SERVICE' || profile?.department === 'COMMONRAIL' || profile?.department === 'MECHANIC';
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
-  // View-Only logic for Technicians
   const isViewOnly = job?.isArchived || 
                      profile?.role === 'VIEWER' || 
                      (job?.status === 'CLOSED' && !allowEditing) ||
@@ -166,7 +167,6 @@ function JobDetailsPageContent() {
   const isManagementOrOffice = profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
   const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing);
 
-  // Auto-open revert dialog if requested from URL
   useEffect(() => {
     if (searchParams.get('action') === 'revert' && isJobInFinishedState && canIssueBill) {
       setIsRevertDialogOpen(true);
@@ -480,7 +480,9 @@ function JobDetailsPageContent() {
     const batch = writeBatch(db);
     batch.update(jobDocRef, { status: 'DONE', lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
     batch.set(doc(collection(jobDocRef, "activities")), { text: `ช่างกดจบงานเรียบร้อยแล้ว รอดำเนินการออกบิลโดยแผนกออฟฟิศ`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
-    batch.commit().then(() => toast({ title: "บันทึกจบงานสำเร็จ", description: "ระบบแจ้งแผนกออฟฟิศเพื่อเตรียมออกบิลให้แล้วค่ะ" }))
+    batch.commit().then(() => {
+        toast({ title: "บันทึกจบงานสำเร็จ", description: "สถานะงานเปลี่ยนเป็น 'DONE' แล้วค่ะ กรุณาแจ้งแผนกออฟฟิศเพื่อออกบิลนะคะ" });
+    })
     .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
     .finally(() => setIsSubmittingNote(false));
   };
@@ -509,7 +511,6 @@ function JobDetailsPageContent() {
       toast({ title: "ส่งกลับแก้ไขสำเร็จ", description: "งานถูกส่งกลับไปยังสถานะกำลังดำเนินการซ่อมแล้วค่ะ" });
       setIsRevertDialogOpen(false);
       setRevertReason("");
-      // Clean query params if any
       router.replace(`/app/jobs/${jobId}`, { scroll: false });
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Error', description: e.message });
@@ -518,7 +519,6 @@ function JobDetailsPageContent() {
     }
   };
 
-  // Approval Handlers
   const handleApproveJob = async () => {
     if (!db || !profile || !job) return;
     setIsSubmittingNote(true);
@@ -700,13 +700,23 @@ function JobDetailsPageContent() {
 
                       {['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
                           <Button 
-                            onClick={isSubTask ? handleReturnToMain : (canIssueBill ? () => router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`) : handleFinishJob)} 
+                            onClick={isSubTask ? handleReturnToMain : handleFinishJob} 
                             disabled={isSubmittingNote || isViewOnly} 
-                            className={isSubTask || !canIssueBill ? "bg-green-600 hover:bg-green-700 text-white" : ""} 
-                            variant={isSubTask || !canIssueBill ? "default" : "outline"}
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold"
                           >
                               <CheckCircle className="mr-2 h-4 w-4" /> 
-                              {isSubTask ? "ส่งงานกลับแผนกหลัก" : (canIssueBill ? "จบงาน/ออกบิล" : "จบงาน (Finish Job)")}
+                              {isSubTask ? "ส่งงานกลับแผนกหลัก" : "จบงาน (Finish Job)"}
+                          </Button>
+                      )}
+
+                      {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && (
+                          <Button 
+                            onClick={() => setIsBillingSelectionOpen(true)}
+                            disabled={isSubmittingNote || isViewOnly} 
+                            className="bg-primary hover:bg-primary/90 text-white font-bold"
+                          >
+                              <Receipt className="mr-2 h-4 w-4" /> 
+                              ออกบิล (Issue Bill)
                           </Button>
                       )}
                   </div>
@@ -730,7 +740,6 @@ function JobDetailsPageContent() {
         <div className="space-y-6">
           <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-base font-semibold">Status</CardTitle><Badge variant={getStatusVariant(job.status)}>{jobStatusLabel(job.status)}</Badge></CardHeader></Card>
           
-          {/* Approval Actions Section */}
           {(job.status === 'WAITING_APPROVE' || job.status === 'PENDING_PARTS') && canEditDetails && (
             <Card className="border-primary/50 bg-primary/5 shadow-md animate-in fade-in zoom-in-95 duration-300">
                 <CardHeader className="pb-2">
@@ -839,6 +848,27 @@ function JobDetailsPageContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Select Document Type Dialog */}
+      <AlertDialog open={isBillingSelectionOpen} onOpenChange={setIsBillingSelectionOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>เลือกประเภทเอกสารที่ต้องการออก</AlertDialogTitle>
+            <AlertDialogDescription>
+              กรุณาเลือกประเภทเอกสารเพื่อดำเนินการออกบิลสำหรับงานซ่อมของ <b>{job?.customerSnapshot.name}</b>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
+            <Button variant="secondary" onClick={() => { router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
+              <FileText className="mr-2 h-4 w-4" /> ใบส่งของชั่วคราว
+            </Button>
+            <Button onClick={() => { router.push(`/app/office/documents/tax-invoice/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
+              <Receipt className="mr-2 h-4 w-4" /> ใบกำกับภาษี
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
