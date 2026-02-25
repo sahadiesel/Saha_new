@@ -158,11 +158,10 @@ export function JobList({
     };
   }, [status, excludeStatus]);
 
-  const isOfficeOrAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.role === 'OFFICER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  // RESTRICTION: Only Office/Management can see and use approval/parts actions
+  const isManagementOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const isWorker = profile?.role === 'WORKER';
-  
-  // Stricter check for billing/quotation actions
-  const canDoBilling = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  const canDoBilling = isManagementOrOffice;
 
   const fetchData = useCallback(async (pageIndex: number) => {
     if (!db) return;
@@ -331,7 +330,7 @@ export function JobList({
   };
 
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 rounded-lg border-2 border-dashed"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index)</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />กดเพื่อสร้าง Index</a></Button></div>);
-  if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>);
+  if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
   if (jobs.length === 0) return (<Card className="text-center py-12"><CardHeader><CardTitle className="text-muted-foreground">{emptyTitle}</CardTitle><CardDescription>{emptyDescription}</CardDescription></CardHeader></Card>);
 
   return (
@@ -356,8 +355,8 @@ export function JobList({
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">
                 <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
                 
-                {/* Status-specific Quick Actions for Office/Admin */}
-                {isOfficeOrAdmin && (
+                {/* Status-specific Quick Actions: RESTRICTED TO OFFICE/MANAGEMENT ONLY */}
+                {isManagementOrOffice && (
                   <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
                     {job.status === 'RECEIVED' && (
                       <Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default">
@@ -384,16 +383,17 @@ export function JobList({
                   </div>
                 )}
 
+                {/* Mechanic Accept Button (Only for own dept received jobs) */}
                 {isWorker && isOwnDept && job.status === 'RECEIVED' && (
                   <Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">
                     {isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้
                   </Button>
                 )}
                 
-                {/* Quotation/Billing Logic */}
+                {/* Quotation/Billing Actions (Restricted) */}
                 {job.status === 'WAITING_QUOTATION' && !hasQuotation && (
-                  <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "opacity-50 cursor-not-allowed")} variant="default" disabled={!canDoBilling}>
-                    {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : <span className="flex items-center"><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</span>}
+                  <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "hidden")} variant="default" disabled={!canDoBilling}>
+                    {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : null}
                   </Button>
                 )}
 
@@ -404,7 +404,7 @@ export function JobList({
                         {canDoBilling ? <Link href={`/app/office/documents/${job.salesDocType === 'DELIVERY_NOTE' ? 'delivery-note' : 'tax-invoice'}/${job.salesDocId}`}><Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}</Link> : <span className="flex items-center"><Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}</span>}
                       </Button>
                     ) : (
-                      <Button className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", !canDoBilling && "opacity-50 cursor-not-allowed")} variant="outline" disabled={!canDoBilling} onClick={() => setBillingJob(job)}>
+                      <Button className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", !canDoBilling && "hidden")} variant="outline" disabled={!canDoBilling} onClick={() => setBillingJob(job)}>
                         <Receipt className="mr-2 h-4 w-4" />ออกบิล
                       </Button>
                     )}
@@ -425,6 +425,7 @@ export function JobList({
       </div>
       {!searchTerm && (<div className="flex justify-between items-center bg-muted/30 p-4 rounded-lg border"><span className="text-xs font-medium text-muted-foreground uppercase tracking-widest">หน้า {currentPage + 1}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4 mr-1" /> ก่อนหน้า</Button><Button variant="outline" size="sm" onClick={handleNextPage} disabled={isLastPage}>ถัดไป <ChevronRight className="h-4 w-4 ml-1" /></Button></div></div>)}
       
+      {/* Quick Assign Dialog */}
       <Dialog open={!!assigningJob} onOpenChange={(open) => !open && setAssigningJob(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -476,6 +477,7 @@ export function JobList({
         </DialogContent>
       </Dialog>
 
+      {/* Select Document Type Dialog */}
       <AlertDialog open={!!billingJob} onOpenChange={(open) => !open && setBillingJob(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>เลือกประเภทเอกสาร</AlertDialogTitle><AlertDialogDescription>กรุณาเลือกประเภทเอกสารที่ต้องการออกสำหรับงานซ่อมของ <b>{billingJob?.customerSnapshot.name}</b></AlertDialogDescription></AlertDialogHeader><AlertDialogFooter className="flex flex-col sm:flex-row gap-2"><Button variant="outline" onClick={() => setBillingJob(null)} className="w-full sm:w-auto">ยกเลิก</Button><Button variant="secondary" onClick={() => { if (billingJob) router.push(`/app/office/documents/delivery-note/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบส่งของชั่วคราว</Button><Button onClick={() => { if (billingJob) router.push(`/app/office/documents/tax-invoice/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบกำกับภาษี</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
