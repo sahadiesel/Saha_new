@@ -36,7 +36,7 @@ import {
 import { Loader2, Send, Trash2, AlertCircle, ExternalLink, CalendarDays } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Calendar } from '@/components/ui/calendar';
+import { Calendar } from "@/components/ui/calendar";
 import { cn } from '@/lib/utils';
 
 const leaveRequestSchema = z.object({
