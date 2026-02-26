@@ -84,7 +84,7 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
 
     const isQuotation = document.docType === 'QUOTATION';
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : 'ผู้ส่งสินค้า/บริการ';
-    const labelReceiver = isQuotation ? 'ผู้รับสินค้า/บริการ';
+    const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : 'ผู้รับสินค้า/บริการ';
 
     return (
         <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col">
