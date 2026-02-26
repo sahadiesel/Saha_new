@@ -9,7 +9,7 @@ export const DEPARTMENT_LABELS: Record<string, string> = {
 
 export const JOB_STATUS_LABELS: Record<string, string> = {
     RECEIVED: "รอช่างรับงาน",
-    IN_PROGRESS: "กำลังทำ",
+    IN_PROGRESS: "กำลังตรวจสอบ",
     WAITING_QUOTATION: "รอเสนอราคา",
     WAITING_APPROVE: "รออนุมัติ",
     PENDING_PARTS: "กำลังจัดเตรียมอะไหล่",

@@ -725,7 +725,7 @@ function JobDetailsPageContent() {
                           </Button>
                       )}
 
-                      {['IN_PROGRESS', 'IN_REPAIR_PROCESS'].includes(job.status) && (
+                      {job.status === 'IN_PROGRESS' && (
                           <Button 
                             variant="outline"
                             onClick={handleRequestQuotation} 
