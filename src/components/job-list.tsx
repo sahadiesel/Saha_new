@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { 
@@ -10,12 +10,9 @@ import {
   getDocs, 
   orderBy, 
   limit, 
-  startAfter, 
-  QueryDocumentSnapshot, 
   doc,
   writeBatch,
   serverTimestamp,
-  type OrderByDirection, 
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
@@ -25,22 +22,16 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { 
   ArrowRight, 
   Loader2, 
-  PlusCircle, 
-  Search, 
   FileImage, 
   AlertCircle, 
   ExternalLink,
-  ChevronLeft,
-  ChevronRight,
   FileText,
   Receipt,
   UserCheck,
   CheckCircle2,
-  Users,
   Eye,
   RotateCcw,
   Check,
@@ -96,6 +87,17 @@ const getStatusStyles = (status: Job['status']) => {
   }
 }
 
+interface JobListProps {
+  department?: JobDepartment;
+  status?: JobStatus | JobStatus[];
+  excludeStatus?: JobStatus | JobStatus[];
+  assigneeUid?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  searchTerm?: string;
+  actionPreset?: string;
+}
+
 export function JobList({ 
   department, 
   status, 
@@ -104,7 +106,6 @@ export function JobList({
   emptyTitle = "ไม่พบรายการงาน", 
   emptyDescription = "ยังไม่มีรายการงานในระบบ",
   searchTerm = "",
-  actionPreset
 }: JobListProps) {
   const { db } = useFirebase();
   const { profile } = useAuth();
@@ -116,13 +117,8 @@ export function JobList({
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [error, setError] = useState<any>(null);
   const [indexUrl, setIndexUrl] = useState<string | null>(null);
-  
-  const [currentPage, setCurrentPage] = useState(0);
-  const pageStartCursors = useRef<(QueryDocumentSnapshot | null)[]>([null]);
-  const [isLastPage, setIsLastPage] = useState(false);
 
   const [billingJob, setBillingJob] = useState<Job | null>(null);
-
   const [assigningJob, setAssigningJob] = useState<Job | null>(null);
   const [deptWorkers, setDeptWorkers] = useState<UserProfile[]>([]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
@@ -143,12 +139,11 @@ export function JobList({
     };
   }, [status, excludeStatus]);
 
-  // RESTRICTION: Only Office/Management can see and use admin actions
   const isManagementOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const isWorker = profile?.role === 'WORKER';
   const canDoBilling = isManagementOrOffice;
 
-  const fetchData = useCallback(async (pageIndex: number) => {
+  const fetchData = useCallback(async () => {
     if (!db) return;
 
     setLoading(true);
@@ -156,7 +151,6 @@ export function JobList({
     setIndexUrl(null);
 
     try {
-      const isSearch = !!searchTerm.trim();
       const qConstraints: QueryConstraint[] = [];
       
       if (department) qConstraints.push(where('department', '==', department));
@@ -167,23 +161,14 @@ export function JobList({
       }
       
       qConstraints.push(orderBy('lastActivityAt', 'desc'));
-
-      if (isSearch) {
-        qConstraints.push(limit(200));
-      } else {
-        const cursor = pageStartCursors.current[pageIndex];
-        if (cursor) {
-          qConstraints.push(startAfter(cursor));
-        }
-        qConstraints.push(limit(12));
-      }
+      qConstraints.push(limit(500)); // Show all work in one go
 
       const q = query(collection(db, "jobs"), ...qConstraints);
       const snapshot = await getDocs(q);
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
-      if (isSearch) {
-        const term = searchTerm.toLowerCase().trim();
+      const term = searchTerm.toLowerCase().trim();
+      if (term) {
         jobsData = jobsData.filter(j => 
           (j.customerSnapshot?.name || "").toLowerCase().includes(term) ||
           (j.customerSnapshot?.phone || "").includes(term) ||
@@ -192,12 +177,6 @@ export function JobList({
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
           (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
-        setIsLastPage(true);
-      } else {
-        setIsLastPage(snapshot.docs.length < 12);
-        if (snapshot.docs.length > 0) {
-          pageStartCursors.current[pageIndex + 1] = snapshot.docs[snapshot.docs.length - 1];
-        }
       }
       
       setJobs(jobsData);
@@ -214,26 +193,8 @@ export function JobList({
   }, [db, department, assigneeUid, statusConfig.key, searchTerm]);
 
   useEffect(() => {
-    setCurrentPage(0);
-    pageStartCursors.current = [null];
-    fetchData(0);
-  }, [searchTerm, department, statusConfig.key, fetchData]);
-
-  const handleNextPage = () => {
-    if (!isLastPage) {
-      const nextIdx = currentPage + 1;
-      setCurrentPage(nextIdx);
-      fetchData(nextIdx);
-    }
-  };
-
-  const handlePrevPage = () => {
-    if (currentPage > 0) {
-      const prevIdx = currentPage - 1;
-      setCurrentPage(prevIdx);
-      fetchData(prevIdx);
-    }
-  };
+    fetchData();
+  }, [fetchData]);
 
   const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
     if (!db || !profile || isProcessing) return;
@@ -254,7 +215,7 @@ export function JobList({
       });
       await batch.commit();
       toast({ title: "อัปเดตสถานะสำเร็จ" });
-      fetchData(currentPage);
+      fetchData();
     } catch (e: any) { 
       toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message }); 
     } finally { 
@@ -272,7 +233,7 @@ export function JobList({
       batch.set(doc(collection(jobRef, "activities")), { text: `ช่างรับงานเองเรียบร้อยแล้ว แผนก ${deptLabel(job.department)}`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
       toast({ title: "รับงานสำเร็จ" });
-      fetchData(currentPage);
+      fetchData();
     } catch (e: any) { toast({ variant: "destructive", title: "รับงานไม่สำเร็จ", description: e.message }); } finally { setIsProcessing(null); }
   };
 
@@ -310,7 +271,7 @@ export function JobList({
       await batch.commit();
       toast({ title: "มอบหมายงานสำเร็จ" });
       setAssigningJob(null);
-      fetchData(currentPage);
+      fetchData();
     } catch (e: any) { toast({ variant: 'destructive', title: "มอบหมายล้มเหลว", description: e.message }); } finally { setIsProcessing(null); }
   };
 
@@ -340,7 +301,6 @@ export function JobList({
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">
                 <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
                 
-                {/* Status-specific Quick Actions: RESTRICTED TO OFFICE/MANAGEMENT ONLY */}
                 {isManagementOrOffice && (
                   <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
                     {job.status === 'RECEIVED' && (
@@ -368,14 +328,12 @@ export function JobList({
                   </div>
                 )}
 
-                {/* Mechanic Accept Button (Only for own dept received jobs) */}
                 {isWorker && isOwnDept && job.status === 'RECEIVED' && (
                   <Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">
                     {isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้
                   </Button>
                 )}
                 
-                {/* Quotation/Billing Actions (Restricted) */}
                 {job.status === 'WAITING_QUOTATION' && !hasQuotation && (
                   <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "hidden")} variant="default" disabled={!canDoBilling}>
                     {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : null}
@@ -394,7 +352,6 @@ export function JobList({
                       </Button>
                     )}
                     
-                    {/* RESTRICTION: Only show Revert button when status is DONE (Not yet billed or just finished) */}
                     {canDoBilling && job.status === 'DONE' && (
                       <Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold">
                         <Link href={`/app/jobs/${job.id}?action=revert`}>
@@ -409,7 +366,6 @@ export function JobList({
           );
         })}
       </div>
-      {!searchTerm && (<div className="flex justify-between items-center bg-muted/30 p-4 rounded-lg border"><span className="text-xs font-medium text-muted-foreground uppercase tracking-widest">หน้า {currentPage + 1}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4 mr-1" /> ก่อนหน้า</Button><Button variant="outline" size="sm" onClick={handleNextPage} disabled={isLastPage}>ถัดไป <ChevronRight className="h-4 w-4 ml-1" /></Button></div></div>)}
       
       {/* Quick Assign Dialog */}
       <Dialog open={!!assigningJob} onOpenChange={(open) => !open && setAssigningJob(null)}>

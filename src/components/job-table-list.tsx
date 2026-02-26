@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { 
   collection, 
   query, 
@@ -10,27 +9,21 @@ import {
   getDocs, 
   orderBy, 
   limit, 
-  startAfter, 
-  QueryDocumentSnapshot, 
   type OrderByDirection, 
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
-import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { PageHeader } from "@/components/page-header";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, PlusCircle, Search, FileImage, LayoutGrid, Table as TableIcon, Eye, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, Eye, AlertCircle, ExternalLink } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobStatus, JobDepartment } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 interface JobTableListProps {
@@ -69,44 +62,31 @@ export function JobTableList({
   searchTerm = "",
   orderByField = "lastActivityAt",
   orderByDirection = "desc",
-  limit: limitProp = 20,
   emptyTitle = "ไม่พบรายการงาน",
   emptyDescription = "ไม่มีข้อมูลงานซ่อมที่ตรงกับเงื่อนไข",
   source = 'active',
   year = new Date().getFullYear(),
 }: JobTableListProps) {
   const { db } = useFirebase();
-  const { profile } = useAuth();
   const { toast } = useToast();
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<any>(null);
   const [indexUrl, setIndexUrl] = useState<string | null>(null);
-  
-  const [currentPage, setCurrentPage] = useState(0);
-  const pageStartCursors = useRef<(QueryDocumentSnapshot | null)[]>([null]);
-  const [isLastPage, setIsLastPage] = useState(false);
 
-  // Memoize filter logic to avoid infinite loops from array literals
   const filterConfig = useMemo(() => {
     const excludeArray = excludeStatus ? (Array.isArray(excludeStatus) ? excludeStatus : [excludeStatus]) : [];
-    
-    // Complement set for allowed statuses
     let finalInStatus: JobStatus[] = [];
     if (status) {
         finalInStatus = [status];
     } else if (excludeArray.length > 0) {
         finalInStatus = (JOB_STATUSES as unknown as JobStatus[]).filter(s => !excludeArray.includes(s));
     }
-
-    return { 
-        inStatus: finalInStatus,
-        key: JSON.stringify(finalInStatus)
-    };
+    return { inStatus: finalInStatus, key: JSON.stringify(finalInStatus) };
   }, [status, excludeStatus]);
 
-  const fetchData = useCallback(async (pageIndex: number) => {
+  const fetchData = useCallback(async () => {
     if (!db) return;
 
     setLoading(true);
@@ -114,35 +94,21 @@ export function JobTableList({
     setIndexUrl(null);
 
     try {
-      const isSearch = !!searchTerm.trim();
       const collectionName = source === 'archive' ? `jobsArchive_${year}` : 'jobs';
-      
       const qConstraints: QueryConstraint[] = [];
       if (department) qConstraints.push(where('department', '==', department));
-      
-      // Use 'in' filter which is generally more stable than 'not-in' for ordered queries
       if (filterConfig.inStatus.length > 0) {
         qConstraints.push(where('status', 'in', filterConfig.inStatus));
       }
-      
       qConstraints.push(orderBy(orderByField, orderByDirection));
-
-      if (isSearch) {
-        qConstraints.push(limit(200));
-      } else {
-        const cursor = pageStartCursors.current[pageIndex];
-        if (cursor) {
-          qConstraints.push(startAfter(cursor));
-        }
-        qConstraints.push(limit(limitProp));
-      }
+      qConstraints.push(limit(500)); // Large limit to show all in one page
 
       const q = query(collection(db, collectionName), ...qConstraints);
       const snapshot = await getDocs(q);
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
-      if (isSearch) {
-        const term = searchTerm.toLowerCase().trim();
+      const term = searchTerm.toLowerCase().trim();
+      if (term) {
         jobsData = jobsData.filter(j => 
           (j.customerSnapshot?.name || "").toLowerCase().includes(term) ||
           (j.customerSnapshot?.phone || "").includes(term) ||
@@ -151,12 +117,6 @@ export function JobTableList({
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
           (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
-        setIsLastPage(true);
-      } else {
-        setIsLastPage(snapshot.docs.length < limitProp);
-        if (snapshot.docs.length > 0) {
-          pageStartCursors.current[pageIndex + 1] = snapshot.docs[snapshot.docs.length - 1];
-        }
       }
       
       setJobs(jobsData);
@@ -165,45 +125,22 @@ export function JobTableList({
       setError(err);
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) {
-          setIndexUrl(urlMatch[0]);
-        }
+        if (urlMatch) setIndexUrl(urlMatch[0]);
       }
     } finally {
       setLoading(false);
     }
-  }, [db, source, year, department, orderByField, orderByDirection, limitProp, filterConfig.key, searchTerm]);
+  }, [db, source, year, department, orderByField, orderByDirection, filterConfig.key, searchTerm]);
 
   useEffect(() => {
-    setCurrentPage(0);
-    pageStartCursors.current = [null];
-    fetchData(0);
-  }, [searchTerm, department, filterConfig.key, fetchData]);
-
-  const handleNextPage = () => {
-    if (!isLastPage) {
-      const nextIdx = currentPage + 1;
-      setCurrentPage(nextIdx);
-      fetchData(nextIdx);
-    }
-  };
-
-  const handlePrevPage = () => {
-    if (currentPage > 0) {
-      const prevIdx = currentPage - 1;
-      setCurrentPage(prevIdx);
-      fetchData(prevIdx);
-    }
-  };
+    fetchData();
+  }, [fetchData]);
 
   if (indexUrl) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 rounded-lg border-2 border-dashed">
         <AlertCircle className="h-12 w-12 text-destructive mb-4" />
         <h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) สำหรับคิวรีนี้</h3>
-        <p className="text-muted-foreground mb-6 max-w-md">
-          ระบบต้องการการสร้างดัชนีในฐานข้อมูลเพื่อให้สามารถแสดงข้อมูลได้ถูกต้อง กรุณาคลิกปุ่มด้านล่างเพื่อสร้างดัชนี
-        </p>
         <Button asChild>
           <a href={indexUrl} target="_blank" rel="noopener noreferrer">
             <ExternalLink className="mr-2 h-4 w-4" />
@@ -270,15 +207,6 @@ export function JobTableList({
             </TableBody>
           </Table>
         </div>
-        {!searchTerm && (
-          <div className="flex w-full justify-between items-center mt-4">
-            <span className="text-sm text-muted-foreground">หน้า {currentPage + 1}</span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}>ก่อนหน้า</Button>
-              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={isLastPage}>ถัดไป</Button>
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );
