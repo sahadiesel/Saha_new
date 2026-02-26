@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
@@ -48,13 +47,18 @@ interface JobTableListProps {
   year?: number;
 }
 
-const getStatusVariant = (status: Job['status']) => {
+const getStatusStyles = (status: Job['status']) => {
   switch (status) {
-    case 'RECEIVED': return 'secondary';
-    case 'IN_PROGRESS': return 'default';
-    case 'DONE': return 'outline';
-    case 'CLOSED': return 'destructive';
-    default: return 'outline';
+    case 'RECEIVED': return 'bg-amber-500 text-white border-amber-600 hover:bg-amber-500';
+    case 'IN_PROGRESS': return 'bg-cyan-500 text-white border-cyan-600 hover:bg-cyan-500';
+    case 'WAITING_QUOTATION': return 'bg-blue-500 text-white border-blue-600 hover:bg-blue-500';
+    case 'WAITING_APPROVE': return 'bg-orange-500 text-white border-orange-600 hover:bg-orange-500';
+    case 'PENDING_PARTS': return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-500';
+    case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
+    case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
+    case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
+    default: return 'bg-secondary text-secondary-foreground';
   }
 }
 
@@ -235,7 +239,7 @@ export function JobTableList({
       <CardContent className="p-0">
         <div className="border rounded-lg bg-card overflow-hidden">
           <Table>
-            <TableHeader className="bg-muted/50">
+            <TableHeader>
               <TableRow>
                 <TableHead className="pl-6">ลูกค้า (Customer)</TableHead>
                 <TableHead className="hidden md:table-cell">แผนก</TableHead>
@@ -254,7 +258,7 @@ export function JobTableList({
                   </TableCell>
                   <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
                   <TableCell className="max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground">{job.description}</TableCell>
-                  <TableCell><Badge variant={getStatusVariant(job.status)} className={cn(job.status === 'RECEIVED' && "animate-blink")}>{jobStatusLabel(job.status)}</Badge></TableCell>
+                  <TableCell><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{safeFormat(job.lastActivityAt, 'dd MMM yy HH:mm')}</TableCell>
                   <TableCell className="text-right pr-6">
                     <Button asChild variant="secondary" size="icon" className="h-8 w-8 rounded-full shadow-sm">
@@ -270,8 +274,8 @@ export function JobTableList({
           <div className="flex w-full justify-between items-center mt-4">
             <span className="text-sm text-muted-foreground">หน้า {currentPage + 1}</span>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handlePrevPage} disabled={currentPage === 0}>ก่อนหน้า</Button>
-              <Button variant="outline" size="sm" onClick={handleNextPage} disabled={isLastPage}>ถัดไป</Button>
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}>ก่อนหน้า</Button>
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={isLastPage}>ถัดไป</Button>
             </div>
           </div>
         )}

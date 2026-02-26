@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -35,13 +34,18 @@ const getSafeTime = (val: any): number => {
 const isClosedStatus = (status?: Job['status']) => 
     ["CLOSED", "DONE", "COMPLETED"].includes(String(status || "").toUpperCase());
 
-const getStatusVariant = (status: Job['status']) => {
+const getStatusStyles = (status: Job['status']) => {
   switch (status) {
-    case 'RECEIVED': return 'secondary';
-    case 'IN_PROGRESS': return 'default';
-    case 'DONE': return 'outline';
-    case 'CLOSED': return 'destructive';
-    default: return 'outline';
+    case 'RECEIVED': return 'bg-amber-500 text-white border-amber-600 hover:bg-amber-500';
+    case 'IN_PROGRESS': return 'bg-cyan-500 text-white border-cyan-600 hover:bg-cyan-500';
+    case 'WAITING_QUOTATION': return 'bg-blue-500 text-white border-blue-600 hover:bg-blue-500';
+    case 'WAITING_APPROVE': return 'bg-orange-500 text-white border-orange-600 hover:bg-orange-500';
+    case 'PENDING_PARTS': return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-500';
+    case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
+    case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
+    case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
+    default: return 'bg-secondary text-secondary-foreground';
   }
 }
 
@@ -52,9 +56,9 @@ function JobCard({ job }: { job: Job }) {
       <div className="relative aspect-video w-full bg-muted">
         {/* Status Badge at Top Right */}
         <Badge 
-          variant={getStatusVariant(job.status)} 
           className={cn(
-            "absolute top-2 right-2 z-10 shadow-sm text-[10px] px-2 py-0.5 border-white/20 backdrop-blur-[2px] bg-opacity-90", 
+            "absolute top-2 right-2 z-10 shadow-sm text-[10px] px-2 py-0.5 border", 
+            getStatusStyles(job.status),
             job.status === 'RECEIVED' && "animate-blink"
           )}
         >
@@ -111,7 +115,7 @@ function CompactJobCard({ job }: { job: Job }) {
                         <p className="font-semibold text-sm truncate">{job.customerSnapshot.name}</p>
                         <p className="text-[10px] text-muted-foreground truncate">{job.description}</p>
                         <div className="flex justify-between items-center mt-2">
-                            <Badge variant="outline" className="text-[9px] px-1 h-4">{deptLabel(job.department)}</Badge>
+                            <Badge className={cn("text-[9px] px-1 h-4 border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
                             <Button asChild size="icon" variant="ghost" className="h-6 w-6 rounded-full">
                                 <Link href={`/app/jobs/${job.id}`}><Eye className="h-3.5 w-3.5" /></Link>
                             </Button>
@@ -198,7 +202,7 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
                     </TableCell>
                     <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
                     <TableCell className="max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground">{job.description}</TableCell>
-                    <TableCell><Badge variant={getStatusVariant(job.status)} className={cn(job.status === 'RECEIVED' && "animate-blink")}>{jobStatusLabel(job.status)}</Badge></TableCell>
+                    <TableCell><Badge className={cn("border", getStatusStyles(job.status), job.status === 'RECEIVED' && "animate-blink")}>{jobStatusLabel(job.status)}</Badge></TableCell>
                     <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{safeFormat(job.lastActivityAt, 'dd MMM yy HH:mm')}</TableCell>
                     <TableCell className="text-right pr-6">
                     <Button asChild variant="secondary" size="icon" className="h-8 w-8 rounded-full shadow-sm">

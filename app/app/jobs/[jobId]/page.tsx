@@ -42,22 +42,18 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 
 const MAX_TOTAL_PHOTOS = 12;
 
-const getStatusVariant = (status: Job['status']) => {
+const getStatusStyles = (status: Job['status']) => {
   switch (status) {
-    case 'RECEIVED':
-    case 'WAITING_QUOTATION':
-    case 'WAITING_APPROVE':
-      return 'secondary';
-    case 'IN_PROGRESS':
-    case 'IN_REPAIR_PROCESS':
-      return 'default';
-    case 'DONE':
-    case 'WAITING_CUSTOMER_PICKUP':
-      return 'outline';
-    case 'CLOSED':
-      return 'destructive';
-    default:
-      return 'outline';
+    case 'RECEIVED': return 'bg-amber-500 text-white border-amber-600 hover:bg-amber-500';
+    case 'IN_PROGRESS': return 'bg-cyan-500 text-white border-cyan-600 hover:bg-cyan-500';
+    case 'WAITING_QUOTATION': return 'bg-blue-500 text-white border-blue-600 hover:bg-blue-500';
+    case 'WAITING_APPROVE': return 'bg-orange-500 text-white border-orange-600 hover:bg-orange-500';
+    case 'PENDING_PARTS': return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-500';
+    case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
+    case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
+    case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
+    default: return 'bg-secondary text-secondary-foreground';
   }
 }
 
@@ -651,7 +647,7 @@ function JobDetailsPageContent() {
             <CardContent className="space-y-4 text-sm">
               <div><h4 className="font-semibold text-base">ลูกค้า</h4><p>{job.customerSnapshot.name} (<a href={`tel:${job.customerSnapshot.phone}`} className="text-primary hover:underline inline-flex items-center gap-1"><Phone className="h-3 w-3" />{job.customerSnapshot.phone}</a>)</p></div>
               <div className="flex gap-8">
-                <div><h4 className="font-semibold text-base">แผนกที่ดูแล</h4><Badge variant="secondary" className="text-sm">{deptLabel(job.department)}</Badge></div>
+                <div><h4 className="font-semibold text-base">แผนกที่ดูแล</h4><Badge className={cn("text-sm border", getStatusStyles(job.status))}>{deptLabel(job.department)}</Badge></div>
                 {job.mainDepartment && job.mainDepartment !== job.department && (
                     <div><h4 className="font-semibold text-base text-muted-foreground">แผนกหลัก</h4><Badge variant="outline" className="text-sm">{deptLabel(job.mainDepartment)}</Badge></div>
                 )}
@@ -777,7 +773,7 @@ function JobDetailsPageContent() {
         </div>
         
         <div className="space-y-6">
-          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-base font-semibold">สถานะงาน (Status)</CardTitle><Badge variant={getStatusVariant(job.status)}>{jobStatusLabel(job.status)}</Badge></CardHeader></Card>
+          <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-base font-semibold">สถานะงาน (Status)</CardTitle><Badge className={cn("border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></CardHeader></Card>
           
           {(job.status === 'WAITING_APPROVE' || job.status === 'PENDING_PARTS') && canEditDetails && (
             <Card className="border-primary/50 bg-primary/5 shadow-md animate-in fade-in zoom-in-95 duration-300">

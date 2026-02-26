@@ -81,33 +81,18 @@ import { safeFormat } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 import { cn } from "@/lib/utils";
 
-interface JobListProps {
-  department?: JobDepartment;
-  status?: JobStatus | JobStatus[];
-  excludeStatus?: JobStatus | JobStatus[];
-  assigneeUid?: string;
-  emptyTitle?: string;
-  emptyDescription?: string;
-  searchTerm?: string;
-  actionPreset?: 'waitingApprove' | 'pendingPartsReady';
-}
-
-const getStatusVariant = (status: Job['status']) => {
+const getStatusStyles = (status: Job['status']) => {
   switch (status) {
-    case 'RECEIVED':
-    case 'WAITING_QUOTATION':
-    case 'WAITING_APPROVE':
-      return 'secondary';
-    case 'IN_PROGRESS':
-    case 'IN_REPAIR_PROCESS':
-      return 'default';
-    case 'DONE':
-    case 'WAITING_CUSTOMER_PICKUP':
-      return 'outline';
-    case 'CLOSED':
-      return 'destructive';
-    default:
-      return 'outline';
+    case 'RECEIVED': return 'bg-amber-500 text-white border-amber-600 hover:bg-amber-500';
+    case 'IN_PROGRESS': return 'bg-cyan-500 text-white border-cyan-600 hover:bg-cyan-500';
+    case 'WAITING_QUOTATION': return 'bg-blue-500 text-white border-blue-600 hover:bg-blue-500';
+    case 'WAITING_APPROVE': return 'bg-orange-500 text-white border-orange-600 hover:bg-orange-500';
+    case 'PENDING_PARTS': return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-500';
+    case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
+    case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
+    case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
+    default: return 'bg-secondary text-secondary-foreground';
   }
 }
 
@@ -345,7 +330,7 @@ export function JobList({
             <Card key={job.id} className="flex flex-col overflow-hidden hover:shadow-md transition-shadow">
               <div className="relative aspect-video bg-muted">
                 {job.photos && job.photos.length > 0 ? (<Image src={job.photos[0]} alt={job.description} fill className="object-cover" />) : (<div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>)}
-                <Badge variant={getStatusVariant(job.status)} className="absolute top-2 right-2 shadow-sm border-white/20">{jobStatusLabel(job.status)}</Badge>
+                <Badge className={cn("absolute top-2 right-2 shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
               </div>
               <CardHeader className="p-4 space-y-1">
                 <CardTitle className="text-base line-clamp-1">{job.customerSnapshot.name}</CardTitle>
