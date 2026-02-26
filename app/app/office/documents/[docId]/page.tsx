@@ -69,7 +69,6 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
     const displayCustomerAddress = isTaxDoc ? (document.customerSnapshot.taxAddress || 'ไม่มีที่อยู่') : (document.customerSnapshot.detail || document.customerSnapshot.taxAddress || 'ไม่มีที่อยู่');
     const displayCustomerPhone = isTaxDoc ? (document.customerSnapshot.taxPhone || document.customerSnapshot.phone) : document.customerSnapshot.phone;
 
-    // Branch logic for Customer
     let branchLabel = "";
     if (isTaxDoc) {
         if (document.customerSnapshot.taxBranchType === 'HEAD_OFFICE') {
@@ -79,21 +78,17 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
         }
     }
 
-    // Branch logic for Store
     const storeBranchLabel = document.storeSnapshot.branch === '00000' || document.storeSnapshot.branch === 'สำนักงานใหญ่' 
         ? 'สำนักงานใหญ่' 
         : (document.storeSnapshot.branch ? `สาขา ${document.storeSnapshot.branch}` : '');
 
-    // Signature Label Logic
     const isQuotation = document.docType === 'QUOTATION';
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : 'ผู้ส่งสินค้า/บริการ';
-    const labelReceiver = isQuotation ? 'ลูกค้า' : 'ผู้รับสินค้า/บริการ';
+    const labelReceiver = isQuotation ? 'ผู้รับสินค้า/บริการ';
 
     return (
-        <div className="printable-document p-[10mm] border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full print:p-[10mm] box-border flex flex-col">
-            {/* Main Content Area */}
+        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col">
             <div className="flex-1">
-                {/* Header Section */}
                 <div className="grid grid-cols-2 gap-8 mb-4">
                     <div className="space-y-1">
                         <h2 className="text-base font-bold">
@@ -117,7 +112,6 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
                     </div>
                 </div>
 
-                {/* Customer & Vehicle Section */}
                 <div className="grid grid-cols-2 gap-8 mb-4 p-3 border rounded-md">
                     <div className="space-y-1">
                         <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
@@ -138,7 +132,6 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
                     <VehicleInfo doc={document} />
                 </div>
 
-                {/* Items Table */}
                 <Table className="mb-4 border-t border-b">
                     <TableHeader className="bg-muted/20">
                         <TableRow className="hover:bg-transparent">
@@ -162,7 +155,6 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
                     </TableBody>
                 </Table>
 
-                {/* Summary Section */}
                 <div className="grid grid-cols-2 gap-8">
                     <div className="text-left text-[11px]">
                         {document.notes && <p className="whitespace-pre-wrap"><span className="font-bold">หมายเหตุ:</span> {document.notes}</p>}
@@ -178,8 +170,7 @@ function DocumentView({ document, taxCopyLabel }: { document: Document, taxCopyL
                 </div>
             </div>
             
-            {/* Signature Section */}
-            <div className="grid grid-cols-2 gap-12 mt-auto text-center text-xs pb-4">
+            <div className="grid grid-cols-2 gap-12 mt-auto text-center text-xs pb-4 pt-10">
                 <div className="space-y-8">
                     <p>.................................................</p>
                     <p>({document.senderName || labelSender})</p>
@@ -252,7 +243,6 @@ function DocumentPageContent() {
     return (
         <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden">
             <div className="max-w-[210mm] mx-auto space-y-6 print:m-0 print:max-w-none">
-                {/* Toolbar */}
                 <div className="flex justify-between items-center bg-background p-4 rounded-lg border shadow-sm print:hidden mx-4 md:mx-0">
                     <Button variant="outline" onClick={handleBack}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
                     <div className="flex gap-2">
@@ -260,15 +250,11 @@ function DocumentPageContent() {
                     </div>
                 </div>
 
-                {/* Document Container with Horizontal Scroll for mobile */}
                 <div className="w-full overflow-x-auto pb-10 print:overflow-visible print:pb-0">
                     <div className="min-w-[210mm] print:min-w-0 print:m-0">
                         {document.docType === 'TAX_INVOICE' ? (
                             <div className="space-y-8 print:space-y-0">
-                                {/* Original Copy */}
                                 <DocumentView document={document} taxCopyLabel="ORIGINAL" />
-                                
-                                {/* Page Breaks for Copies - only if not the only page */}
                                 <div className="hidden print:block break-before-page" />
                                 <DocumentView document={document} taxCopyLabel="COPY" />
                                 

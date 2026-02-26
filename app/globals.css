@@ -85,6 +85,16 @@
     margin: 0;
   }
 
+  /* Force scrollbars to hide everywhere in print */
+  * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+    overflow: visible !important;
+  }
+  ::-webkit-scrollbar {
+    display: none !important;
+  }
+
   .print-hidden, .print\:hidden, aside, header, nav, button {
     display: none !important;
   }
@@ -113,7 +123,8 @@
     padding: 10mm 15mm !important;
     border: none !important;
     width: 210mm !important;
-    min-height: 282mm !important;
+    /* Force at least one page height minus padding to keep signature at bottom */
+    min-height: 277mm !important; 
     background: #fff !important;
     box-shadow: none !important;
     margin: 0 !important;
