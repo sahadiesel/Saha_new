@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
@@ -146,8 +145,9 @@ function JobDetailsPageContent() {
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
   
-  const isOfficeDept = profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
-  const canIssueBill = isOfficeDept && isStaff;
+  const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  const canIssueBill = isMgmtOrOffice && isStaff;
+  const canManageWork = isMgmtOrOffice || profile?.role === 'OFFICER';
   
   const allowEditing = searchParams.get('edit') === 'true' && isUserAdmin;
   
@@ -161,11 +161,9 @@ function JobDetailsPageContent() {
 
   const canUpdateActivity = isStaff && !isJobInFinishedState;
   
-  const isManagementOrOffice = profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
-  
   // RESTRICTION: Once job is in WAITING_CUSTOMER_PICKUP, details are locked for everyone except with 'edit' override.
   const isLockedForBilled = job?.status === 'WAITING_CUSTOMER_PICKUP' && !allowEditing;
-  const canEditDetails = isStaff && isManagementOrOffice && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
+  const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
   useEffect(() => {
     if (searchParams.get('action') === 'revert' && job?.status === 'DONE' && canIssueBill) {
@@ -776,7 +774,7 @@ function JobDetailsPageContent() {
         <div className="space-y-6">
           <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-base font-semibold">สถานะงาน (Status)</CardTitle><Badge className={cn("border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></CardHeader></Card>
           
-          {(job.status === 'WAITING_APPROVE' || job.status === 'PENDING_PARTS') && canEditDetails && (
+          {(job.status === 'WAITING_APPROVE' || job.status === 'PENDING_PARTS') && canManageWork && (
             <Card className="border-primary/50 bg-primary/5 shadow-md animate-in fade-in zoom-in-95 duration-300">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
@@ -785,7 +783,7 @@ function JobDetailsPageContent() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                    {job.status === 'WAITING_APPROVE' && (
+                    {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
                         <>
                             <Button className="w-full bg-green-600 hover:bg-green-700" onClick={handleApproveJob} disabled={isSubmittingNote}>
                                 <Check className="mr-2 h-4 w-4" /> อนุมัติเริ่มซ่อม
@@ -795,10 +793,13 @@ function JobDetailsPageContent() {
                             </Button>
                         </>
                     )}
-                    {job.status === 'PENDING_PARTS' && (
+                    {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
                         <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={handlePartsReady} disabled={isSubmittingNote}>
                             <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
                         </Button>
+                    )}
+                    {!isMgmtOrOffice && (
+                        <p className="text-[10px] text-muted-foreground text-center italic">ส่วนนี้สำหรับฝ่ายออฟฟิศ/บริหารจัดการเท่านั้น</p>
                     )}
                 </CardContent>
             </Card>

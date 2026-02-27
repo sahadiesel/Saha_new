@@ -138,9 +138,12 @@ export function JobList({
     };
   }, [status, excludeStatus]);
 
-  const isManagementOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  // Permissions: isMgmtOrOffice includes Office, Management, Admin, Manager
+  const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  // canAssign: Mgmt/Office OR Officer (e.g. Front PC)
+  const canAssignWork = isMgmtOrOffice || profile?.role === 'OFFICER';
   const isWorker = profile?.role === 'WORKER';
-  const canDoBilling = isManagementOrOffice;
+  const canDoBilling = isMgmtOrOffice;
 
   const fetchData = useCallback(async () => {
     if (!db) return;
@@ -278,7 +281,7 @@ export function JobList({
     } catch (e: any) { toast({ variant: 'destructive', title: "มอบหมายล้มเหลว", description: e.message }); } finally { setIsProcessing(null); }
   };
 
-  if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 rounded-lg border-2 border-dashed"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index)</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />กดเพื่อสร้าง Index</a></Button></div>);
+  if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 rounded-lg border-2 border-dashed"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) สำหรับคิวรีนี้</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />กดเพื่อสร้าง Index</a></Button></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
   if (jobs.length === 0) return (<Card className="text-center py-12"><CardHeader><CardTitle className="text-muted-foreground">{emptyTitle}</CardTitle><CardDescription>{emptyDescription}</CardDescription></CardHeader></Card>);
 
@@ -304,7 +307,7 @@ export function JobList({
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">
                 <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
                 
-                {isManagementOrOffice && (
+                {canAssignWork && (
                   <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
                     {job.status === 'RECEIVED' && (
                       <Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default">
@@ -312,7 +315,7 @@ export function JobList({
                       </Button>
                     )}
                     
-                    {job.status === 'WAITING_APPROVE' && (
+                    {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
                       <div className="grid grid-cols-2 gap-2">
                         <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
                           <Check className="mr-1 h-3 w-3" />อนุมัติ
@@ -323,7 +326,7 @@ export function JobList({
                       </div>
                     )}
 
-                    {job.status === 'PENDING_PARTS' && (
+                    {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
                       <Button className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]" onClick={() => handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
                         <PackageCheck className="mr-2 h-4 w-4" />อะไหล่มาครบแล้ว
                       </Button>
