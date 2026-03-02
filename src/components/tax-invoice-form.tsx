@@ -155,10 +155,15 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     
     const fetchPreview = async () => {
       try {
+        setIndexErrorUrl(null);
         const nextNo = await getNextAvailableDocNo(db, 'TAX_INVOICE', watchedIssueDate);
         setPreviewDocNo(nextNo);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to fetch doc no preview", e);
+        if (e.message?.includes('requires an index')) {
+          const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
       }
     };
     fetchPreview();
@@ -369,9 +374,9 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
       {indexErrorUrl && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>ต้องสร้าง Index ก่อน</AlertTitle>
+          <AlertTitle>ต้องสร้างดัชนี (Index) ก่อน</AlertTitle>
           <AlertDescription className="flex flex-col gap-2">
-            <span>การตรวจสอบใบกำกับภาษีซ้ำซ้อนต้องใช้ Index กรุณากดปุ่มเพื่อสร้าง Index ก่อนค่ะ</span>
+            <span>ฐานข้อมูลต้องการดัชนีเพื่อเรียงลำดับเอกสาร กรุณากดปุ่มด้านล่างเพื่อสร้าง Index</span>
             <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive hover:bg-muted">
               <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4"/>สร้าง Index</a>
             </Button>
