@@ -32,6 +32,7 @@ import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/e
 
 const MAX_INTAKE_PHOTOS = 8;
 
+// Updated Schema to enforce all fields based on department
 const intakeSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
   department: z.enum(JOB_DEPARTMENTS, { required_error: "กรุณาเลือกแผนก" }),
@@ -51,6 +52,43 @@ const intakeSchema = z.object({
     partNumber: z.string().optional(),
     registrationNumber: z.string().optional(),
   }).optional(),
+}).superRefine((data, ctx) => {
+  // Enforce all fields for CAR_SERVICE
+  if (data.department === 'CAR_SERVICE') {
+    if (!data.carServiceDetails?.brand?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อรถ", path: ['carServiceDetails', 'brand'] });
+    }
+    if (!data.carServiceDetails?.model?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุรุ่นรถ", path: ['carServiceDetails', 'model'] });
+    }
+    if (!data.carServiceDetails?.licensePlate?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุทะเบียนรถ", path: ['carServiceDetails', 'licensePlate'] });
+    }
+  }
+  // Enforce all fields for COMMONRAIL
+  if (data.department === 'COMMONRAIL') {
+    if (!data.commonrailDetails?.brand?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อ", path: ['commonrailDetails', 'brand'] });
+    }
+    if (!data.commonrailDetails?.partNumber?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุเลขอะไหล่", path: ['commonrailDetails', 'partNumber'] });
+    }
+    if (!data.commonrailDetails?.registrationNumber?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุเลขทะเบียนชิ้นส่วน", path: ['commonrailDetails', 'registrationNumber'] });
+    }
+  }
+  // Enforce all fields for MECHANIC
+  if (data.department === 'MECHANIC') {
+    if (!data.mechanicDetails?.brand?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อ", path: ['mechanicDetails', 'brand'] });
+    }
+    if (!data.mechanicDetails?.partNumber?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุเลขอะไหล่", path: ['mechanicDetails', 'partNumber'] });
+    }
+    if (!data.mechanicDetails?.registrationNumber?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุเลขทะเบียนชิ้นส่วน", path: ['mechanicDetails', 'registrationNumber'] });
+    }
+  }
 });
 
 export default function IntakePage() {
@@ -144,6 +182,16 @@ export default function IntakePage() {
   const onSubmit = async (values: z.infer<typeof intakeSchema>) => {
     if (!db || !storage || !profile || isViewer) return;
 
+    // MANDATORY PHOTO CHECK
+    if (photos.length === 0) {
+      toast({ 
+        variant: "destructive", 
+        title: "กรุณาแนบรูปภาพประกอบ", 
+        description: "ต้องมีรูปประกอบอย่างน้อย 1 รูป เพื่อยืนยันสภาพก่อนเริ่มงานค่ะ" 
+      });
+      return;
+    }
+
     const selectedCustomer = customers.find(c => c.id === values.customerId);
     if (!selectedCustomer) {
         toast({ variant: "destructive", title: "ไม่พบข้อมูลลูกค้า" });
@@ -174,7 +222,7 @@ export default function IntakePage() {
             id: jobId,
             customerId: values.customerId,
             department: values.department,
-            mainDepartment: values.department, // Initialize main department
+            mainDepartment: values.department, 
             description: values.description,
             customerSnapshot: { 
               name: selectedCustomer.name, 
@@ -240,7 +288,7 @@ export default function IntakePage() {
 
   return (
     <>
-      <PageHeader title="เปิดงานใหม่" description="สร้างใบงานใหม่สำหรับลูกค้าในระบบ" />
+      <PageHeader title="เปิดงานใหม่" description="สร้างใบงานใหม่สำหรับลูกค้าในระบบ (จำเป็นต้องกรอกข้อมูลให้ครบทุกช่องและแนบรูป)" />
       <Card>
         <CardContent className="pt-6">
           <Form {...form}>
@@ -257,7 +305,7 @@ export default function IntakePage() {
                       : null;
                     return (
                       <FormItem className="flex flex-col">
-                        <FormLabel>ลูกค้า (Customer)</FormLabel>
+                        <FormLabel>ลูกค้า (Customer) <span className="text-destructive">*</span></FormLabel>
                         <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
                           <PopoverTrigger asChild>
                             <FormControl>
@@ -333,7 +381,7 @@ export default function IntakePage() {
 
               <FormField name="department" control={form.control} render={({ field }) => (
                 <FormItem>
-                  <FormLabel>แผนกที่รับผิดชอบ (Department)</FormLabel>
+                  <FormLabel>แผนกที่รับผิดชอบ (Department) <span className="text-destructive">*</span></FormLabel>
                   <Select onValueChange={field.onChange} value={field.value} disabled={isViewer || isSubmitting}>
                     <FormControl><SelectTrigger><SelectValue placeholder="กรุณาเลือกแผนก..." /></SelectTrigger></FormControl>
                     <SelectContent>
@@ -347,13 +395,13 @@ export default function IntakePage() {
               )} />
               
               {selectedDepartment === 'CAR_SERVICE' && (
-                <Card className="bg-muted/30 border-dashed">
-                    <CardHeader><CardTitle className="text-base">รายละเอียดรถยนต์</CardTitle></CardHeader>
+                <Card className="bg-muted/30 border-dashed border-primary/20">
+                    <CardHeader><CardTitle className="text-base">รายละเอียดรถยนต์ (ต้องระบุทุกช่อง)</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <FormField name="carServiceDetails.brand" control={form.control} render={({ field }) => (
                             <FormItem>
-                              <FormLabel>ยี่ห้อรถ</FormLabel>
+                              <FormLabel>ยี่ห้อรถ <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input placeholder="เช่น Toyota, Isuzu" {...field} disabled={isViewer || isSubmitting} />
                               </FormControl>
@@ -362,7 +410,7 @@ export default function IntakePage() {
                           )} />
                           <FormField name="carServiceDetails.model" control={form.control} render={({ field }) => (
                             <FormItem>
-                              <FormLabel>รุ่นรถ</FormLabel>
+                              <FormLabel>รุ่นรถ <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input placeholder="เช่น Revo, D-Max" {...field} disabled={isViewer || isSubmitting} />
                               </FormControl>
@@ -372,7 +420,7 @@ export default function IntakePage() {
                         </div>
                         <FormField name="carServiceDetails.licensePlate" control={form.control} render={({ field }) => (
                           <FormItem>
-                            <FormLabel>ทะเบียนรถ</FormLabel>
+                            <FormLabel>ทะเบียนรถ <span className="text-destructive">*</span></FormLabel>
                             <FormControl>
                               <Input placeholder="เช่น 1กข 1234" {...field} disabled={isViewer || isSubmitting} />
                             </FormControl>
@@ -384,8 +432,8 @@ export default function IntakePage() {
               )}
 
               {(selectedDepartment === 'COMMONRAIL' || selectedDepartment === 'MECHANIC') && (
-                 <Card className="bg-muted/30 border-dashed">
-                    <CardHeader><CardTitle className="text-base">รายละเอียดชิ้นส่วน</CardTitle></CardHeader>
+                 <Card className="bg-muted/30 border-dashed border-primary/20">
+                    <CardHeader><CardTitle className="text-base">รายละเอียดชิ้นส่วน (ต้องระบุทุกช่อง)</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <FormField 
@@ -393,7 +441,7 @@ export default function IntakePage() {
                             control={form.control} 
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>ยี่ห้อ</FormLabel>
+                                <FormLabel>ยี่ห้อ <span className="text-destructive">*</span></FormLabel>
                                 <FormControl>
                                   <Input placeholder="เช่น Denso, Bosch" {...field} disabled={isViewer || isSubmitting} />
                                 </FormControl>
@@ -406,7 +454,7 @@ export default function IntakePage() {
                             control={form.control} 
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>เลขทะเบียนชิ้นส่วน</FormLabel>
+                                <FormLabel>เลขทะเบียนชิ้นส่วน <span className="text-destructive">*</span></FormLabel>
                                 <FormControl>
                                   <Input placeholder="Registration Number" {...field} disabled={isViewer || isSubmitting} />
                                 </FormControl>
@@ -420,7 +468,7 @@ export default function IntakePage() {
                           control={form.control} 
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>เลขอะไหล่ (Part Number)</FormLabel>
+                              <FormLabel>เลขอะไหล่ (Part Number) <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input placeholder="ระบุหมายเลขอะไหล่..." {...field} disabled={isViewer || isSubmitting} />
                               </FormControl>
@@ -434,14 +482,17 @@ export default function IntakePage() {
 
               <FormField name="description" control={form.control} render={({ field }) => (
                 <FormItem>
-                  <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม (Description)</FormLabel>
+                  <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม (Description) <span className="text-destructive">*</span></FormLabel>
                   <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย หรือสิ่งที่ลูกค้าต้องการให้ทำ..." rows={5} {...field} disabled={isViewer || isSubmitting} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
 
               <FormItem>
-                <FormLabel>รูปภาพประกอบ (สูงสุด {MAX_INTAKE_PHOTOS} รูป)</FormLabel>
+                <FormLabel className="flex items-center gap-2">
+                  รูปภาพประกอบ (ต้องมีอย่างน้อย 1 รูป) <span className="text-destructive">*</span>
+                  {photos.length > 0 && <Badge variant="secondary" className="bg-green-100 text-green-700 h-5">เลือกแล้ว {photos.length} รูป</Badge>}
+                </FormLabel>
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <Button 
