@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState, Suspense, useCallback } from "react";
@@ -47,7 +46,6 @@ const allocationSchema = z.object({
 
 const confirmReceiptSchema = z.object({
   accountId: z.string().min(1, "กรุณาเลือกบัญชีที่รับเงิน"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"]),
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่รับเงินจริง"),
   netReceivedTotal: z.coerce.number().min(0.01, "ยอดรับสุทธิต้องมากกว่า 0"),
   allocations: z.array(allocationSchema),
@@ -129,7 +127,6 @@ function ConfirmReceiptPageContent() {
             return;
         }
 
-        // --- NEW: If source is a Billing Note, get underlying invoices ---
         const firstRefId = invoiceIds[0];
         const sourceDocSnap = await getDoc(doc(db, 'documents', firstRefId));
         if (sourceDocSnap.exists() && sourceDocSnap.data().docType === 'BILLING_NOTE') {
@@ -161,7 +158,6 @@ function ConfirmReceiptPageContent() {
         
         form.reset({
             accountId: receiptData.receivedAccountId || accountsSnap.docs[0]?.id || "",
-            paymentMethod: (receiptData.paymentMethod as any) || 'CASH',
             paymentDate: receiptData.paymentDate || format(new Date(), "yyyy-MM-dd"),
             netReceivedTotal: receiptData.grandTotal,
             allocations: invoices.map(inv => {
@@ -256,9 +252,9 @@ function ConfirmReceiptPageContent() {
 
           update(index, {
             ...currentAlloc,
-            withholdingPercent: round(withholdingPercent, 4),
-            withholdingAmount: round(withholdingAmount, 2),
-            grossApplied: round(grossApplied, 2),
+            withholdingPercent: Number(Number(withholdingPercent).toFixed(4)),
+            withholdingAmount: Number(Number(withholdingAmount).toFixed(2)),
+            grossApplied: Number(Number(grossApplied).toFixed(2)),
           });
         }
       }
@@ -266,10 +262,6 @@ function ConfirmReceiptPageContent() {
     return () => subscription.unsubscribe();
   }, [form, update]);
   
-  const round = (value: number, decimals: number) => {
-    return Number(Math.round(Number(value + 'e' + decimals)) + 'e-' + decimals);
-  }
-
   const totals = useMemo(() => {
     const totalNetApplied = watchedAllocations.reduce((sum, a) => sum + (a.netCashApplied || 0), 0);
     const totalWht = watchedAllocations.reduce((sum, a) => sum + (a.withholdingAmount || 0), 0);
@@ -291,6 +283,10 @@ function ConfirmReceiptPageContent() {
             if (receiptSnap.data().status === 'CONFIRMED' || receiptSnap.data().receiptStatus === 'CONFIRMED' || receiptSnap.data().accountingEntryId) {
                 throw new Error("รายการนี้ถูกยืนยันไปก่อนหน้านี้แล้ว");
             }
+
+            const account = accounts.find(a => a.id === data.accountId);
+            if (!account) throw new Error("ไม่พบข้อมูลบัญชีที่เลือก");
+            const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
 
             const arPaymentId = `ARPAY_${receipt.id}`;
             const arPaymentRef = doc(db, 'arPayments', arPaymentId);
@@ -320,7 +316,7 @@ function ConfirmReceiptPageContent() {
                 entryDate: data.paymentDate,
                 amount: data.netReceivedTotal,
                 accountId: data.accountId,
-                paymentMethod: data.paymentMethod,
+                paymentMethod: paymentMethod,
                 sourceDocType: 'RECEIPT',
                 sourceDocId: receipt.id,
                 sourceDocNo: receipt.docNo,
@@ -333,7 +329,7 @@ function ConfirmReceiptPageContent() {
                 accountingEntryId: entryId,
                 confirmedPayment: {
                     accountId: data.accountId,
-                    method: data.paymentMethod,
+                    method: paymentMethod,
                     receivedDate: data.paymentDate,
                     netReceivedTotal: data.netReceivedTotal,
                     withholdingTotal: totals.totalWht,
@@ -403,11 +399,19 @@ function ConfirmReceiptPageContent() {
                 
                 <Card>
                     <CardHeader><CardTitle className="text-base">1. สรุปยอดรับเงิน</CardTitle></CardHeader>
-                    <CardContent className="grid md:grid-cols-3 gap-4">
+                    <CardContent className="grid md:grid-cols-2 gap-4">
                         <FormField name="paymentDate" control={form.control} render={({ field }) => (<FormItem><FormLabel>วันที่รับเงินจริง</FormLabel><FormControl><Input type="date" {...field}/></FormControl><FormMessage /></FormItem>)} />
-                        <FormField name="paymentMethod" control={form.control} render={({ field }) => (<FormItem><FormLabel>ช่องทางการรับ</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl><SelectContent><SelectItem value="CASH">เงินสด</SelectItem><SelectItem value="TRANSFER">โอนเงิน</SelectItem></SelectContent></Select></FormItem>)} />
-                        <FormField name="accountId" control={form.control} render={({ field }) => (<FormItem><FormLabel>เข้าบัญชี</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl><SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
-                        <div className="md:col-span-3">
+                        <FormField name="accountId" control={form.control} render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>เข้าบัญชี</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
+                              <SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                        <div className="md:col-span-2">
                             <FormField name="netReceivedTotal" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยอดรับสุทธิ (Net)</FormLabel><FormControl><Input type="number" {...field} className="text-lg font-bold" /></FormControl><FormMessage /></FormItem>)} />
                         </div>
                     </CardContent>

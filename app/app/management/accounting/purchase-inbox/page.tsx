@@ -40,7 +40,6 @@ const formatCurrency = (value: number) => {
 
 const cashApprovalSchema = z.object({
   paidDate: z.string().min(1, "กรุณาเลือกวันที่จ่ายเงิน"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"], { required_error: "กรุณาเลือกช่องทาง" }),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
 });
 
@@ -50,7 +49,6 @@ function ApproveCashDialog({ claim, accounts, onClose, onConfirm }: { claim: Wit
     resolver: zodResolver(cashApprovalSchema),
     defaultValues: {
       paidDate: format(new Date(), "yyyy-MM-dd"),
-      paymentMethod: claim.suggestedPaymentMethod || 'CASH',
       accountId: claim.suggestedAccountId || (accounts.find(a=>a.type==='CASH')?.id || accounts[0]?.id || ""),
     },
   });
@@ -71,28 +69,16 @@ function ApproveCashDialog({ claim, accounts, onClose, onConfirm }: { claim: Wit
         <Form {...form}>
           <form id="approve-cash-form" onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 py-4">
             <FormField control={form.control} name="paidDate" render={({ field }) => (<FormItem><FormLabel>วันที่จ่ายเงินจริง</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="paymentMethod" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ช่องทาง</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
-                    <SelectContent><SelectItem value="CASH">เงินสด</SelectItem><SelectItem value="TRANSFER">โอน</SelectItem></SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="accountId" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>บัญชีที่จ่าย</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
-                    <SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-            </div>
+            <FormField control={form.control} name="accountId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>หักเงินจากบัญชี</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
+                  <SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
             <div className="p-4 border rounded-md text-center bg-primary/5">
                 <p className="text-sm text-muted-foreground">ยอดเงินที่จะบันทึกจ่าย</p>
                 <p className="text-2xl font-bold text-primary">{formatCurrency(claim.amountTotal)} บาท</p>
@@ -158,7 +144,6 @@ function PurchaseInboxPageContent() {
 
   const hasPermission = useMemo(() => {
     if (!profile) return false;
-    // สิทธิ์ให้ admin และ manager แผนกบริหาร
     return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT';
   }, [profile]);
 
@@ -205,6 +190,9 @@ function PurchaseInboxPageContent() {
   const handleApproveCash = async (formData: z.infer<typeof cashApprovalSchema>) => {
     if (!db || !profile || !approvingClaim) return;
     
+    const account = accounts.find(a => a.id === formData.accountId);
+    if (!account) return;
+
     try {
         await runTransaction(db, async (transaction) => {
             const purchaseDocRef = doc(db, 'purchaseDocs', approvingClaim.purchaseDocId);
@@ -215,7 +203,9 @@ function PurchaseInboxPageContent() {
             const entryId = `PURCHASE_${approvingClaim.purchaseDocId}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
 
-            // Check if entry already exists (Idempotency)
+            const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
+
+            // Check if entry already exists
             const entrySnap = await transaction.get(entryRef);
             if (entrySnap.exists()) throw new Error("รายการนี้เคยถูกลงบัญชีไปแล้ว");
 
@@ -232,7 +222,7 @@ function PurchaseInboxPageContent() {
                 entryDate: formData.paidDate,
                 amount: approvingClaim.amountTotal,
                 accountId: formData.accountId,
-                paymentMethod: formData.paymentMethod,
+                paymentMethod: paymentMethod,
                 description: `จ่ายค่าสินค้า/อะไหล่: ${approvingClaim.vendorNameSnapshot} (บิล: ${approvingClaim.invoiceNo})`,
                 sourceDocId: approvingClaim.purchaseDocId,
                 sourceDocNo: approvingClaim.purchaseDocNo,
@@ -271,7 +261,6 @@ function PurchaseInboxPageContent() {
             const apId = `AP_${approvingClaim.purchaseDocId}`;
             const apObligationRef = doc(db, 'accountingObligations', apId);
             
-            // Check if AP already exists
             const apSnap = await transaction.get(apObligationRef);
             if (apSnap.exists()) throw new Error("รายการเจ้าหนี้นี้เคยถูกสร้างไปแล้ว");
 

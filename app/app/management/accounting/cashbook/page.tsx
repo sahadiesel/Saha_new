@@ -80,7 +80,6 @@ const entrySchema = z.object({
   categoryMain: z.string().min(1, "กรุณาเลือกหมวดหมู่หลัก"),
   categorySub: z.string().min(1, "กรุณาเลือกหมวดหมู่ย่อย"),
   description: z.string().min(1, "กรุณาระบุรายละเอียด"),
-  paymentMethod: z.enum(["CASH", "TRANSFER", "CREDIT"]),
 });
 
 type EntryFormData = z.infer<typeof entrySchema>;
@@ -114,7 +113,6 @@ export default function CashbookPage() {
       entryType: "CASH_IN",
       entryDate: format(new Date(), "yyyy-MM-dd"),
       amount: 0,
-      paymentMethod: "CASH",
       description: "",
     },
   });
@@ -217,10 +215,18 @@ export default function CashbookPage() {
 
   const onSubmit = async (values: EntryFormData) => {
     if (!db || !profile) return;
+    
+    const account = accounts.find(a => a.id === values.accountId);
+    if (!account) {
+      toast({ variant: "destructive", title: "ไม่พบข้อมูลบัญชี" });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await addDoc(collection(db, "accountingEntries"), sanitizeForFirestore({
         ...values,
+        paymentMethod: account.type === 'CASH' ? 'CASH' : 'TRANSFER',
         createdAt: serverTimestamp(),
         createdByUid: profile.uid,
         createdByName: profile.displayName,

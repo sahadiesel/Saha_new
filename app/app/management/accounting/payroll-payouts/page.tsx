@@ -35,7 +35,6 @@ import type { PayslipNew, AccountingAccount } from "@/lib/types";
 import type { WithId } from "@/firebase/firestore/use-collection";
 import { newPayslipStatusLabel } from "@/lib/ui-labels";
 
-// --- Helper Functions & Schemas ---
 const formatCurrency = (value: number) => {
   return (value ?? 0).toLocaleString("th-TH", {
     minimumFractionDigits: 2,
@@ -45,14 +44,12 @@ const formatCurrency = (value: number) => {
 
 const paymentSchema = z.object({
   paidDate: z.string().min(1, "กรุณาเลือกวันที่จ่ายเงิน"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"], { required_error: "กรุณาเลือกช่องทาง" }),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
   referenceNo: z.string().optional(),
 });
 
 type PaymentFormData = z.infer<typeof paymentSchema>;
 
-// --- Payment Dialog Component ---
 function PayDialog({
   payslip,
   accounts,
@@ -70,7 +67,6 @@ function PayDialog({
     resolver: zodResolver(paymentSchema),
     defaultValues: {
       paidDate: format(new Date(), "yyyy-MM-dd"),
-      paymentMethod: "TRANSFER",
       accountId: accounts.find(a => a.type === 'BANK')?.id || accounts[0]?.id || "",
       referenceNo: "",
     },
@@ -91,10 +87,16 @@ function PayDialog({
               ยอดจ่ายสุทธิ: {formatCurrency(payslip.snapshot?.netPay ?? 0)} บาท
             </div>
             <FormField control={form.control} name="paidDate" render={({ field }) => (<FormItem><FormLabel>วันที่จ่ายเงิน</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="paymentMethod" render={({ field }) => (<FormItem><FormLabel>ช่องทาง</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl><SelectContent><SelectItem value="CASH">เงินสด</SelectItem><SelectItem value="TRANSFER">โอน</SelectItem></SelectContent></Select><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="accountId" render={({ field }) => (<FormItem><FormLabel>จากบัญชี</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..."/></SelectTrigger></FormControl><SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
-            </div>
+            <FormField control={form.control} name="accountId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>จากบัญชี</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่ใช้โอนเงิน..."/></SelectTrigger></FormControl>
+                  <SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
             <FormField control={form.control} name="referenceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่อ้างอิง (ถ้ามี)</FormLabel><FormControl><Input {...field} /></FormControl></FormItem>)} />
           </form>
         </Form>
@@ -110,7 +112,6 @@ function PayDialog({
   );
 }
 
-// --- Main Page Component ---
 export default function PayrollPayoutsPage() {
   const { db } = useFirebase();
   const { profile } = useAuth();
@@ -153,9 +154,7 @@ export default function PayrollPayoutsPage() {
     }, (err) => {
       setPayslips([]);
       setLoading(false);
-      if(err.code === 'not-found') {
-        // This is expected if the batch doesn't exist, not an error.
-      } else {
+      if(err.code !== 'not-found') {
         toast({ variant: 'destructive', title: 'ไม่สามารถโหลดสลิปเงินเดือน', description: err.message });
       }
     });
@@ -175,7 +174,12 @@ export default function PayrollPayoutsPage() {
 
   const handleConfirmPayment = async (formData: PaymentFormData) => {
     if (!db || !profile || !payingPayslip) return;
+    
+    const account = accounts.find(a => a.id === formData.accountId);
+    if (!account) return;
+
     setIsSubmitting(true);
+    const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
 
     try {
       const payrollBatchId = payingPayslip.batchId;
@@ -185,13 +189,12 @@ export default function PayrollPayoutsPage() {
       await runTransaction(db, async (transaction) => {
         const entryRef = doc(collection(db, 'accountingEntries'));
         
-        // 1. Create accounting entry
         transaction.set(entryRef, {
           entryType: 'CASH_OUT',
           entryDate: formData.paidDate,
           amount: payingPayslip.snapshot?.netPay ?? 0,
           accountId: formData.accountId,
-          paymentMethod: formData.paymentMethod,
+          paymentMethod: paymentMethod,
           description: `จ่ายเงินเดือน: ${payingPayslip.userName} งวด ${payingPayslip.batchId}`,
           sourceDocType: 'PAYSLIP',
           sourceDocId: payingPayslip.id,
@@ -202,18 +205,16 @@ export default function PayrollPayoutsPage() {
           createdAt: serverTimestamp(),
         });
 
-        // 2. Update payslip
         transaction.update(payslipRef, {
           status: 'PAID',
           paidAt: serverTimestamp(),
           paidByUid: profile.uid,
           paidByName: profile.displayName,
-          paymentMethod: formData.paymentMethod,
+          paymentMethod: paymentMethod,
           accountId: formData.accountId,
           accountingEntryId: entryRef.id,
         });
 
-        // 3. Update payroll batch summary
         transaction.update(payrollBatchRef, {
           'statusSummary.readyCount': increment(-1),
           'statusSummary.paidCount': increment(1),

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, Suspense, useState, useEffect } from "react";
@@ -45,7 +44,6 @@ const arPaymentSchema = z.object({
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
   amount: z.coerce.number().positive("จำนวนเงินต้องมากกว่า 0"),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"]),
   notes: z.string().optional(),
   withholdingEnabled: z.boolean().default(false),
   withholdingAmount: z.coerce.number().min(0).optional(),
@@ -71,7 +69,6 @@ function ReceivePaymentDialog({
     defaultValues: {
       paymentDate: new Date().toISOString().split("T")[0],
       amount: obligation.balance,
-      paymentMethod: "TRANSFER",
       withholdingEnabled: false,
       withholdingAmount: 0,
       notes: "",
@@ -83,7 +80,6 @@ function ReceivePaymentDialog({
     form.reset({
       paymentDate: new Date().toISOString().split("T")[0],
       amount: obligation.balance,
-      paymentMethod: "TRANSFER",
       withholdingEnabled: false,
       withholdingAmount: 0,
       notes: "",
@@ -98,7 +94,11 @@ function ReceivePaymentDialog({
 
   const handleSavePayment = async (data: z.infer<typeof arPaymentSchema>) => {
     if (!db) return;
+    const account = accounts.find(a => a.id === data.accountId);
+    if (!account) return;
+
     setIsSubmitting(true);
+    const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
 
     try {
       const batch = writeBatch(db);
@@ -123,7 +123,7 @@ function ReceivePaymentDialog({
           entryDate: data.paymentDate,
           amount: cashReceived,
           accountId: data.accountId,
-          paymentMethod: data.paymentMethod,
+          paymentMethod: paymentMethod,
           description: `รับชำระหนี้จาก ${obligation.customerNameSnapshot} (อ้างอิง: ${obligation.sourceDocNo})`,
           sourceDocType: obligation.sourceDocType,
           sourceDocId: obligation.sourceDocId,
@@ -153,7 +153,7 @@ function ReceivePaymentDialog({
                     paymentStatus: updatedStatus
                 },
                 paymentDate: data.paymentDate,
-                paymentMethod: data.paymentMethod,
+                paymentMethod: paymentMethod,
                 receivedAccountId: data.accountId,
                 cashReceived: cashReceived,
                 withholdingEnabled: data.withholdingEnabled,
@@ -188,27 +188,14 @@ function ReceivePaymentDialog({
               <FormField name="paymentDate" control={form.control} render={({ field }) => (<FormItem><FormLabel>วันที่รับเงิน</FormLabel><FormControl><Input type="date" {...field}/></FormControl><FormMessage/></FormItem>)} />
               <FormField name="amount" control={form.control} render={({ field }) => (<FormItem><FormLabel>จำนวนเงินที่รับ</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
             </div>
-             <div className="grid grid-cols-2 gap-4">
-              <FormField name="paymentMethod" control={form.control} render={({ field }) => (
-                  <FormItem>
-                      <FormLabel>ช่องทาง</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
-                          <SelectContent>
-                              <SelectItem value="CASH">เงินสด</SelectItem>
-                              <SelectItem value="TRANSFER">โอนเงิน</SelectItem>
-                          </SelectContent>
-                      </Select>
-                      <FormMessage/>
-                  </FormItem>
-              )} />
+             <div className="grid grid-cols-1 gap-4">
               <FormField name="accountId" control={form.control} render={({ field }) => (
                   <FormItem>
-                      <FormLabel>บัญชี</FormLabel>
+                      <FormLabel>เข้าบัญชี</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
+                          <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่จะนำเงินเข้า..." /></SelectTrigger></FormControl>
                           <SelectContent>
-                              {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                              {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
                           </SelectContent>
                       </Select>
                       <FormMessage/>
@@ -257,7 +244,6 @@ const apPaymentSchema = z.object({
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
   amount: z.coerce.number().positive("จำนวนเงินต้องมากกว่า 0"),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"]),
   notes: z.string().optional(),
   withholdingEnabled: z.boolean().default(false),
   withholdingPercent: z.coerce.number().min(0).max(100).optional(),
@@ -274,7 +260,6 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
     defaultValues: {
       paymentDate: new Date().toISOString().split("T")[0],
       amount: obligation.balance,
-      paymentMethod: "TRANSFER",
       notes: "",
       accountId: accounts[0]?.id || "",
       withholdingEnabled: false,
@@ -341,7 +326,6 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
         form.reset({
             paymentDate: new Date().toISOString().split("T")[0],
             amount: obligation.balance,
-            paymentMethod: "TRANSFER",
             notes: "",
             accountId: accounts[0]?.id || "",
             withholdingEnabled: false,
@@ -352,6 +336,9 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
 
   const handleSavePayment = async (data: z.infer<typeof apPaymentSchema>) => {
     if (!db || !profile || !storeSettings) return;
+
+    const account = accounts.find(a => a.id === data.accountId);
+    if (!account) return;
 
     if (data.withholdingEnabled) {
         if (!storeSettings.taxId) {
@@ -368,6 +355,8 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
     }
 
     setIsSubmitting(true);
+    const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
+
     try {
       await runTransaction(db, async (transaction) => {
         const year = new Date(data.paymentDate).getFullYear();
@@ -442,7 +431,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
             amount: cashOutAmount,
             grossAmount: data.amount,
             accountId: data.accountId,
-            paymentMethod: data.paymentMethod,
+            paymentMethod: paymentMethod,
             description: `จ่ายเจ้าหนี้: ${obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot} (บิล: ${obligation.invoiceNo || obligation.sourceDocNo})`,
             notes: data.notes,
             vendorId: obligation.vendorId,
@@ -507,27 +496,14 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
               <FormField name="paymentDate" control={form.control} render={({ field }) => (<FormItem><FormLabel>วันที่จ่ายเงิน</FormLabel><FormControl><Input type="date" {...field}/></FormControl><FormMessage/></FormItem>)} />
               <FormField name="amount" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยอดตัดหนี้ (Gross)</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <FormField name="paymentMethod" control={form.control} render={({ field }) => (
-                  <FormItem>
-                      <FormLabel>ช่องทาง</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
-                          <SelectContent>
-                              <SelectItem value="CASH">เงินสด</SelectItem>
-                              <SelectItem value="TRANSFER">โอนเงิน</SelectItem>
-                          </SelectContent>
-                      </Select>
-                      <FormMessage/>
-                  </FormItem>
-              )} />
+            <div className="grid grid-cols-1 gap-4">
               <FormField name="accountId" control={form.control} render={({ field }) => (
                   <FormItem>
                       <FormLabel>หักจากบัญชี</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..."/></SelectTrigger></FormControl>
+                          <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่ใช้จ่าย..."/></SelectTrigger></FormControl>
                           <SelectContent>
-                              {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                              {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
                           </SelectContent>
                       </Select>
                       <FormMessage/>

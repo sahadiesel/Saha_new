@@ -61,7 +61,6 @@ const deliveryNoteFormSchema = z.object({
   isBackfill: z.boolean().default(false),
   manualDocNo: z.string().optional(),
   paymentTerms: z.enum(["CASH", "CREDIT"]).optional(),
-  suggestedPaymentMethod: z.enum(["CASH", "TRANSFER"]).optional(),
   suggestedAccountId: z.string().optional(),
   billingRequired: z.boolean().default(false),
   dueDate: z.string().optional().nullable(),
@@ -98,7 +97,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   const [previewDocNo, setPreviewDocNo] = useState<string>("");
 
-  const [suggestedPayments, setSuggestedPayments] = useState<{method: 'CASH' | 'TRANSFER', accountId: string, amount: number}[]>([{method: 'CASH', accountId: '', amount: 0}]);
+  const [suggestedPayments, setSuggestedPayments] = useState<{accountId: string, amount: number}[]>([{accountId: '', amount: 0}]);
   const [recordRemainingAsCredit, setRecordRemainingAsCredit] = useState(false);
   const [submitBillingRequired, setSubmitBillingRequired] = useState(false);
   const [submitDueDate, setSubmitDueDate] = useState('');
@@ -132,7 +131,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
       receiverName: '',
       isBackfill: false,
       paymentTerms: 'CASH',
-      suggestedPaymentMethod: 'CASH',
       suggestedAccountId: '',
       billingRequired: false,
     },
@@ -193,7 +191,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
         billingRequired: docToEdit.billingRequired || false,
         dueDate: docToEdit.dueDate || null,
       });
-      if (docToEdit.suggestedPayments) setSuggestedPayments(docToEdit.suggestedPayments);
+      if (docToEdit.suggestedPayments) setSuggestedPayments(docToEdit.suggestedPayments.map(p => ({ accountId: p.accountId, amount: p.amount })));
       setRecordRemainingAsCredit(docToEdit.paymentTerms === 'CREDIT');
       setSubmitBillingRequired(docToEdit.billingRequired || false);
       setSubmitDueDate(docToEdit.dueDate || '');
@@ -297,7 +295,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
           setPendingFormData(data); 
           setIsReviewSubmission(true); 
           if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
-              setSuggestedPayments([{method: 'CASH', accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
+              setSuggestedPayments([{accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
           }
           setShowReviewConfirm(true); 
           return; 
@@ -544,14 +542,14 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             <div className="p-4 bg-primary/5 rounded-lg border flex justify-between items-center"><span className="font-semibold">ยอดรวมทั้งสิ้น:</span><span className="text-2xl font-black text-primary">฿{formatCurrency(grandTotal)}</span></div>
             <div className="space-y-4">
                 <Label className="flex items-center gap-2"><Wallet className="h-4 w-4" /> รายการรับเงิน</Label>
-                <div className="border rounded-md overflow-hidden"><Table><TableHeader><TableRow><TableHead>ช่องทาง</TableHead><TableHead>บัญชี</TableHead><TableHead className="w-32">จำนวน</TableHead><TableHead className="w-10"></TableHead></TableRow></TableHeader>
-                <TableBody>{suggestedPayments.map((p, i) => (<TableRow key={i}><TableCell className="p-2"><Select value={p.method} onValueChange={(v: any) => { const n = [...suggestedPayments]; n[i].method = v; setSuggestedPayments(n); }}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="CASH">เงินสด</SelectItem><SelectItem value="TRANSFER">เงินโอน</SelectItem></SelectContent></Select></TableCell><TableCell className="p-2"><Select value={p.accountId} onValueChange={(v) => { const n = [...suggestedPayments]; n[i].accountId = v; setSuggestedPayments(n); }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="เลือก..."/></SelectTrigger><SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name}</SelectItem>)}</SelectContent></Select></TableCell><TableCell className="p-2"><Input type="number" className="h-8 text-right text-xs" value={p.amount || ''} onChange={(e) => { const n = [...suggestedPayments]; n[i].amount = parseFloat(e.target.value) || 0; setSuggestedPayments(n); }}/></TableCell><TableCell className="p-2"><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setSuggestedPayments(prev => prev.filter((_, idx) => idx !== i))}><Trash2 className="h-3 w-3" /></Button></TableCell></TableRow>))}</TableBody></Table></div>
-                <Button variant="outline" size="sm" className="w-full h-8 border-dashed" onClick={() => setSuggestedPayments([...suggestedPayments, {method: 'CASH', accountId: '', amount: 0}])}><PlusCircle className="mr-2 h-3 w-3" /> เพิ่มช่องทาง</Button>
+                <div className="border rounded-md overflow-hidden"><Table><TableHeader><TableRow><TableHead>บัญชี (Account)</TableHead><TableHead className="w-32">จำนวน</TableHead><TableHead className="w-10"></TableHead></TableRow></TableHeader>
+                <TableBody>{suggestedPayments.map((p, i) => (<TableRow key={i}><TableCell className="p-2"><Select value={p.accountId} onValueChange={(v) => { const n = [...suggestedPayments]; n[i].accountId = v; setSuggestedPayments(n); }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="เลือกบัญชี..."/></SelectTrigger><SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent></Select></TableCell><TableCell className="p-2"><Input type="number" className="h-8 text-right text-xs" value={p.amount || ''} onChange={(e) => { const n = [...suggestedPayments]; n[i].amount = parseFloat(e.target.value) || 0; setSuggestedPayments(n); }}/></TableCell><TableCell className="p-2"><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setSuggestedPayments(prev => prev.filter((_, idx) => idx !== i))}><Trash2 className="h-3 w-3" /></Button></TableCell></TableRow>))}</TableBody></Table></div>
+                <Button variant="outline" size="sm" className="w-full h-8 border-dashed" onClick={() => setSuggestedPayments([...suggestedPayments, {accountId: '', amount: 0}])}><PlusCircle className="mr-2 h-3 w-3" /> เพิ่มบัญชีรับเงิน</Button>
             </div>
             <div className="pt-4 border-t"><div className={cn("flex justify-between items-center p-3 rounded-md border", remainingAmount > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}><span className="text-sm font-bold">ยอดคงเหลือ:</span><span className={cn("text-lg font-black", remainingAmount > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingAmount)}</span></div>
             {remainingAmount > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit" className="font-bold text-amber-700">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนด</Label><Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} /></div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing" className="text-xs">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
           </div>
-          <DialogFooter className="bg-muted/30 p-6 border-t"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const finalPayload = { ...pendingFormData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments, suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: validPayments[0]?.method || 'CASH' as const, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, true); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))}>{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+          <DialogFooter className="bg-muted/30 p-6 border-t"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingFormData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, true); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))}>{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

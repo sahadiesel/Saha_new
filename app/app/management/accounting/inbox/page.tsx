@@ -62,7 +62,7 @@ function AccountingInboxPageContent() {
   const [closingJobId, setClosingJobId] = useState<string | null>(null);
 
   const [selectedPaymentDate, setSelectedPaymentDate] = useState("");
-  const [suggestedPayments, setSuggestedPayments] = useState<{method: 'CASH' | 'TRANSFER', accountId: string, amount: number}[]>([]);
+  const [suggestedPayments, setSuggestedPayments] = useState<{accountId: string, amount: number}[]>([]);
   const [arDocToConfirm, setArDocToConfirm] = useState<WithId<DocumentType> | null>(null);
 
   const hasPermission = useMemo(() => {
@@ -176,11 +176,10 @@ function AccountingInboxPageContent() {
     setConfirmingDoc(doc);
     setSelectedPaymentDate(doc.paymentDate || doc.docDate || format(new Date(), "yyyy-MM-dd"));
     if (doc.suggestedPayments && doc.suggestedPayments.length > 0) {
-        setSuggestedPayments(doc.suggestedPayments);
+        setSuggestedPayments(doc.suggestedPayments.map(p => ({ accountId: p.accountId, amount: p.amount })));
     } else {
         const initialId = doc.receivedAccountId || doc.suggestedAccountId || accounts.find(a=>a.type==='CASH')?.id || accounts[0]?.id || "";
         setSuggestedPayments([{
-            method: (doc.paymentMethod || doc.suggestedPaymentMethod || 'CASH') as 'CASH' | 'TRANSFER',
             accountId: initialId,
             amount: doc.grandTotal
         }]);
@@ -193,8 +192,6 @@ function AccountingInboxPageContent() {
       setSuggestedPayments(newPayments);
   };
 
-  // ✅ New Logic: Just approve the doc, do NOT create cash entries.
-  // The cash entry will be created when a RECEIPT is confirmed.
   const handleApproveSaleDocument = async () => {
     if (!db || !profile || !confirmingDoc) return;
     setConfirmError(null);
@@ -207,7 +204,6 @@ function AccountingInboxPageContent() {
         const docSnap = await transaction.get(docRef);
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         
-        // Prevent double approval if status already changed
         if (docSnap.data().status === 'APPROVED' || docSnap.data().status === 'PAID') {
           throw new Error("รายการนี้ถูกตรวจสอบไปก่อนหน้านี้แล้ว");
         }
@@ -216,20 +212,25 @@ function AccountingInboxPageContent() {
         const arRef = doc(db, 'accountingObligations', arId);
         const customerName = confirmingDoc.customerSnapshot?.name || 'Unknown';
 
-        // NOTE: We do NOT create any 'accountingEntries' here.
-        // We just mark the document as APPROVED and create an UNPAID obligation.
+        // Prepare final data with inferred methods
+        const finalPayments = suggestedPayments.map(p => {
+            const acc = accounts.find(a => a.id === p.accountId);
+            return {
+                ...p,
+                method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER'
+            };
+        });
 
         // Update Sale Document
         transaction.update(docRef, { 
-            status: 'APPROVED', // Change status to APPROVED
-            arStatus: 'UNPAID', // Set as UNPAID until Receipt is confirmed
+            status: 'APPROVED', 
+            arStatus: 'UNPAID', 
             paymentSummary: {
                 paidTotal: 0,
                 balance: confirmingDoc.grandTotal,
                 paymentStatus: 'UNPAID'
             },
-            // Keep original office suggestions for Receipt pre-fill
-            suggestedPayments: suggestedPayments,
+            suggestedPayments: finalPayments,
             paymentDate: selectedPaymentDate,
             updatedAt: serverTimestamp()
         });
@@ -258,7 +259,6 @@ function AccountingInboxPageContent() {
         description: "กรุณาออกใบเสร็จรับเงินเพื่อบันทึกการรับเงินเข้าบัญชีจริงค่ะ" 
       });
       
-      // Still close the job if applicable
       if (jobId) callCloseJobFunction(jobId, 'UNPAID');
       setConfirmingDoc(null);
     } catch(e: any) {
@@ -557,8 +557,7 @@ function AccountingInboxPageContent() {
                         <Table>
                             <TableHeader className="bg-muted/50">
                                 <TableRow>
-                                    <TableHead>ช่องทาง</TableHead>
-                                    <TableHead>บัญชี</TableHead>
+                                    <TableHead>บัญชี (Account)</TableHead>
                                     <TableHead className="text-right">จำนวนเงิน</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -566,19 +565,10 @@ function AccountingInboxPageContent() {
                                 {suggestedPayments.map((p, index) => (
                                     <TableRow key={index}>
                                         <TableCell className="p-2">
-                                            <Select value={p.method} onValueChange={(v: any) => handleUpdatePaymentLine(index, 'method', v)} disabled={isSubmitting}>
-                                                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="CASH">เงินสด</SelectItem>
-                                                    <SelectItem value="TRANSFER">เงินโอน</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </TableCell>
-                                        <TableCell className="p-2">
                                             <Select value={p.accountId} onValueChange={(v) => handleUpdatePaymentLine(index, 'accountId', v)} disabled={isSubmitting}>
-                                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="เลือก..." /></SelectTrigger>
+                                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger>
                                                 <SelectContent>
-                                                    {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name}</SelectItem>)}
+                                                    {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
                                                 </SelectContent>
                                             </Select>
                                         </TableCell>

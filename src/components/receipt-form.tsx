@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -30,7 +29,6 @@ const receiptFormSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
   sourceDocId: z.string().min(1, "กรุณาเลือกเอกสารอ้างอิง"),
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
-  paymentMethod: z.enum(["CASH", "TRANSFER"], { required_error: "กรุณาเลือกช่องทางการชำระเงิน" }),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
   amount: z.coerce.number().min(0.01, "ยอดเงินต้องมากกว่า 0"),
   notes: z.string().optional(),
@@ -59,7 +57,6 @@ export function ReceiptForm() {
     resolver: zodResolver(receiptFormSchema),
     defaultValues: {
       paymentDate: new Date().toISOString().split("T")[0],
-      paymentMethod: 'CASH',
       amount: 0,
     },
   });
@@ -127,17 +124,16 @@ export function ReceiptForm() {
     if (selectedDoc) {
       const balance = selectedDoc.paymentSummary?.balance ?? selectedDoc.grandTotal;
       form.setValue('amount', balance);
-      if (selectedDoc.paymentTerms && (selectedDoc.paymentTerms === 'CASH' || selectedDoc.paymentTerms === 'TRANSFER')) {
-          form.setValue('paymentMethod', selectedDoc.paymentTerms as any);
-      }
     }
   }, [selectedSourceDocId, sourceDocs, form]);
 
   const onSubmit = async (data: ReceiptFormData) => {
     const customer = customers.find(c => c.id === data.customerId);
     const sourceDoc = sourceDocs.find(d => d.id === data.sourceDocId);
-    if (!db || !customer || !storeSettings || !profile || !sourceDoc) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบถ้วน", description: "กรุณาเลือกข้อมูลลูกค้าและเอกสารอ้างอิงให้ครบถ้วนก่อนบันทึก" });
+    const account = accounts.find(a => a.id === data.accountId);
+
+    if (!db || !customer || !storeSettings || !profile || !sourceDoc || !account) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบถ้วน", description: "กรุณาเลือกข้อมูลลูกค้า บัญชี และเอกสารอ้างอิงให้ครบถ้วนก่อนบันทึก" });
       return;
     }
     
@@ -163,7 +159,7 @@ export function ReceiptForm() {
         grandTotal: data.amount,
         notes: data.notes,
         referencesDocIds: [data.sourceDocId],
-        paymentMethod: data.paymentMethod,
+        paymentMethod: account.type === 'CASH' ? 'CASH' : 'TRANSFER',
         paymentDate: data.paymentDate,
         receivedAccountId: data.accountId,
       };
@@ -287,29 +283,16 @@ export function ReceiptForm() {
                 <FormField name="amount" render={({ field }) => (<FormItem><FormLabel>ยอดเงินตามใบเสร็จ (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="font-bold text-lg" /></FormControl><FormMessage /></FormItem>)} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField name="paymentMethod" render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>ช่องทางชำระ (คาดการณ์)</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
-                            <SelectContent>
-                                <SelectItem value="CASH">เงินสด</SelectItem>
-                                <SelectItem value="TRANSFER">เงินโอน</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <FormMessage />
-                    </FormItem>
-                )} />
                 <FormField name="accountId" render={({ field }) => (
                     <FormItem>
                         <FormLabel>เข้าบัญชี (คาดการณ์)</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
+                            <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่จะนำเงินเข้า..." /></SelectTrigger></FormControl>
                             <SelectContent>
                                 {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'ธนาคาร'})</SelectItem>)}
                             </SelectContent>
                         </Select>
-                        <FormDescription className="text-[10px]">บัญชีนี้เป็นข้อมูลที่ออฟฟิศระบุให้ฝ่ายบัญชีตรวจสอบภายหลัง สามารถแก้ไขได้ตอนยืนยัน</FormDescription>
+                        <FormDescription className="text-[10px]">ระบบจะบันทึกวิธีชำระ (เงินสด/โอน) ให้อัตโนมัติตามประเภทบัญชีที่เลือกค่ะ</FormDescription>
                         <FormMessage />
                     </FormItem>
                 )} />
