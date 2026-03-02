@@ -84,6 +84,8 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
+  const uniqueStatuses = useMemo(() => ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"], []);
+
   const stableQuery = useMemo(() => {
     if (!db) return null;
     return query(
