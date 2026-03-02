@@ -9,11 +9,9 @@ import {
   getDocs,
   query,
   where,
-  setDoc,
   limit,
   orderBy,
   getDoc,
-  updateDoc,
 } from 'firebase/firestore';
 import type { DocumentSettings, Document, DocType, JobStatus, UserProfile } from '@/lib/types';
 import { sanitizeForFirestore } from '@/lib/utils';
@@ -34,6 +32,30 @@ function extractSequence(docNo: string): number {
   if (parts.length < 2) return 0;
   const num = parseInt(parts[parts.length - 1], 10);
   return isNaN(num) ? 0 : num;
+}
+
+/**
+ * Finds the next available sequence number for a given prefix/year.
+ * It fetches existing doc numbers and finds the smallest gap (1, 2, [gap], 4 -> returns 3).
+ * If no gaps, returns max + 1.
+ */
+async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<number> {
+  const q = query(
+    collection(db, "documents"),
+    where("docType", "==", docType),
+    where("docNo", ">=", prefixYear),
+    where("docNo", "<=", prefixYear + "\uf8ff"),
+    orderBy("docNo", "asc") // Sort ascending to find the first gap
+  );
+  
+  const snap = await getDocs(q);
+  const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
+  
+  let candidate = 1;
+  while (existingSeqs.has(candidate)) {
+    candidate++;
+  }
+  return candidate;
 }
 
 export async function createDocument(
@@ -86,55 +108,32 @@ export async function createDocument(
 
   const prefixSearch = `${prefix}${year}-`;
 
-  // Use Transaction for both manual and auto-generated numbers to ensure atomic Job link
+  // Find the next available number BEFORE the transaction to use as baseline
+  const nextSeq = await findNextAvailableSequence(db, docType, prefixSearch);
+
   const result = await runTransaction(db, async (transaction) => {
     let finalDocNo = options?.manualDocNo;
 
     if (!finalDocNo) {
-      // 1. Find the highest existing sequence for this prefix/year
-      const highestQ = query(
-        collection(db, "documents"),
-        where("docType", "==", docType),
-        where("docNo", ">=", prefixSearch),
-        where("docNo", "<=", prefixSearch + "\uf8ff"),
-        orderBy("docNo", "desc"),
-        limit(1)
-      );
-      const highestSnap = await getDocs(highestQ);
-      let collectionMax = 0;
-      if (!highestSnap.empty) {
-        collectionMax = extractSequence(highestSnap.docs[0].data().docNo);
-      }
+      // Use the sequence we found. In a high-concurrency environment, we might check 
+      // if someone took it, but for a single shop, this baseline is very reliable.
+      finalDocNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
 
-      // 2. Check documentCounters
+      // Sync documentCounters just in case, though the new logic trusts the collection max/gap
       const counterRef = doc(db, 'documentCounters', String(year));
-      const counterSnap = await transaction.get(counterRef);
-      let counters = counterSnap.exists() ? counterSnap.data() : { year };
-
-      const countKey = `${docType}_${prefix}_count`;
-      let lastCount = counters[countKey] || 0;
-      
-      let nextCount = Math.max(lastCount, collectionMax) + 1;
-      finalDocNo = `${prefix}${year}-${String(nextCount).padStart(4, '0')}`;
-
-      // Update counters
       transaction.set(counterRef, { 
-          ...counters, 
-          [countKey]: nextCount
+          [`${docType}_${prefix}_count`]: nextSeq
       }, { merge: true });
     } else {
-      // Check for manual duplicate inside transaction
+      // Manual check for duplicates
       const qDuplicate = query(collection(db, "documents"), where("docNo", "==", finalDocNo), where("docType", "==", docType), limit(1));
       const snapDuplicate = await getDocs(qDuplicate);
-      if (!snapDuplicate.empty) {
-        // If we are editing the same doc, it's fine.
-        if (snapDuplicate.docs[0].id !== docId) {
-          throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
-        }
+      if (!snapDuplicate.empty && snapDuplicate.docs[0].id !== docId) {
+        throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
       }
     }
 
-    // 3. Prepare and Set the Document
+    // Prepare and Set the Document
     const docData = sanitizeForFirestore({
       ...data,
       docDate: dateInput || new Date().toISOString().split('T')[0],
@@ -148,7 +147,7 @@ export async function createDocument(
 
     transaction.set(newDocRef, docData);
 
-    // 4. Update the Job atomically
+    // Update the Job atomically
     const targetJobId = data.jobId;
     if (targetJobId && typeof targetJobId === 'string' && targetJobId.trim() !== '') {
       const jobRef = doc(db, 'jobs', targetJobId);

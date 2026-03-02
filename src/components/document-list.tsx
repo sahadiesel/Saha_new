@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, setDoc, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -71,7 +71,7 @@ export function DocumentList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FirestoreError | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("DRAFT");
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const [indexCreationUrl, setIndexCreationUrl] = useState<string | null>(null);
   
   const [docToAction, setDocToAction] = useState<Document | null>(null);
@@ -130,8 +130,8 @@ export function DocumentList({
       const lowercasedTerm = searchTerm.toLowerCase();
       filtered = filtered.filter(doc =>
         doc.docNo.toLowerCase().includes(lowercasedTerm) ||
-        doc.customerSnapshot.name?.toLowerCase().includes(lowercasedTerm) ||
-        doc.customerSnapshot.phone?.includes(lowercasedTerm) ||
+        (doc.customerSnapshot.name || "").toLowerCase().includes(lowercasedTerm) ||
+        (doc.customerSnapshot.phone || "").includes(lowercasedTerm) ||
         doc.jobId?.toLowerCase().includes(lowercasedTerm) ||
         doc.carSnapshot?.licensePlate?.toLowerCase().includes(lowercasedTerm)
       );
@@ -321,7 +321,7 @@ export function DocumentList({
                       <TableRow key={docItem.id}>
                         <TableCell className="font-medium">{docItem.docNo}</TableCell>
                         <TableCell>{safeFormat(new Date(docItem.docDate), 'dd/MM/yyyy')}</TableCell>
-                        <TableCell>{docItem.customerSnapshot.name}</TableCell>
+                        <TableCell>{docItem.customerSnapshot?.name || "ไม่ทราบชื่อ"}</TableCell>
                         <TableCell><Tooltip><TooltipTrigger asChild><Badge variant={displayStatus.variant} className="cursor-help">{displayStatus.label}</Badge></TooltipTrigger><TooltipContent><p>{displayStatus.description}</p></TooltipContent></Tooltip></TableCell>
                         <TableCell className="text-right">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right">
@@ -407,7 +407,7 @@ export function DocumentList({
 
       <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>ยืนยันการลบ</AlertDialogTitle><AlertDialogDescription>คุณต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างประวัติการผูกพันกับใบงานด้วยเช่นกัน</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>ยืนยันการลบ</AlertDialogTitle><AlertDialogDescription>คุณต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างประวัติการผูกพันกับใบงานด้วยเช่นกัน และเลขที่นี้จะถูกนำกลับมาใช้ใหม่ในบิลใบถัดไป</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันการลบ'}</AlertDialogAction>

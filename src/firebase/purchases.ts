@@ -21,6 +21,7 @@ function normalizeYear(year: number): number {
 }
 
 function extractSequence(docNo: string): number {
+  if (!docNo) return 0;
   const parts = docNo.split('-');
   if (parts.length < 2) return 0;
   const num = parseInt(parts[parts.length - 1], 10);
@@ -28,9 +29,26 @@ function extractSequence(docNo: string): number {
 }
 
 /**
- * Creates a new purchase document with prefix isolation and collision prevention.
- * Uses a robust transaction pattern on documentCounters.
+ * Finds the next available sequence for PurchaseDocs.
  */
+async function findNextAvailablePurchaseSequence(db: Firestore, prefixYear: string): Promise<number> {
+  const q = query(
+    collection(db, "purchaseDocs"),
+    where("docNo", ">=", prefixYear),
+    where("docNo", "<=", prefixYear + "\uf8ff"),
+    orderBy("docNo", "asc")
+  );
+  
+  const snap = await getDocs(q);
+  const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
+  
+  let candidate = 1;
+  while (existingSeqs.has(candidate)) {
+    candidate++;
+  }
+  return candidate;
+}
+
 export async function createPurchaseDoc(
   db: Firestore,
   data: Omit<PurchaseDoc, 'id' | 'docNo' | 'status' | 'createdAt' | 'updatedAt'>,
@@ -43,45 +61,19 @@ export async function createPurchaseDoc(
   
   const newDocRef = providedDocId ? doc(db, 'purchaseDocs', providedDocId) : doc(collection(db, 'purchaseDocs'));
 
-  // Get current document settings for the prefix
   const docSettingsSnap = await getDoc(doc(db, 'settings', 'documents'));
   const prefix = (docSettingsSnap.exists() ? (docSettingsSnap.data() as DocumentSettings).purchasePrefix : 'PUR') || 'PUR';
 
-  // 1. Pre-transaction: Find the highest existing number for this prefix in the current year.
-  // This provides a starting baseline to avoid reuse of numbers if counters were reset.
   const prefixSearch = `${prefix}${year}-`;
-  const highestQ = query(
-    collection(db, "purchaseDocs"),
-    where("docNo", ">=", prefixSearch),
-    where("docNo", "<=", prefixSearch + "\uf8ff"),
-    orderBy("docNo", "desc"),
-    limit(1)
-  );
-  
-  const highestSnap = await getDocs(highestQ);
-  let collectionBaseline = 0;
-  if (!highestSnap.empty) {
-    collectionBaseline = extractSequence(highestSnap.docs[0].data().docNo);
-  }
+  const nextSeq = await findNextAvailablePurchaseSequence(db, prefixSearch);
 
-  // 2. Transaction: Calculate next number and write the document.
   const documentNumber = await runTransaction(db, async (transaction) => {
-    // If we're retrying/re-submitting, check if the doc already exists to avoid duplicate numbers
     if (providedDocId) {
       const existingDoc = await transaction.get(newDocRef);
       if (existingDoc.exists()) return existingDoc.data().docNo as string;
     }
 
-    const counterRef = doc(db, 'documentCounters', String(year));
-    const counterDoc = await transaction.get(counterRef);
-    let counters = counterDoc.exists() ? counterDoc.data() : { year };
-    
-    // Prefix-specific counter key
-    const countKey = `PURCHASE_${prefix.toUpperCase()}_count`;
-    const lastCount = counters[countKey] || 0;
-    
-    const nextCount = Math.max(lastCount, collectionBaseline) + 1;
-    const docNo = `${prefix}${year}-${String(nextCount).padStart(4, '0')}`;
+    const docNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
 
     const docData = sanitizeForFirestore({
       ...data,
@@ -94,9 +86,10 @@ export async function createPurchaseDoc(
     });
 
     transaction.set(newDocRef, docData);
+    
+    const counterRef = doc(db, 'documentCounters', String(year));
     transaction.set(counterRef, { 
-        ...counters, 
-        [countKey]: nextCount
+        [`PURCHASE_${prefix.toUpperCase()}_count`]: nextSeq
     }, { merge: true });
 
     return docNo;
