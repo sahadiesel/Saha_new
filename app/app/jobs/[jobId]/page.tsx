@@ -859,7 +859,7 @@ function JobDetailsPageContent() {
                       <div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0">
                         <span className="text-muted-foreground pt-1">{label}:</span>
                         {latestDoc ? (
-                          <div className="flex col items-end gap-1">
+                          <div className="flex flex-col items-end gap-1">
                             <div className="flex items-center gap-2">
                               {isTechnicalDept ? (
                                 <span className="font-medium">{latestDoc.docNo}</span>
@@ -870,6 +870,14 @@ function JobDetailsPageContent() {
                               )}
                               <Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge>
                             </div>
+                            {/* Short link to Receipt creation if APPROVED but not issued yet */}
+                            {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType !== 'QUOTATION' && (
+                              <Button asChild size="sm" variant="outline" className="h-6 text-[9px] px-2 border-primary text-primary hover:bg-primary/5">
+                                <Link href={`/app/management/accounting/documents/receipt?customerId=${latestDoc.customerId}&sourceDocId=${latestDoc.id}`}>
+                                  <Receipt className="h-2.5 w-2.5 mr-1" /> ออกใบเสร็จ (Issue Receipt)
+                                </Link>
+                              </Button>
+                            )}
                           </div>
                         ) : <span className="pt-1">— ไม่มี —</span>}
                       </div>

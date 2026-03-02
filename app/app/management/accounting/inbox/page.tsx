@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet } from "lucide-react";
+import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet, PlusCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { WithId } from "@/firebase";
 import type { Document as DocumentType, AccountingAccount } from "@/lib/types";
@@ -48,6 +48,7 @@ function AccountingInboxPageContent() {
   const router = useRouter();
 
   const [documents, setDocuments] = useState<WithId<DocumentType>[]>([]);
+  const [approvedDocs, setApprovedDocs] = useState<WithId<DocumentType>[]>([]);
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -76,6 +77,7 @@ function AccountingInboxPageContent() {
       return;
     }
 
+    // Docs needing review
     const docsQuery = query(
       collection(db, "documents"), 
       where("status", "==", "PENDING_REVIEW"),
@@ -103,6 +105,18 @@ function AccountingInboxPageContent() {
       }
     );
 
+    // Docs approved but no receipt issued yet (only for cash/mixed)
+    const approvedQuery = query(
+        collection(db, "documents"),
+        where("status", "==", "APPROVED"),
+        where("receiptStatus", "==", "NONE"), // Assuming we set this or it's empty
+        limit(100)
+    );
+    // Note: If receiptStatus is not existing, we might need a different query or client-side filter
+    const unsubApproved = onSnapshot(approvedQuery, (snap) => {
+        setApprovedDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId));
+    });
+
     const accountsQuery = query(
       collection(db, "accountingAccounts"), 
       where("isActive", "==", true)
@@ -125,7 +139,7 @@ function AccountingInboxPageContent() {
       }
     );
 
-    return () => { unsubDocs(); unsubAccounts(); };
+    return () => { unsubDocs(); unsubApproved(); unsubAccounts(); };
   }, [db, hasPermission, authLoading]);
 
   const filteredDocs = useMemo(() => {
@@ -260,7 +274,6 @@ function AccountingInboxPageContent() {
         description: "กรุณาออกใบเสร็จรับเงินเพื่อบันทึกการรับเงินเข้าบัญชีจริง และงานจะปิดเมื่อยืนยันรับเงินค่ะ" 
       });
       
-      // Removed: if (jobId) callCloseJobFunction(jobId, 'UNPAID');
       setConfirmingDoc(null);
     } catch(e: any) {
       if (e.code === 'permission-denied') {
@@ -482,40 +495,79 @@ function AccountingInboxPageContent() {
                 </TableBody>
               </Table>
             </TabsContent>
-            <TabsContent value="receipts" className="mt-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>วันที่</TableHead>
-                    <TableHead>ลูกค้า</TableHead>
-                    <TableHead>เลขที่ใบเสร็จ</TableHead>
-                    <TableHead>ยอดเงิน</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
-                  ) : filteredDocs.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีใบเสร็จที่รอยืนยันเงินเข้า</TableCell></TableRow>
-                  ) : filteredDocs.map(doc => (
-                    <TableRow key={doc.id}>
-                      <TableCell>{safeFormat(new Date(doc.docDate), "dd/MM/yy")}</TableCell>
-                      <TableCell>{doc.customerSnapshot?.name || '--'}</TableCell>
-                      <TableCell>
-                        <div className="font-medium">{doc.docNo}</div>
-                        <div className="text-xs text-muted-foreground">อ้างอิง: {doc.referencesDocIds?.[0] || '-'}</div>
-                      </TableCell>
-                      <TableCell className="font-bold text-green-600">{formatCurrency(doc.grandTotal)}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => router.push(`/app/management/accounting/documents/receipt/${doc.id}/confirm`)}>
-                          <CheckCircle className="mr-2 h-4 w-4 text-green-600"/> ยืนยันรับเงิน
-                        </Button>
-                      </TableCell>
+            <TabsContent value="receipts" className="mt-0 space-y-8">
+              {/* Added a section for Approved Invoices to provide clear next steps */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b pb-2">
+                    <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. บิลที่ตรวจสอบแล้ว (รอดำเนินการออกใบเสร็จ)</h3>
+                    <Badge variant="outline" className="bg-primary/5">{approvedDocs.length} รายการ</Badge>
+                </div>
+                <Table>
+                    <TableHeader className="bg-muted/30">
+                        <TableRow>
+                            <TableHead>เลขที่บิล</TableHead>
+                            <TableHead>ลูกค้า</TableHead>
+                            <TableHead className="text-right">ยอดเงิน</TableHead>
+                            <TableHead className="text-right">จัดการ</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {approvedDocs.length > 0 ? approvedDocs.map(doc => (
+                            <TableRow key={doc.id}>
+                                <TableCell className="font-mono text-xs">{doc.docNo}</TableCell>
+                                <TableCell className="text-sm">{doc.customerSnapshot?.name}</TableCell>
+                                <TableCell className="text-right font-bold">{formatCurrency(doc.grandTotal)}</TableCell>
+                                <TableCell className="text-right">
+                                    <Button asChild size="sm" variant="default" className="h-8">
+                                        <Link href={`/app/management/accounting/documents/receipt?customerId=${doc.customerId}&sourceDocId=${doc.id}`}>
+                                            <PlusCircle className="mr-2 h-4 w-4"/> ออกใบเสร็จ
+                                        </Link>
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
+                        )) : (
+                            <TableRow><TableCell colSpan={4} className="h-20 text-center text-muted-foreground italic text-xs">ไม่มีบิลค้างในขั้นตอนนี้</TableCell></TableRow>
+                        )}
+                    </TableBody>
+                </Table>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b pb-2">
+                    <h3 className="font-bold text-lg flex items-center gap-2"><CheckCircle className="h-5 w-5 text-green-600"/> 2. ใบเสร็จที่รอตรวจสอบรับเงินจริง</h3>
+                </div>
+                <Table>
+                    <TableHeader>
+                    <TableRow>
+                        <TableHead>วันที่</TableHead>
+                        <TableHead>ลูกค้า</TableHead>
+                        <TableHead>เลขที่ใบเสร็จ</TableHead>
+                        <TableHead>ยอดเงิน</TableHead>
+                        <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                    </TableHeader>
+                    <TableBody>
+                    {filteredDocs.length === 0 ? (
+                        <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีใบเสร็จที่รอยืนยันเงินเข้า</TableCell></TableRow>
+                    ) : filteredDocs.map(doc => (
+                        <TableRow key={doc.id}>
+                        <TableCell>{safeFormat(new Date(doc.docDate), "dd/MM/yy")}</TableCell>
+                        <TableCell>{doc.customerSnapshot?.name || '--'}</TableCell>
+                        <TableCell>
+                            <div className="font-medium">{doc.docNo}</div>
+                            <div className="text-xs text-muted-foreground">อ้างอิง: {doc.referencesDocIds?.[0] || '-'}</div>
+                        </TableCell>
+                        <TableCell className="font-bold text-green-600">{formatCurrency(doc.grandTotal)}</TableCell>
+                        <TableCell className="text-right">
+                            <Button variant="outline" size="sm" onClick={() => router.push(`/app/management/accounting/documents/receipt/${doc.id}/confirm`)}>
+                            <CheckCircle className="mr-2 h-4 w-4 text-green-600"/> ยืนยันรับเงิน
+                            </Button>
+                        </TableCell>
+                        </TableRow>
+                    ))}
+                    </TableBody>
+                </Table>
+              </div>
             </TabsContent>
           </CardContent>
         </Card>

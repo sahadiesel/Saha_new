@@ -58,18 +58,13 @@ export function ReceiptForm() {
     defaultValues: {
       paymentDate: new Date().toISOString().split("T")[0],
       amount: 0,
+      customerId: searchParams.get('customerId') || "",
+      sourceDocId: searchParams.get('sourceDocId') || "",
     },
   });
 
   const selectedCustomerId = form.watch('customerId');
   const selectedSourceDocId = form.watch('sourceDocId');
-
-  useEffect(() => {
-    const cId = searchParams.get('customerId');
-    const sId = searchParams.get('sourceDocId');
-    if (cId) form.setValue('customerId', cId);
-    if (sId) form.setValue('sourceDocId', sId);
-  }, [searchParams, form]);
 
   useEffect(() => {
     if (!db) return;
@@ -99,7 +94,7 @@ export function ReceiptForm() {
       collection(db, "documents"),
       where("customerId", "==", selectedCustomerId),
       where("docType", "in", ["TAX_INVOICE", "BILLING_NOTE", "DELIVERY_NOTE"]),
-      where("status", "in", ["UNPAID", "PARTIAL", "DRAFT", "PENDING_REVIEW", "APPROVED"])
+      where("status", "in", ["UNPAID", "PARTIAL", "APPROVED"])
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentType));
@@ -124,6 +119,11 @@ export function ReceiptForm() {
     if (selectedDoc) {
       const balance = selectedDoc.paymentSummary?.balance ?? selectedDoc.grandTotal;
       form.setValue('amount', balance);
+      
+      // Auto-suggest account if it was already reviewed
+      if (selectedDoc.suggestedAccountId && !form.getValues('accountId')) {
+          form.setValue('accountId', selectedDoc.suggestedAccountId);
+      }
     }
   }, [selectedSourceDocId, sourceDocs, form]);
 
@@ -212,7 +212,7 @@ export function ReceiptForm() {
                     <PopoverTrigger asChild>
                         <FormControl>
                         <Button variant="outline" role="combobox" className="w-full md:w-[400px] justify-between font-normal">
-                            <span className="truncate">{field.value ? customers.find(c => c.id === field.value)?.name : "ค้นหาชื่อลูกค้า..."}</span>
+                            <span className="truncate">{field.value ? (customers.find(c => c.id === field.value)?.name || "กำลังโหลด...") : "ค้นหาชื่อลูกค้า..."}</span>
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                         </FormControl>
