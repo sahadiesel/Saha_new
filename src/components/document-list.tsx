@@ -150,12 +150,6 @@ export function DocumentList({
     setCurrentPage(0);
   }, [searchTerm, statusFilter]);
 
-  const uniqueStatuses = useMemo(() => {
-    const allStatuses = new Set(allDocuments.map(doc => getDocDisplayStatus(doc).key));
-    allStatuses.add("DRAFT");
-    return ["ALL", ...Array.from(allStatuses)];
-  }, [allDocuments]);
-
   const cleanBillingRun = async (docObj: Document) => {
     if (!db || docObj.docType !== 'BILLING_NOTE') return;
     const monthId = docObj.billingRunId || docObj.docDate.substring(0, 7);
@@ -221,7 +215,6 @@ export function DocumentList({
     }
   };
 
-  // ✅ New Fix: Admin Revert Payment (Delete old CASH_IN and return to APPROVED)
   const confirmRevertPayment = async () => {
     if (!db || !docToAction || !profile) return;
     setIsActionLoading(true);
@@ -230,15 +223,13 @@ export function DocumentList({
       const batch = writeBatch(db);
       const docRef = doc(db, 'documents', docToAction.id);
       
-      // 1. Delete associated entry if exists
       if (docToAction.accountingEntryId) {
         const entryRef = doc(db, 'accountingEntries', docToAction.accountingEntryId);
         batch.delete(entryRef);
       }
 
-      // 2. Revert document status
       batch.update(docRef, {
-        status: 'APPROVED', // Back to the state where they can create a receipt
+        status: 'APPROVED', 
         paymentSummary: {
             paidTotal: 0,
             balance: docToAction.grandTotal,
@@ -338,7 +329,6 @@ export function DocumentList({
                               <DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>
                               {editPath && <DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}> <Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>}
                               
-                              {/* ✅ Admin Fix Option */}
                               {isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (
                                 <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold">
                                     <RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ
@@ -390,15 +380,17 @@ export function DocumentList({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5 text-amber-500"/> กู้คืนสถานะเพื่อรอออกใบเสร็จ?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-3">
-              <p>ระบบตรวจพบว่าบิลเลขที่ <span className="font-bold">{docToAction?.docNo}</span> ถูกบันทึกรับเงินเข้าบัญชีไปแล้วโดยข้ามขั้นตอนใบเสร็จ</p>
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs">
-                <strong>การดำเนินการนี้จะ:</strong>
-                <ul className="list-disc pl-4 mt-1">
-                    <li>ลบรายการเงินเข้าในสมุดบัญชี (Cashbook) ของบิลใบนี้ออก</li>
-                    <li>เปลี่ยนสถานะบิลกลับเป็น "รอออกใบเสร็จ"</li>
-                    <li>เพื่อให้คุณสามารถไปออกใบเสร็จและยืนยันรับเงินตามระบบใหม่ได้ถูกต้องค่ะ</li>
-                </ul>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>ระบบตรวจพบว่าบิลเลขที่ <span className="font-bold">{docToAction?.docNo}</span> ถูกบันทึกรับเงินเข้าบัญชีไปแล้วโดยข้ามขั้นตอนใบเสร็จ</p>
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-xs">
+                  <strong>การดำเนินการนี้จะ:</strong>
+                  <ul className="list-disc pl-4 mt-1">
+                      <li>ลบรายการเงินเข้าในสมุดบัญชี (Cashbook) ของบิลใบนี้ออก</li>
+                      <li>เปลี่ยนสถานะบิลกลับเป็น "รอออกใบเสร็จ"</li>
+                      <li>เพื่อให้คุณสามารถไปออกใบเสร็จและยืนยันรับเงินตามระบบใหม่ได้ถูกต้องค่ะ</li>
+                  </ul>
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
