@@ -58,7 +58,6 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
     
     let finalDocTitle = docTypeDisplay[document.docType] || document.docType;
     
-    // Add Suffix for Tax Invoices or Billing Notes if provided
     if (labelSuffix) {
         const suffixThai = labelSuffix === 'ORIGINAL' ? 'ต้นฉบับ' : 'สำเนา';
         if (document.docType === 'TAX_INVOICE') {
@@ -69,13 +68,11 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
     }
 
     const isDeliveryNote = document.docType === 'DELIVERY_NOTE';
-    // Billing Note should also show Tax Info if customer uses Tax
     const isTaxDoc = document.docType === 'TAX_INVOICE' || 
                       document.docType === 'CREDIT_NOTE' || 
                       document.docType === 'BILLING_NOTE' ||
                       (document.docType === 'RECEIPT' && !!document.customerSnapshot.useTax);
 
-    // Use Tax fields only if useTax is enabled for this customer
     const useTaxInfo = isTaxDoc && document.customerSnapshot.useTax;
 
     const displayCustomerName = useTaxInfo
@@ -106,7 +103,6 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
     const isQuotation = document.docType === 'QUOTATION';
     const isBilling = document.docType === 'BILLING_NOTE';
     
-    // Refined Labels based on user request: Tax Invoice and Delivery Note use "ผู้ส่งสินค้า" and "ผู้รับสินค้า"
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : 'ผู้ส่งสินค้า');
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : 'ผู้รับสินค้า');
 
@@ -194,16 +190,14 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
                 </div>
             </div>
             
-            {/* Signature Section - Enhanced Layout with 3 lines */}
+            {/* Signature Section - Simplified to remove system names */}
             <div className="grid grid-cols-2 gap-12 mt-auto text-center text-[11px] pb-4 pt-10">
                 <div className="flex flex-col items-center">
                     <p className="mb-6">.................................................</p>
-                    <p className="mb-1">{document.senderName ? `(${document.senderName})` : '(\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0)'}</p>
                     <p className="font-bold">{labelSender}</p>
                 </div>
                 <div className="flex flex-col items-center">
                     <p className="mb-6">.................................................</p>
-                    <p className="mb-1">{document.receiverName ? `(${document.receiverName})` : '(\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0)'}</p>
                     <p className="font-bold">{labelReceiver}</p>
                 </div>
             </div>
