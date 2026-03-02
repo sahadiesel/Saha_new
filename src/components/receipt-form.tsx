@@ -14,13 +14,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, FileText } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, FileText, CheckCircle2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
@@ -28,7 +30,7 @@ import { safeFormat } from "@/lib/date-utils";
 
 const receiptFormSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
-  sourceDocId: z.string().min(1, "กรุณาเลือกเอกสารอ้างอิง"),
+  sourceDocIds: z.array(z.string()).min(1, "กรุณาเลือกบิลอย่างน้อย 1 รายการ"),
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
   amount: z.coerce.number().min(0.01, "ยอดเงินต้องมากกว่า 0"),
@@ -36,6 +38,10 @@ const receiptFormSchema = z.object({
 });
 
 type ReceiptFormData = z.infer<typeof receiptFormSchema>;
+
+const formatCurrency = (value: number | null | undefined) => {
+  return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 export function ReceiptForm() {
   const router = useRouter();
@@ -61,12 +67,12 @@ export function ReceiptForm() {
       paymentDate: new Date().toISOString().split("T")[0],
       amount: 0,
       customerId: searchParams.get('customerId') || "",
-      sourceDocId: searchParams.get('sourceDocId') || "",
+      sourceDocIds: searchParams.get('sourceDocId') ? [searchParams.get('sourceDocId')!] : [],
     },
   });
 
   const selectedCustomerId = form.watch('customerId');
-  const selectedSourceDocId = form.watch('sourceDocId');
+  const watchedSourceDocIds = form.watch('sourceDocIds');
 
   useEffect(() => {
     if (!db) return;
@@ -82,7 +88,7 @@ export function ReceiptForm() {
     if (!db) return;
     const q = query(collection(db, "accountingAccounts"), where("isActive", "==", true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-        setAccounts(snap => snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
+        setAccounts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
     });
     return unsubscribe;
   }, [db]);
@@ -105,7 +111,8 @@ export function ReceiptForm() {
           if (doc.status === 'CANCELLED' || doc.status === 'PAID') return false;
           if (doc.receiptStatus === 'CONFIRMED') return false;
           
-          if (doc.docType === 'TAX_INVOICE' && doc.billingRequired) {
+          // บิลที่ระบุว่าต้องวางบิล จะต้องผ่านการวางบิลก่อน (ยกเว้นเรากำลังออกบิลจากใบวางบิลโดยตรง)
+          if (doc.docType === 'TAX_INVOICE' && doc.billingRequired && !doc.billingNoteId) {
               return false;
           }
           return true;
@@ -116,54 +123,64 @@ export function ReceiptForm() {
     return unsubscribe;
   }, [db, selectedCustomerId]);
   
+  // Calculate total amount whenever selection changes
   useEffect(() => {
-    const selectedDoc = sourceDocs.find(d => d.id === selectedSourceDocId);
-    if (selectedDoc) {
-      const rawBalance = selectedDoc.paymentSummary?.balance ?? selectedDoc.grandTotal;
-      const balance = Math.round(rawBalance * 100) / 100;
-      form.setValue('amount', balance);
-      
-      if (selectedDoc.suggestedAccountId && !form.getValues('accountId')) {
-          form.setValue('accountId', selectedDoc.suggestedAccountId);
-      }
+    const selected = sourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
+    const total = selected.reduce((sum, d) => sum + (d.paymentSummary?.balance ?? d.grandTotal), 0);
+    form.setValue('amount', Math.round(total * 100) / 100);
+    
+    // Auto-set account if the first selected doc has a suggested one
+    if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId')) {
+        form.setValue('accountId', selected[0].suggestedAccountId);
     }
-  }, [selectedSourceDocId, sourceDocs, form]);
+  }, [watchedSourceDocIds, sourceDocs, form]);
+
+  const handleToggleDoc = (docId: string) => {
+    const currentIds = form.getValues('sourceDocIds');
+    if (currentIds.includes(docId)) {
+      form.setValue('sourceDocIds', currentIds.filter(id => id !== docId));
+    } else {
+      form.setValue('sourceDocIds', [...currentIds, docId]);
+    }
+  };
 
   const handleProcessSubmission = async (data: ReceiptFormData, status: 'DRAFT' | 'PENDING_REVIEW') => {
     const customer = customers.find(c => c.id === data.customerId);
-    const sourceDoc = sourceDocs.find(d => d.id === data.sourceDocId);
+    const selectedDocs = sourceDocs.filter(d => data.sourceDocIds.includes(d.id));
     const account = accounts.find(a => a.id === data.accountId);
 
-    if (!db || !customer || !storeSettings || !profile || !sourceDoc || !account) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบถ้วน", description: "กรุณาเลือกข้อมูลลูกค้า บัญชี และเอกสารอ้างอิงให้ครบถ้วนก่อนบันทึก" });
+    if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || !account) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบถ้วน", description: "กรุณาเลือกข้อมูลลูกค้า บัญชี และเลือกบิลอย่างน้อย 1 ใบก่อนบันทึก" });
       return;
     }
     
     setIsSubmitting(true);
     const amount2dec = Math.round(data.amount * 100) / 100;
     
-    const items = [{
-      description: `ชำระค่าสินค้า/บริการ ตาม${sourceDoc.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : sourceDoc.docType === 'BILLING_NOTE' ? 'ใบวางบิล' : 'ใบส่งของชั่วคราว'} เลขที่ ${sourceDoc.docNo}`,
+    // Create detailed items list for the receipt
+    const items = selectedDocs.map(doc => ({
+      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : doc.docType === 'BILLING_NOTE' ? 'ใบวางบิล' : 'ใบส่งของชั่วคราว'} เลขที่ ${doc.docNo}`,
       quantity: 1,
-      unitPrice: amount2dec,
-      total: amount2dec
-    }];
+      unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
+      total: doc.paymentSummary?.balance ?? doc.grandTotal
+    }));
 
     try {
       const docData = {
         docDate: data.paymentDate,
         customerId: data.customerId,
-        customerSnapshot: { ...customer }, // Capture FULL latest snapshot from management
+        customerSnapshot: { ...customer },
         storeSnapshot: { ...storeSettings },
         items,
         subtotal: amount2dec,
         discountAmount: 0,
         net: amount2dec,
-        withTax: sourceDoc.withTax,
-        vatAmount: sourceDoc.withTax ? Math.round(((amount2dec / 1.07) * 0.07) * 100) / 100 : 0,
+        // Using withTax logic: if any selected doc has tax, mark receipt as withTax for calculations
+        withTax: selectedDocs.some(d => d.withTax),
+        vatAmount: selectedDocs.some(d => d.withTax) ? Math.round(((amount2dec / 1.07) * 0.07) * 100) / 100 : 0,
         grandTotal: amount2dec,
         notes: data.notes,
-        referencesDocIds: [data.sourceDocId],
+        referencesDocIds: data.sourceDocIds,
         paymentMethod: account.type === 'CASH' ? 'CASH' : 'TRANSFER',
         paymentDate: data.paymentDate,
         receivedAccountId: data.accountId,
@@ -171,13 +188,15 @@ export function ReceiptForm() {
 
       const { docId, docNo } = await createDocument(db, 'RECEIPT', docData, profile, undefined, { initialStatus: status });
 
-      const sourceDocRef = doc(db, 'documents', data.sourceDocId);
+      // Update all source documents status
       const batch = writeBatch(db);
-      batch.update(sourceDocRef, {
-          receiptStatus: 'ISSUED_NOT_CONFIRMED',
-          receiptDocId: docId,
-          receiptDocNo: docNo,
-          updatedAt: serverTimestamp()
+      selectedDocs.forEach(sourceDoc => {
+          batch.update(doc(db, 'documents', sourceDoc.id), {
+              receiptStatus: 'ISSUED_NOT_CONFIRMED',
+              receiptDocId: docId,
+              receiptDocNo: docNo,
+              updatedAt: serverTimestamp()
+          });
       });
       await batch.commit();
 
@@ -197,21 +216,21 @@ export function ReceiptForm() {
 
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
-    return customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
+    return customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
   }, [customers, customerSearch]);
 
-  if (isLoading) return <Skeleton className="h-96" />;
+  if (isLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
 
   return (
     <Form {...form}>
       <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2 text-primary"><Info className="h-5 w-5" /> เลือกบิลที่ลูกค้าต้องการใบเสร็จ</h2>
+            <h2 className="text-lg font-semibold flex items-center gap-2 text-primary"><Info className="h-5 w-5" /> เลือกบิลที่ลูกค้าต้องการรวมใบเสร็จ</h2>
             <div className="flex gap-2 w-full sm:w-auto">
                 <Button 
                     variant="secondary" 
                     className="flex-1 sm:flex-none"
-                    disabled={isSubmitting || !selectedSourceDocId}
+                    disabled={isSubmitting || watchedSourceDocIds.length === 0}
                     onClick={form.handleSubmit(d => handleProcessSubmission(d, 'DRAFT'))}
                 >
                     {isSubmitting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
@@ -219,7 +238,7 @@ export function ReceiptForm() {
                 </Button>
                 <Button 
                     className="flex-1 sm:flex-none"
-                    disabled={isSubmitting || !selectedSourceDocId}
+                    disabled={isSubmitting || watchedSourceDocIds.length === 0}
                     onClick={form.handleSubmit(d => handleProcessSubmission(d, 'PENDING_REVIEW'))}
                 >
                     {isSubmitting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
@@ -229,8 +248,8 @@ export function ReceiptForm() {
         </div>
         
         <Card>
-            <CardHeader><CardTitle className="text-base">1. ข้อมูลลูกค้าและเอกสารอ้างอิง</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
+            <CardHeader><CardTitle className="text-base">1. ข้อมูลลูกค้าและบิลที่ต้องการรวม</CardTitle></CardHeader>
+            <CardContent className="space-y-6">
             <FormField name="customerId" render={({ field }) => (
                 <FormItem>
                     <FormLabel>ชื่อลูกค้า</FormLabel>
@@ -250,7 +269,7 @@ export function ReceiptForm() {
                         <ScrollArea className="h-60">
                         {filteredCustomers.length > 0 ? (
                             filteredCustomers.map(c => (
-                                <Button variant="ghost" key={c.id} onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 text-left">
+                                <Button variant="ghost" key={c.id} onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); form.setValue('sourceDocIds', []); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 text-left">
                                     <div className="flex flex-col">
                                         <span>{c.name}</span>
                                         <span className="text-xs text-muted-foreground">{c.phone}</span>
@@ -264,34 +283,58 @@ export function ReceiptForm() {
                     <FormMessage />
                 </FormItem>
             )} />
+
             {selectedCustomerId && (
-                <div className="space-y-4">
-                    <FormField name="sourceDocId" render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>เลือกบิล/ใบวางบิล ที่จะรับชำระ</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                            <SelectTrigger className="w-full md:w-[500px]"><SelectValue placeholder="เลือกเอกสารที่ยังไม่ปิดยอด..." /></SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                            {sourceDocs.length > 0 ? sourceDocs.map(doc => (
-                            <SelectItem key={doc.id} value={doc.id}>
-                                [{doc.docNo}] {doc.docType === 'BILLING_NOTE' ? '(ใบวางบิล)' : ''} วันที่: {safeFormat(new Date(doc.docDate), "dd/MM/yy")} - ยอดคงค้าง: {(doc.paymentSummary?.balance ?? doc.grandTotal).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
-                            </SelectItem>
-                            )) : <div className="p-4 text-sm text-muted-foreground text-center">ไม่พบเอกสารค้างชำระที่ออกใบเสร็จรายใบได้</div>}
-                        </SelectContent>
-                        </Select>
-                        <FormMessage />
-                    </FormItem>
-                    )} />
+                <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
+                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (เลือกได้หลายรายการ)</FormLabel>
+                    <div className="border rounded-md">
+                        <Table>
+                            <TableHeader className="bg-muted/50">
+                                <TableRow>
+                                    <TableHead className="w-12 text-center">เลือก</TableHead>
+                                    <TableHead>เลขที่เอกสาร</TableHead>
+                                    <TableHead>วันที่</TableHead>
+                                    <TableHead className="text-right">ยอดคงค้าง</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {sourceDocs.length > 0 ? sourceDocs.map(doc => (
+                                    <TableRow key={doc.id} className={cn("hover:bg-muted/30 cursor-pointer", watchedSourceDocIds.includes(doc.id) && "bg-primary/5")} onClick={() => handleToggleDoc(doc.id)}>
+                                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                            <Checkbox 
+                                                checked={watchedSourceDocIds.includes(doc.id)} 
+                                                onCheckedChange={() => handleToggleDoc(doc.id)} 
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-xs">{doc.docNo}</span>
+                                                <Badge variant="outline" className="text-[8px] h-4 px-1">{doc.docType === 'BILLING_NOTE' ? 'วางบิล' : doc.docType === 'TAX_INVOICE' ? 'กำกับภาษี' : 'ใบส่งของ'}</Badge>
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="text-xs">{safeFormat(new Date(doc.docDate), "dd/MM/yy")}</TableCell>
+                                        <TableCell className="text-right font-bold text-primary">
+                                            {formatCurrency(doc.paymentSummary?.balance ?? doc.grandTotal)}
+                                        </TableCell>
+                                    </TableRow>
+                                )) : (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="h-24 text-sm text-muted-foreground text-center italic">
+                                            ไม่พบเอกสารค้างชำระที่สามารถออกใบเสร็จได้
+                                        </TableCell>
+                                    </TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
                     
                     <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-100 rounded-md text-xs text-amber-800">
                         <AlertCircle className="h-4 w-4 shrink-0" />
                         <div>
-                            <strong>นโยบายบริษัท:</strong>
+                            <strong>คำแนะนำ:</strong>
                             <ul className="list-disc pl-4 mt-1">
-                                <li>ใบกำกับภาษีที่ระบุว่า "ต้องวางบิล" จะไม่ปรากฏที่นี่ กรุณาใช้ระบบ "ใบวางบิล" เพื่อรวบรวมก่อน</li>
-                                <li>การบันทึกร่างช่วยให้คุณพิมพ์ใบเสร็จตรวจสอบก่อนส่งข้อมูลให้ฝ่ายบัญชี</li>
+                                <li>ระบบจะแสดงเฉพาะบิลที่ค้างชำระ และบิลภาษีที่ระบุ "ต้องวางบิล" จะต้องทำใบวางบิลก่อนถึงจะขึ้นที่นี่ค่ะ</li>
+                                <li>การรวมบิลหลายใบในใบเสร็จเดียว ยอดเงินจะถูกนำไปจัดสรรตัดหนี้รายใบเมื่อฝ่ายบัญชียืนยันรับเงินจริงครับ</li>
                             </ul>
                         </div>
                     </div>
@@ -300,13 +343,26 @@ export function ReceiptForm() {
             </CardContent>
         </Card>
 
-        {selectedSourceDocId && (
-        <Card>
-            <CardHeader><CardTitle className="text-base">2. รายละเอียดการรับเงิน (คาดการณ์)</CardTitle></CardHeader>
+        {watchedSourceDocIds.length > 0 && (
+        <Card className="animate-in zoom-in-95">
+            <CardHeader><CardTitle className="text-base">2. รายละเอียดการรับเงินรวม (คาดการณ์)</CardTitle></CardHeader>
             <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField name="paymentDate" render={({ field }) => (<FormItem><FormLabel>วันที่ออกใบเสร็จ</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
-                <FormField name="amount" render={({ field }) => (<FormItem><FormLabel>ยอดเงินตามใบเสร็จ (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="font-bold text-lg" /></FormControl><FormMessage /></FormItem>)} />
+                <FormField name="paymentDate" render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>วันที่ออกใบเสร็จ</FormLabel>
+                        <FormControl><Input type="date" {...field} /></FormControl>
+                        <FormMessage />
+                    </FormItem>
+                )} />
+                <FormField name="amount" render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>ยอดเงินรวมตามใบเสร็จ (บาท)</FormLabel>
+                        <FormControl><Input type="number" step="0.01" {...field} className="font-black text-xl text-primary" readOnly /></FormControl>
+                        <FormDescription className="text-right text-[10px]">รวมยอดจากบิล {watchedSourceDocIds.length} รายการ</FormDescription>
+                        <FormMessage />
+                    </FormItem>
+                )} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField name="accountId" render={({ field }) => (
@@ -323,7 +379,7 @@ export function ReceiptForm() {
                     </FormItem>
                 )} />
             </div>
-            <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>บันทึกเพิ่มเติม</FormLabel><FormControl><Textarea {...field} placeholder="เช่น เลขที่เช็ค, ธนาคารต้นทาง, หรือข้อมูลอื่นที่ฝ่ายบัญชีควรทราบ..." /></FormControl></FormItem>)} />
+            <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>บันทึกเพิ่มเติม</FormLabel><FormControl><Textarea {...field} placeholder="ระบุรายละเอียดเพิ่มเติม (ถ้ามี)..." /></FormControl></FormItem>)} />
             </CardContent>
         </Card>
         )}
