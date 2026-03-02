@@ -36,8 +36,7 @@ function extractSequence(docNo: string): number {
 
 /**
  * Finds the next available sequence number for a given prefix/year.
- * It fetches existing doc numbers and finds the smallest gap (1, 2, [gap], 4 -> returns 3).
- * If no gaps, returns max + 1.
+ * It fetches existing doc numbers and finds the smallest gap.
  */
 async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<number> {
   const q = query(
@@ -45,7 +44,7 @@ async function findNextAvailableSequence(db: Firestore, docType: string, prefixY
     where("docType", "==", docType),
     where("docNo", ">=", prefixYear),
     where("docNo", "<=", prefixYear + "\uf8ff"),
-    orderBy("docNo", "asc") // Sort ascending to find the first gap
+    orderBy("docNo", "asc")
   );
   
   const snap = await getDocs(q);
@@ -79,6 +78,20 @@ export async function createDocument(
     }
   }
 
+  // Check for manual duplicates OUTSIDE transaction (queries are illegal inside transaction)
+  if (options?.manualDocNo) {
+    const qDuplicate = query(
+      collection(db, "documents"), 
+      where("docNo", "==", options.manualDocNo), 
+      where("docType", "==", docType), 
+      limit(1)
+    );
+    const snapDuplicate = await getDocs(qDuplicate);
+    if (!snapDuplicate.empty && snapDuplicate.docs[0].id !== docId) {
+      throw new Error(`เลขที่เอกสาร '${options.manualDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
+    }
+  }
+
   // Determine the prefix from settings
   const docSettingsSnap = await getDoc(doc(db, 'settings', 'documents'));
   
@@ -107,33 +120,19 @@ export async function createDocument(
     : defaultPrefixMap[docType]).toUpperCase();
 
   const prefixSearch = `${prefix}${year}-`;
-
-  // Find the next available number BEFORE the transaction to use as baseline
   const nextSeq = await findNextAvailableSequence(db, docType, prefixSearch);
 
   const result = await runTransaction(db, async (transaction) => {
     let finalDocNo = options?.manualDocNo;
 
     if (!finalDocNo) {
-      // Use the sequence we found. In a high-concurrency environment, we might check 
-      // if someone took it, but for a single shop, this baseline is very reliable.
       finalDocNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
-
-      // Sync documentCounters just in case, though the new logic trusts the collection max/gap
       const counterRef = doc(db, 'documentCounters', String(year));
       transaction.set(counterRef, { 
           [`${docType}_${prefix}_count`]: nextSeq
       }, { merge: true });
-    } else {
-      // Manual check for duplicates
-      const qDuplicate = query(collection(db, "documents"), where("docNo", "==", finalDocNo), where("docType", "==", docType), limit(1));
-      const snapDuplicate = await getDocs(qDuplicate);
-      if (!snapDuplicate.empty && snapDuplicate.docs[0].id !== docId) {
-        throw new Error(`เลขที่เอกสาร '${finalDocNo}' ถูกใช้ไปแล้วในระบบค่ะ`);
-      }
     }
 
-    // Prepare and Set the Document
     const docData = sanitizeForFirestore({
       ...data,
       docDate: dateInput || new Date().toISOString().split('T')[0],
@@ -147,7 +146,6 @@ export async function createDocument(
 
     transaction.set(newDocRef, docData);
 
-    // Update the Job atomically
     const targetJobId = data.jobId;
     if (targetJobId && typeof targetJobId === 'string' && targetJobId.trim() !== '') {
       const jobRef = doc(db, 'jobs', targetJobId);

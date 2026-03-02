@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info } from "lucide-react";
+import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -95,6 +95,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   const [existingActiveDoc, setExistingActiveDoc] = useState<DocumentType | null>(null);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
 
   const [suggestedPayments, setSuggestedPayments] = useState<{method: 'CASH' | 'TRANSFER', accountId: string, amount: number}[]>([{method: 'CASH', accountId: '', amount: 0}]);
   const [recordRemainingAsCredit, setRecordRemainingAsCredit] = useState(false);
@@ -144,14 +145,13 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   useEffect(() => {
     if (!db) return;
-    const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
+    onSnapshot(collection(db, "customers"), (snap) => {
       setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
       setIsLoadingCustomers(false);
     });
-    const unsubAccounts = onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
+    onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
         setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
     });
-    return () => { unsubCustomers(); unsubAccounts(); };
   }, [db]);
 
   useEffect(() => {
@@ -241,36 +241,47 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   const checkUniqueness = async (jobIdVal: string) => {
     if (!db || isEditing) return true;
-    const q = query(collection(db, "documents"), where("jobId", "==", jobIdVal), where("docType", "==", "DELIVERY_NOTE"), limit(5));
-    const snap = await getDocs(q);
-    const activeDoc = snap.docs.find(d => d.data().status !== 'CANCELLED');
-    if (activeDoc) {
-      setExistingActiveDoc({ id: activeDoc.id, ...activeDoc.data() } as DocumentType);
-      return false;
+    setIndexErrorUrl(null);
+    try {
+      const q = query(collection(db, "documents"), where("jobId", "==", jobIdVal), where("docType", "==", "DELIVERY_NOTE"), limit(5));
+      const snap = await getDocs(q);
+      const activeDoc = snap.docs.find(d => d.data().status !== 'CANCELLED');
+      if (activeDoc) {
+        setExistingActiveDoc({ id: activeDoc.id, ...activeDoc.data() } as DocumentType);
+        return false;
+      }
+      return true;
+    } catch (e: any) {
+      if (e.message?.includes('requires an index')) {
+        const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
+        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+      }
+      throw e;
     }
-    return true;
   };
 
-  const handleSave = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
-    if (data.jobId) {
-      const ok = await checkUniqueness(data.jobId);
-      if (!ok) {
-        setPendingFormData(data);
-        setIsReviewSubmission(submitForReview);
-        setShowDuplicateDialog(true);
-        return;
-      }
-    }
-    if (submitForReview) { 
-        setPendingFormData(data); 
-        setIsReviewSubmission(true); 
-        if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
-            setSuggestedPayments([{method: 'CASH', accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
+  const handleSaveWrapper = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
+    try {
+      if (data.jobId) {
+        const ok = await checkUniqueness(data.jobId);
+        if (!ok) {
+          setPendingFormData(data);
+          setIsReviewSubmission(submitForReview);
+          setShowDuplicateDialog(true);
+          return;
         }
-        setShowReviewConfirm(true); 
-        return; 
-    }
-    await executeSave(data, false);
+      }
+      if (submitForReview) { 
+          setPendingFormData(data); 
+          setIsReviewSubmission(true); 
+          if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
+              setSuggestedPayments([{method: 'CASH', accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
+          }
+          setShowReviewConfirm(true); 
+          return; 
+      }
+      await executeSave(data, false);
+    } catch (e) {}
   };
 
   const handleCancelExistingAndSave = async () => {
@@ -329,13 +340,32 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   return (
     <div className="flex flex-col gap-6">
+      {indexErrorUrl && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>ต้องสร้าง Index ก่อน</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <span>การตรวจสอบใบส่งของซ้ำซ้อนต้องใช้ Index กรุณากดปุ่มเพื่อสร้าง Index ก่อนค่ะ</span>
+            <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive hover:bg-muted">
+              <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4"/>สร้าง Index</a>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Form {...form}>
         <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
           <div className="flex justify-between items-center">
             <Button type="button" variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             <div className="flex gap-2">
-              <Button type="button" variant="secondary" onClick={() => form.handleSubmit((d) => handleSave(d, false))()} disabled={isLocked}><Save className="mr-2 h-4 w-4" />บันทึกฉบับร่าง</Button>
-              <Button type="button" onClick={() => form.handleSubmit((d) => handleSave(d, true))()} disabled={isLocked}><Send className="mr-2 h-4 w-4" />ส่งบัญชีตรวจสอบ</Button>
+              <Button type="button" variant="secondary" onClick={form.handleSubmit((d) => handleSaveWrapper(d, false))} disabled={isLocked || isProcessing}>
+                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
+                บันทึกฉบับร่าง
+              </Button>
+              <Button type="button" onClick={form.handleSubmit((d) => handleSaveWrapper(d, true))} disabled={isLocked || isProcessing}>
+                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
+                ส่งบัญชีตรวจสอบ
+              </Button>
             </div>
           </div>
 
