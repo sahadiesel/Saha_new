@@ -79,27 +79,25 @@ function DocumentView({
 
     const isDeliveryNote = document.docType === 'DELIVERY_NOTE';
     const isReceipt = document.docType === 'RECEIPT';
-    const isTaxDoc = document.docType === 'TAX_INVOICE' || 
-                      document.docType === 'CREDIT_NOTE' || 
-                      document.docType === 'BILLING_NOTE' ||
-                      (document.docType === 'RECEIPT' && !!document.customerSnapshot.useTax);
+    const isTaxInvoice = document.docType === 'TAX_INVOICE';
+    
+    // STRICTURE: For Receipt and Tax Invoice, we must use Tax Info fields.
+    const useTaxFields = isReceipt || isTaxInvoice || !!document.customerSnapshot.useTax;
 
-    const useTaxInfo = isTaxDoc && document.customerSnapshot.useTax;
-
-    const displayCustomerName = useTaxInfo
+    const displayCustomerName = useTaxFields
         ? (document.customerSnapshot.taxName || document.customerSnapshot.name) 
         : document.customerSnapshot.name;
         
-    const displayCustomerAddress = useTaxInfo
+    const displayCustomerAddress = useTaxFields
         ? (document.customerSnapshot.taxAddress || 'ไม่มีที่อยู่') 
         : (document.customerSnapshot.detail || document.customerSnapshot.taxAddress || 'ไม่มีที่อยู่');
         
-    const displayCustomerPhone = useTaxInfo
+    const displayCustomerPhone = useTaxFields
         ? (document.customerSnapshot.taxPhone || document.customerSnapshot.phone) 
         : document.customerSnapshot.phone;
 
     let branchLabel = "";
-    if (useTaxInfo) {
+    if (useTaxFields) {
         if (document.customerSnapshot.taxBranchType === 'HEAD_OFFICE') {
             branchLabel = "สำนักงานใหญ่";
         } else if (document.customerSnapshot.taxBranchType === 'BRANCH') {
@@ -155,7 +153,7 @@ function DocumentView({
                         </p>
                         <p className="text-[11px]">
                             โทร {displayCustomerPhone}
-                            {useTaxInfo && document.customerSnapshot.taxId && (
+                            {useTaxFields && document.customerSnapshot.taxId && (
                                 <span className="ml-4">เลขประจำตัวผู้เสียภาษี {document.customerSnapshot.taxId}</span>
                             )}
                         </p>
