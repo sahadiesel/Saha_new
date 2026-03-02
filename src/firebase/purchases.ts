@@ -31,22 +31,30 @@ function extractSequence(docNo: string): number {
 /**
  * Finds the next available sequence for PurchaseDocs.
  */
-export async function findNextAvailablePurchaseSequence(db: Firestore, prefixYear: string): Promise<number> {
-  const q = query(
-    collection(db, "purchaseDocs"),
-    where("docNo", ">=", prefixYear),
-    where("docNo", "<=", prefixYear + "\uf8ff"),
-    orderBy("docNo", "asc")
-  );
-  
-  const snap = await getDocs(q);
-  const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
-  
-  let candidate = 1;
-  while (existingSeqs.has(candidate)) {
-    candidate++;
+export async function findNextAvailablePurchaseSequence(db: Firestore, prefixYear: string): Promise<{ sequence: number; indexErrorUrl?: string }> {
+  try {
+    const q = query(
+      collection(db, "purchaseDocs"),
+      where("docNo", ">=", prefixYear),
+      where("docNo", "<=", prefixYear + "\uf8ff"),
+      orderBy("docNo", "asc")
+    );
+    
+    const snap = await getDocs(q);
+    const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
+    
+    let candidate = 1;
+    while (existingSeqs.has(candidate)) {
+      candidate++;
+    }
+    return { sequence: candidate };
+  } catch (e: any) {
+    if (e.message?.includes('requires an index')) {
+      const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
+      return { sequence: 1, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+    }
+    throw e;
   }
-  return candidate;
 }
 
 /**
@@ -55,7 +63,7 @@ export async function findNextAvailablePurchaseSequence(db: Firestore, prefixYea
 export async function getNextAvailablePurchaseDocNo(
   db: Firestore,
   docDate: string
-): Promise<string> {
+): Promise<{ docNo: string; indexErrorUrl?: string }> {
   const dateObj = new Date(docDate || new Date());
   const year = normalizeYear(dateObj.getFullYear());
   
@@ -63,8 +71,12 @@ export async function getNextAvailablePurchaseDocNo(
   const prefix = (docSettingsSnap.exists() ? (docSettingsSnap.data() as DocumentSettings).purchasePrefix : 'PUR') || 'PUR';
 
   const prefixSearch = `${prefix}${year}-`;
-  const nextSeq = await findNextAvailablePurchaseSequence(db, prefixSearch);
-  return `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
+  const result = await findNextAvailablePurchaseSequence(db, prefixSearch);
+  
+  return { 
+    docNo: `${prefix}${year}-${String(result.sequence).padStart(4, '0')}`,
+    indexErrorUrl: result.indexErrorUrl
+  };
 }
 
 export async function createPurchaseDoc(
@@ -83,7 +95,11 @@ export async function createPurchaseDoc(
   const prefix = (docSettingsSnap.exists() ? (docSettingsSnap.data() as DocumentSettings).purchasePrefix : 'PUR') || 'PUR';
 
   const prefixSearch = `${prefix}${year}-`;
-  const nextSeq = await findNextAvailablePurchaseSequence(db, prefixSearch);
+  const seqResult = await findNextAvailablePurchaseSequence(db, prefixSearch);
+  
+  if (seqResult.indexErrorUrl) {
+    throw new Error(`The query requires an index. You can create it here: ${seqResult.indexErrorUrl}`);
+  }
 
   const documentNumber = await runTransaction(db, async (transaction) => {
     if (providedDocId) {
@@ -91,7 +107,7 @@ export async function createPurchaseDoc(
       if (existingDoc.exists()) return existingDoc.data().docNo as string;
     }
 
-    const docNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
+    const docNo = `${prefix}${year}-${String(seqResult.sequence).padStart(4, '0')}`;
 
     const docData = sanitizeForFirestore({
       ...data,
@@ -107,7 +123,7 @@ export async function createPurchaseDoc(
     
     const counterRef = doc(db, 'documentCounters', String(year));
     transaction.set(counterRef, { 
-        [`PURCHASE_${prefix.toUpperCase()}_count`]: nextSeq
+        [`PURCHASE_${prefix.toUpperCase()}_count`]: seqResult.sequence
     }, { merge: true });
 
     return docNo;

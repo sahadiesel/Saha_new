@@ -152,14 +152,14 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     const fetchPreview = async () => {
       try {
         setIndexErrorUrl(null);
-        const nextNo = await getNextAvailableDocNo(db, 'DELIVERY_NOTE', watchedIssueDate);
-        setPreviewDocNo(nextNo);
-      } catch (e: any) {
-        console.error("Failed to fetch doc no preview", e);
-        if (e.message?.includes('requires an index')) {
-          const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        const result = await getNextAvailableDocNo(db, 'DELIVERY_NOTE', watchedIssueDate);
+        if (result.indexErrorUrl) {
+          setIndexErrorUrl(result.indexErrorUrl);
+        } else {
+          setPreviewDocNo(result.docNo);
         }
+      } catch (e: any) {
+        // Handle silenty
       }
     };
     fetchPreview();

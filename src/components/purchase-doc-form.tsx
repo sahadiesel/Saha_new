@@ -130,14 +130,14 @@ export function PurchaseDocForm() {
     const fetchPreview = async () => {
       try {
         setIndexErrorUrl(null);
-        const nextNo = await getNextAvailablePurchaseDocNo(db, watchedDocDate);
-        setPreviewDocNo(nextNo);
-      } catch (e: any) {
-        console.error("Failed to fetch purchase doc no preview", e);
-        if (e.message?.includes('requires an index')) {
-          const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        const result = await getNextAvailablePurchaseDocNo(db, watchedDocDate);
+        if (result.indexErrorUrl) {
+          setIndexErrorUrl(result.indexErrorUrl);
+        } else {
+          setPreviewDocNo(result.docNo);
         }
+      } catch (e: any) {
+        // Silently handle
       }
     };
     fetchPreview();

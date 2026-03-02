@@ -38,23 +38,31 @@ function extractSequence(docNo: string): number {
  * Finds the next available sequence number for a given prefix/year.
  * It fetches existing doc numbers and finds the smallest gap.
  */
-export async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<number> {
-  const q = query(
-    collection(db, "documents"),
-    where("docType", "==", docType),
-    where("docNo", ">=", prefixYear),
-    where("docNo", "<=", prefixYear + "\uf8ff"),
-    orderBy("docNo", "asc")
-  );
-  
-  const snap = await getDocs(q);
-  const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
-  
-  let candidate = 1;
-  while (existingSeqs.has(candidate)) {
-    candidate++;
+export async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<{ sequence: number; indexErrorUrl?: string }> {
+  try {
+    const q = query(
+      collection(db, "documents"),
+      where("docType", "==", docType),
+      where("docNo", ">=", prefixYear),
+      where("docNo", "<=", prefixYear + "\uf8ff"),
+      orderBy("docNo", "asc")
+    );
+    
+    const snap = await getDocs(q);
+    const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
+    
+    let candidate = 1;
+    while (existingSeqs.has(candidate)) {
+      candidate++;
+    }
+    return { sequence: candidate };
+  } catch (e: any) {
+    if (e.message?.includes('requires an index')) {
+      const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
+      return { sequence: 1, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+    }
+    throw e;
   }
-  return candidate;
 }
 
 /**
@@ -64,7 +72,7 @@ export async function getNextAvailableDocNo(
   db: Firestore,
   docType: DocType,
   docDate: string
-): Promise<string> {
+): Promise<{ docNo: string; indexErrorUrl?: string }> {
   let year = new Date().getFullYear();
   if (docDate) {
     const dateObj = new Date(docDate);
@@ -100,8 +108,12 @@ export async function getNextAvailableDocNo(
     : defaultPrefixMap[docType]).toUpperCase();
 
   const prefixSearch = `${prefix}${year}-`;
-  const nextSeq = await findNextAvailableSequence(db, docType, prefixSearch);
-  return `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
+  const result = await findNextAvailableSequence(db, docType, prefixSearch);
+  
+  return { 
+    docNo: `${prefix}${year}-${String(result.sequence).padStart(4, '0')}`,
+    indexErrorUrl: result.indexErrorUrl
+  };
 }
 
 export async function createDocument(
@@ -167,16 +179,20 @@ export async function createDocument(
     : defaultPrefixMap[docType]).toUpperCase();
 
   const prefixSearch = `${prefix}${year}-`;
-  const nextSeq = await findNextAvailableSequence(db, docType, prefixSearch);
+  const seqResult = await findNextAvailableSequence(db, docType, prefixSearch);
+  
+  if (seqResult.indexErrorUrl) {
+    throw new Error(`The query requires an index. You can create it here: ${seqResult.indexErrorUrl}`);
+  }
 
   const result = await runTransaction(db, async (transaction) => {
     let finalDocNo = options?.manualDocNo;
 
     if (!finalDocNo) {
-      finalDocNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
+      finalDocNo = `${prefix}${year}-${String(seqResult.sequence).padStart(4, '0')}`;
       const counterRef = doc(db, 'documentCounters', String(year));
       transaction.set(counterRef, { 
-          [`${docType}_${prefix}_count`]: nextSeq
+          [`${docType}_${prefix}_count`]: seqResult.sequence
       }, { merge: true });
     }
 
