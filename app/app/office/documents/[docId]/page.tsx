@@ -2,7 +2,7 @@
 
 import { useMemo, Suspense, useState, useEffect } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { doc } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useDoc } from "@/firebase/firestore/use-doc";
 import { PageHeader } from "@/components/page-header";
@@ -13,8 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, ArrowLeft, Printer, Loader2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
-import { cn } from "@/lib/utils";
-import type { Document } from "@/lib/types";
+import { cn, thaiBahtText } from "@/lib/utils";
+import type { Document, AccountingAccount } from "@/lib/types";
 
 import {
   AlertDialog,
@@ -45,7 +45,15 @@ function VehicleInfo({ doc }: { doc: Document }) {
     );
 }
 
-function DocumentView({ document, labelSuffix }: { document: Document, labelSuffix?: 'ORIGINAL' | 'COPY' }) {
+function DocumentView({ 
+    document, 
+    labelSuffix,
+    accountName
+}: { 
+    document: Document, 
+    labelSuffix?: 'ORIGINAL' | 'COPY',
+    accountName?: string
+}) {
     const docTypeDisplay: Record<string, string> = {
         QUOTATION: "ใบเสนอราคา / Quotation",
         DELIVERY_NOTE: "ใบส่งของชั่วคราว",
@@ -64,10 +72,13 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
             finalDocTitle = `ใบกำกับภาษี ${suffixThai} / Tax Invoice`;
         } else if (document.docType === 'BILLING_NOTE') {
             finalDocTitle = `ใบวางบิล ${suffixThai} / Billing Note`;
+        } else if (document.docType === 'RECEIPT') {
+            finalDocTitle = `ใบเสร็จรับเงิน ${suffixThai} / Receipt`;
         }
     }
 
     const isDeliveryNote = document.docType === 'DELIVERY_NOTE';
+    const isReceipt = document.docType === 'RECEIPT';
     const isTaxDoc = document.docType === 'TAX_INVOICE' || 
                       document.docType === 'CREDIT_NOTE' || 
                       document.docType === 'BILLING_NOTE' ||
@@ -103,8 +114,8 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
     const isQuotation = document.docType === 'QUOTATION';
     const isBilling = document.docType === 'BILLING_NOTE';
     
-    const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : 'ผู้ส่งสินค้า');
-    const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : 'ผู้รับสินค้า');
+    const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : 'ผู้ส่งสินค้า'));
+    const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : 'ผู้รับสินค้า'));
 
     return (
         <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col">
@@ -176,8 +187,16 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
                 </Table>
 
                 <div className="grid grid-cols-2 gap-8">
-                    <div className="text-left text-[11px]">
-                        {document.notes && <p className="whitespace-pre-wrap"><span className="font-bold">หมายเหตุ:</span> {document.notes}</p>}
+                    <div className="text-left space-y-4">
+                        {document.notes && <div className="text-[11px] whitespace-pre-wrap"><span className="font-bold">หมายเหตุ:</span> {document.notes}</div>}
+                        
+                        {isReceipt && (
+                            <div className="p-3 border rounded bg-muted/5 space-y-1">
+                                <p className="text-[10px] font-bold text-primary uppercase tracking-widest">ข้อมูลการชำระเงิน</p>
+                                <p className="text-xs font-bold">ชำระโดย: <span className="font-normal">{accountName || (document.paymentMethod === 'CASH' ? 'เงินสด' : 'เงินโอน')}</span></p>
+                                <p className="text-[10px] text-muted-foreground italic">วันที่ได้รับเงิน: {safeFormat(new Date(document.paymentDate || document.docDate), 'dd/MM/yyyy')}</p>
+                            </div>
+                        )}
                     </div>
                     <div className="space-y-1">
                         <div className="flex justify-between text-sm"><span>รวมเป็นเงิน</span><span>{document.subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
@@ -186,11 +205,16 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
                         {document.withTax && <div className="flex justify-between text-sm"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{document.vatAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>}
                         <Separator className="my-1" />
                         <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                        
+                        {/* Baht Text */}
+                        <div className="text-right pt-1">
+                            <span className="text-[11px] font-bold italic">{thaiBahtText(document.grandTotal)}</span>
+                        </div>
                     </div>
                 </div>
             </div>
             
-            {/* Signature Section - Simplified to remove system names */}
+            {/* Signature Section */}
             <div className="grid grid-cols-2 gap-12 mt-auto text-center text-[11px] pb-4 pt-10">
                 <div className="flex flex-col items-center">
                     <p className="mb-6">.................................................</p>
@@ -201,6 +225,13 @@ function DocumentView({ document, labelSuffix }: { document: Document, labelSuff
                     <p className="font-bold">{labelReceiver}</p>
                 </div>
             </div>
+
+            {/* Footer Disclaimer for Receipt */}
+            {isReceipt && (
+                <div className="text-center text-[10px] text-muted-foreground border-t pt-2 mt-4 italic">
+                    "เอกสารฉบับนี้จะสมบูรณ์เมื่อได้รับเงินครบถ้วนแล้วเท่านั้น"
+                </div>
+            )}
         </div>
     );
 }
@@ -213,6 +244,7 @@ function DocumentPageContent() {
 
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
     const [printCopies, setPrintCopies] = useState<1 | 2>(1);
+    const [accountName, setAccountName] = useState<string>("");
 
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
@@ -225,6 +257,17 @@ function DocumentPageContent() {
             return () => clearTimeout(timer);
         }
     }, [document, searchParams]);
+
+    // Fetch account name for receipts
+    useEffect(() => {
+        if (document?.docType === 'RECEIPT' && document.receivedAccountId && db) {
+            getDoc(doc(db, 'accountingAccounts', document.receivedAccountId)).then(snap => {
+                if (snap.exists()) {
+                    setAccountName(snap.data().name);
+                }
+            });
+        }
+    }, [document, db]);
 
     const handleBack = () => {
         if (!document) {
@@ -254,14 +297,14 @@ function DocumentPageContent() {
     };
 
     const handlePrintRequest = () => {
-        if (document?.docType === 'TAX_INVOICE' || document?.docType === 'BILLING_NOTE') setIsPrintOptionsOpen(true);
+        if (['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document?.docType || '')) setIsPrintOptionsOpen(true);
         else window.print();
     };
 
     if (isLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
     if (error || !document) return <div className="p-12 text-center space-y-4"><AlertCircle className="mx-auto h-12 w-12 text-destructive"/><h2 className="text-xl font-bold">ไม่พบเอกสาร</h2><Button variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2"/> กลับ</Button></div>;
 
-    const showMultiCopy = document.docType === 'TAX_INVOICE' || document.docType === 'BILLING_NOTE';
+    const showMultiCopy = ['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document.docType);
 
     return (
         <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden">
@@ -277,19 +320,19 @@ function DocumentPageContent() {
                     <div className="min-w-[210mm] print:min-w-0 print:m-0">
                         {showMultiCopy ? (
                             <div className="space-y-8 print:space-y-0">
-                                <DocumentView document={document} labelSuffix="ORIGINAL" />
+                                <DocumentView document={document} labelSuffix="ORIGINAL" accountName={accountName} />
                                 <div className="hidden print:block break-before-page" />
-                                <DocumentView document={document} labelSuffix="COPY" />
+                                <DocumentView document={document} labelSuffix="COPY" accountName={accountName} />
                                 
                                 {printCopies === 2 && (
                                     <>
                                         <div className="hidden print:block break-before-page" />
-                                        <DocumentView document={document} labelSuffix="COPY" />
+                                        <DocumentView document={document} labelSuffix="COPY" accountName={accountName} />
                                     </>
                                 )}
                             </div>
                         ) : (
-                            <DocumentView document={document} />
+                            <DocumentView document={document} accountName={accountName} />
                         )}
                     </div>
                 </div>
@@ -298,7 +341,7 @@ function DocumentPageContent() {
             <AlertDialog open={isPrintOptionsOpen} onOpenChange={setIsPrintOptionsOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>พิมพ์{document.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบวางบิล'}</AlertDialogTitle>
+                        <AlertDialogTitle>พิมพ์{document.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : (document.docType === 'RECEIPT' ? 'ใบเสร็จรับเงิน' : 'ใบวางบิล')}</AlertDialogTitle>
                         <AlertDialogDescription>เลือกจำนวนสำเนาที่ต้องการพิมพ์</AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="py-4">
