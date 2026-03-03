@@ -264,7 +264,7 @@ export default function HRGeneratePayslipsPage() {
                 payslipsSnap
             ] = await Promise.all([
                 getDocs(usersQuery),
-                getDocs(holidaysSnap || collection(db, 'hrHolidays')), // Fallback to collection if holidaysSnap is unavailable
+                getDocs(holidaysQuery),
                 getDocs(leavesQuery),
                 getDocs(attendancePeriodQuery),
                 getDocs(adjustmentsPeriodQuery),
