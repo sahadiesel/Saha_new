@@ -14,6 +14,7 @@ import {
   doc,
   writeBatch,
   serverTimestamp,
+  getDocs,
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
@@ -276,8 +277,6 @@ export function JobList({
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {jobs.map((job) => {
-          const hasQuotation = job.salesDocId && job.salesDocType === 'QUOTATION';
-          const hasBillingDoc = (job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE')) || job.status === 'WAITING_CUSTOMER_PICKUP';
           const isOwnDept = profile?.department === job.department;
           
           return (
@@ -292,73 +291,80 @@ export function JobList({
               </CardHeader>
               <CardContent className="px-4 pb-4 flex-grow"><p className="text-sm line-clamp-2 text-muted-foreground">{job.description}</p></CardContent>
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">
-                <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
+                {/* 1. Primary Action: Always show View Details as the top button for consistency */}
+                <Button asChild className="w-full h-9" variant="secondary">
+                  <Link href={`/app/jobs/${job.id}`}>
+                    ดูรายละเอียด
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
                 
-                {canAssignWork && (
-                  <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
-                    {job.status === 'RECEIVED' && (
-                      <Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default">
-                        <UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน
+                {/* 2. Secondary Contextual Action: Ensure this area always has a consistent layout */}
+                <div className="w-full flex flex-col gap-2">
+                  {/* Case A: Assignment (Mgmt/Officer) */}
+                  {canAssignWork && job.status === 'RECEIVED' && (
+                    <Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold" variant="default">
+                      <UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน
+                    </Button>
+                  )}
+                  
+                  {/* Case B: Quick Decisions (Waiting Approval / Parts) */}
+                  {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                        <Check className="mr-1 h-3 w-3" />อนุมัติ
                       </Button>
-                    )}
-                    
-                    {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
-                          <Check className="mr-1 h-3 w-3" />อนุมัติ
+                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไปรอทำบิล (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                        <Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ
+                      </Button>
+                    </div>
+                  )}
+
+                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
+                    <Button className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]" onClick={() => handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
+                      <PackageCheck className="mr-2 h-4 w-4" />อะไหล่มาครบแล้ว
+                    </Button>
+                  )}
+
+                  {/* Case C: Worker taking job */}
+                  {isWorker && isOwnDept && job.status === 'RECEIVED' && (
+                    <Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">
+                      {isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้
+                    </Button>
+                  )}
+                  
+                  {/* Case D: Quotation issuance */}
+                  {job.status === 'WAITING_QUOTATION' && !job.salesDocId && (
+                    <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "hidden")} variant="default" disabled={!canDoBilling}>
+                      {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : null}
+                    </Button>
+                  )}
+
+                  {/* Case E: Billing & Pickup (DONE / WAITING_CUSTOMER_PICKUP) - ALWAYS SHOW SECOND BUTTON HERE */}
+                  {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && (
+                    <div className="flex flex-col gap-2 w-full">
+                      {job.salesDocId ? (
+                        <Button asChild variant="outline" className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold">
+                          <Link href={`/app/office/documents/${job.salesDocType === 'DELIVERY_NOTE' ? 'delivery-note' : 'tax-invoice'}/${job.salesDocId}`}>
+                            <Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}
+                          </Link>
                         </Button>
-                        <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไปรอทำบิล (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
-                          <Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ
-                        </Button>
-                      </div>
-                    )}
-
-                    {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
-                      <Button className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]" onClick={() => handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม (ผ่านรายการสรุป)')} disabled={isProcessing === job.id}>
-                        <PackageCheck className="mr-2 h-4 w-4" />อะไหล่มาครบแล้ว
-                      </Button>
-                    )}
-                  </div>
-                )}
-
-                {isWorker && isOwnDept && job.status === 'RECEIVED' && (
-                  <Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">
-                    {isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้
-                  </Button>
-                )}
-                
-                {job.status === 'WAITING_QUOTATION' && !hasQuotation && (
-                  <Button asChild={canDoBilling} className={cn("w-full h-9 font-bold", !canDoBilling && "hidden")} variant="default" disabled={!canDoBilling}>
-                    {canDoBilling ? <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link> : null}
-                  </Button>
-                )}
-
-                {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && (
-                  <div className="flex flex-col gap-2 w-full">
-                    {/* RESTORED: Show View Bill button if doc exists, otherwise hide Issue Bill if already billed */}
-                    {job.salesDocId ? (
-                      <Button asChild variant="outline" className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold">
-                        <Link href={`/app/office/documents/${job.salesDocType === 'DELIVERY_NOTE' ? 'delivery-note' : 'tax-invoice'}/${job.salesDocId}`}>
-                          <Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}
-                        </Link>
-                      </Button>
-                    ) : (
-                      !hasBillingDoc && (
+                      ) : (
                         <Button className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", !canDoBilling && "hidden")} variant="outline" disabled={!canDoBilling} onClick={() => setBillingJob(job)}>
                           <Receipt className="mr-2 h-4 w-4" />ออกบิล
                         </Button>
-                      )
-                    )}
-                    
-                    {canDoBilling && job.status === 'DONE' && (
-                      <Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold">
-                        <Link href={`/app/jobs/${job.id}?action=revert`}>
-                          <RotateCcw className="mr-1 h-3 w-3" /> ส่งกลับแก้ไข
-                        </Link>
-                      </Button>
-                    )}
-                  </div>
-                )}
+                      )}
+                      
+                      {canDoBilling && job.status === 'DONE' && (
+                        <Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold">
+                          <Link href={`/app/jobs/${job.id}?action=revert`}>
+                            <RotateCcw className="mr-1 h-3 w-3" /> ส่งกลับแก้ไข
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </CardFooter>
             </Card>
           );
