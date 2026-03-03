@@ -173,11 +173,14 @@ function JobDetailsPageContent() {
     if (job.isArchived) return true;
     if (job.status === 'CLOSED') return true;
     
-    // 1. Check denormalized field in Job document
+    // 1. Status Check: WAITING_CUSTOMER_PICKUP is the "Billed" state
+    if (job.status === 'WAITING_CUSTOMER_PICKUP') return true;
+
+    // 2. Check denormalized field in Job document
     const hasActiveBillField = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
     if (hasActiveBillField) return true;
 
-    // 2. Check live documents related to this job (covers cases where field update failed)
+    // 3. Check live documents related to this job (fallback)
     const hasLiveDn = relatedDocuments['DELIVERY_NOTE']?.some(d => d.status !== 'CANCELLED');
     const hasLiveTi = relatedDocuments['TAX_INVOICE']?.some(d => d.status !== 'CANCELLED');
     
@@ -762,7 +765,7 @@ function JobDetailsPageContent() {
             <Card>
                 <CardHeader><CardTitle>อัปเดทการทำงาน/รูปงาน</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
-                  <Textarea placeholder="พิมพ์บันทึกที่นี่..." value={newNote} onChange={e => setNewNote(e.target.value)} disabled={!canUpdateActivity || isViewOnly} />
+                  <span className="block"><Textarea placeholder="พิมพ์บันทึกที่นี่..." value={newNote} onChange={e => setNewNote(e.target.value)} disabled={!canUpdateActivity || isViewOnly} /></span>
                   {photoPreviews.length > 0 && (
                     <div className="grid grid-cols-4 gap-2">{photoPreviews.map((src, i) => (
                       <div key={i} className="relative"><Image src={src} alt="preview" width={100} height={100} className="rounded-md object-cover w-full aspect-square" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-5 w-5" onClick={() => { URL.revokeObjectURL(photoPreviews[i]); setNewPhotos(p=>p.filter((_,idx)=>idx!==i)); setPhotoPreviews(p=>p.filter((_,idx)=>idx!==i)); }}><X className="h-3 w-3" /></Button></div>

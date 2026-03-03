@@ -7,7 +7,7 @@ import {
   collection, 
   query, 
   where, 
-  getDocs, 
+  onSnapshot, 
   orderBy, 
   limit, 
   doc,
@@ -138,35 +138,30 @@ export function JobList({
     };
   }, [status, excludeStatus]);
 
-  // Permissions: isMgmtOrOffice includes Office, Management, Admin, Manager
   const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
-  // canAssign: Mgmt/Office OR Officer (e.g. Front PC)
   const canAssignWork = isMgmtOrOffice || profile?.role === 'OFFICER';
   const isWorker = profile?.role === 'WORKER';
   const canDoBilling = isMgmtOrOffice;
 
-  const fetchData = useCallback(async () => {
+  useEffect(() => {
     if (!db) return;
 
     setLoading(true);
     setError(null);
     setIndexUrl(null);
 
-    try {
-      const qConstraints: QueryConstraint[] = [];
-      
-      if (department) qConstraints.push(where('department', '==', department));
-      if (assigneeUid) qConstraints.push(where('assigneeUid', '==', assigneeUid));
-      
-      if (statusConfig.inStatus.length > 0) {
-        qConstraints.push(where('status', 'in', statusConfig.inStatus));
-      }
-      
-      qConstraints.push(orderBy('lastActivityAt', 'desc'));
-      qConstraints.push(limit(500)); 
+    const qConstraints: QueryConstraint[] = [];
+    if (department) qConstraints.push(where('department', '==', department));
+    if (assigneeUid) qConstraints.push(where('assigneeUid', '==', assigneeUid));
+    if (statusConfig.inStatus.length > 0) {
+      qConstraints.push(where('status', 'in', statusConfig.inStatus));
+    }
+    qConstraints.push(orderBy('lastActivityAt', 'desc'));
+    qConstraints.push(limit(200));
 
-      const q = query(collection(db, "jobs"), ...qConstraints);
-      const snapshot = await getDocs(q);
+    const q = query(collection(db, "jobs"), ...qConstraints);
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
       const term = searchTerm.toLowerCase().trim();
@@ -177,30 +172,24 @@ export function JobList({
           (j.description || "").toLowerCase().includes(term) ||
           (j.id && j.id.toLowerCase().includes(term)) ||
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
-          (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term) ||
-          (j.commonrailDetails?.partNumber || "").toLowerCase().includes(term) ||
-          (j.mechanicDetails?.partNumber || "").toLowerCase().includes(term) ||
-          (j.commonrailDetails?.registrationNumber || "").toLowerCase().includes(term) ||
-          (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(term)
+          (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
       }
       
       setJobs(jobsData);
-    } catch (err: any) {
+      setLoading(false);
+    }, (err: FirestoreError) => {
       console.error("Error fetching jobs:", err);
       setError(err);
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) setIndexUrl(urlMatch[0]);
       }
-    } finally {
       setLoading(false);
-    }
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm]);
+    });
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    return () => unsubscribe();
+  }, [db, department, assigneeUid, statusConfig.key, searchTerm]);
 
   const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
     if (!db || !profile || isProcessing) return;
@@ -221,7 +210,6 @@ export function JobList({
       });
       await batch.commit();
       toast({ title: "อัปเดตสถานะสำเร็จ" });
-      fetchData();
     } catch (e: any) { 
       toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message }); 
     } finally { 
@@ -239,7 +227,6 @@ export function JobList({
       batch.set(doc(collection(jobRef, "activities")), { text: `ช่างรับงานเองเรียบร้อยแล้ว แผนก ${deptLabel(job.department)}`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
       toast({ title: "รับงานสำเร็จ" });
-      fetchData();
     } catch (e: any) { toast({ variant: "destructive", title: "รับงานไม่สำเร็จ", description: e.message }); } finally { setIsProcessing(null); }
   };
 
@@ -277,7 +264,6 @@ export function JobList({
       await batch.commit();
       toast({ title: "มอบหมายงานสำเร็จ" });
       setAssigningJob(null);
-      fetchData();
     } catch (e: any) { toast({ variant: 'destructive', title: "มอบหมายล้มเหลว", description: e.message }); } finally { setIsProcessing(null); }
   };
 
@@ -290,7 +276,8 @@ export function JobList({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {jobs.map((job) => {
           const hasQuotation = job.salesDocId && job.salesDocType === 'QUOTATION';
-          const hasBillingDoc = job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+          // STRICT CHECK: A job is billed if it has a doc link OR if status is WAITING_CUSTOMER_PICKUP
+          const hasBillingDoc = (job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE')) || job.status === 'WAITING_CUSTOMER_PICKUP';
           const isOwnDept = profile?.department === job.department;
           
           return (
@@ -349,8 +336,16 @@ export function JobList({
                 {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && (
                   <div className="flex flex-col gap-2 w-full">
                     {hasBillingDoc ? (
-                      <Button asChild={canDoBilling} className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", !canDoBilling && "opacity-50 cursor-not-allowed")} variant="outline" disabled={!canDoBilling}>
-                        {canDoBilling ? <Link href={`/app/office/documents/${job.salesDocType === 'DELIVERY_NOTE' ? 'delivery-note' : 'tax-invoice'}/${job.salesDocId}`}><Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}</Link> : <span className="flex items-center"><Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}</span>}
+                      <Button asChild={canDoBilling && !!job.salesDocId} className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", (!canDoBilling || !job.salesDocId) && "opacity-50 cursor-not-allowed")} variant="outline" disabled={!canDoBilling || !job.salesDocId}>
+                        {(canDoBilling && job.salesDocId) ? (
+                          <Link href={`/app/office/documents/${job.salesDocType === 'DELIVERY_NOTE' ? 'delivery-note' : 'tax-invoice'}/${job.salesDocId}`}>
+                            <Eye className="mr-2 h-4 w-4" />ดูบิล {job.salesDocNo}
+                          </Link>
+                        ) : (
+                          <span className="flex items-center">
+                            <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" /> ออกบิลแล้ว
+                          </span>
+                        )}
                       </Button>
                     ) : (
                       <Button className={cn("w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold", !canDoBilling && "hidden")} variant="outline" disabled={!canDoBilling} onClick={() => setBillingJob(job)}>
