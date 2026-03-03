@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
@@ -37,6 +36,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { LEAVE_TYPES } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 
 const formatCurrency = (value: number | undefined) => {
   return (value ?? 0).toLocaleString("th-TH", {
@@ -264,7 +264,7 @@ export default function HRGeneratePayslipsPage() {
                 payslipsSnap
             ] = await Promise.all([
                 getDocs(usersQuery),
-                getDocs(holidaysQuery),
+                getDocs(holidaysSnap || collection(db, 'hrHolidays')), // Fallback to collection if holidaysSnap is unavailable
                 getDocs(leavesQuery),
                 getDocs(attendancePeriodQuery),
                 getDocs(adjustmentsPeriodQuery),
