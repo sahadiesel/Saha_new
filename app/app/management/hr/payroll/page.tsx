@@ -317,6 +317,13 @@ export default function HRGeneratePayslipsPage() {
             setIsLoading(false);
         }
     }, [db, hrSettings, currentMonth, period, adminProfile, toast]);
+
+    // Automatic fetch on dependencies change
+    useEffect(() => {
+        if (hasPermission && hrSettings && adminProfile && db) {
+            handleFetchEmployees();
+        }
+    }, [currentMonth, period, hrSettings, adminProfile, db, hasPermission, handleFetchEmployees]);
     
     const handleSsoDecisionConfirm = async (decision: any) => {
         if (!db || !adminProfile) return;
@@ -500,31 +507,43 @@ export default function HRGeneratePayslipsPage() {
             <Card>
                 <CardHeader>
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                        <CardTitle className="text-lg">เลือกช่วงเวลางวดบัญชี</CardTitle>
+                        <div className="flex items-center gap-3">
+                            <CardTitle className="text-lg">เลือกช่วงเวลางวดบัญชี</CardTitle>
+                            {isLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                        </div>
                         <div className="flex items-center gap-2 self-end sm:self-center">
                             <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => subMonths(prev, 1))}><ChevronLeft /></Button>
                             <span className="font-semibold text-lg text-center w-32">{format(currentMonth, 'MMMM yyyy')}</span>
                             <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}><ChevronRight /></Button>
                             <Select value={period.toString()} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
-                                <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
                                 <SelectContent><SelectItem value="1">งวดที่ 1</SelectItem><SelectItem value="2">งวดที่ 2</SelectItem></SelectContent>
                             </Select>
+                            <Button variant="ghost" size="icon" onClick={() => handleFetchEmployees()} disabled={isLoading} title="รีเฟรชข้อมูล">
+                                <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                            </Button>
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent>
-                    <Button onClick={() => handleFetchEmployees()} disabled={isLoading} className="shadow-md">
-                        {isLoading ? <Loader2 className="animate-spin mr-2" /> : <CalendarDays className="mr-2"/>}
-                        ดึงข้อมูลพนักงาน
-                    </Button>
-                </CardContent>
             </Card>
 
-            {isLoading && <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>}
+            {isLoading && employeeData.length === 0 && (
+                <div className="flex justify-center p-12">
+                    <div className="flex flex-col items-center gap-4">
+                        <Loader2 className="animate-spin h-10 w-10 text-primary" />
+                        <p className="text-sm text-muted-foreground animate-pulse">กำลังคำนวณและสรุปข้อมูลพนักงาน...</p>
+                    </div>
+                </div>
+            )}
             
             {employeeData.length > 0 && (
                 <Card className="mt-6">
-                    <CardHeader><CardTitle>รายชื่อพนักงาน ({employeeData.length} ท่าน)</CardTitle></CardHeader>
+                    <CardHeader>
+                        <div className="flex justify-between items-center">
+                            <CardTitle>รายชื่อพนักงาน ({employeeData.length} ท่าน)</CardTitle>
+                            <Badge variant="outline" className="bg-primary/5 text-primary">Auto-Updated</Badge>
+                        </div>
+                    </CardHeader>
                     <CardContent className="p-0">
                         <Table>
                             <TableHeader><TableRow><TableHead className="pl-6">ชื่อพนักงาน</TableHead><TableHead>แผนก</TableHead><TableHead>ประเภท</TableHead><TableHead className="text-right">วันทำงาน</TableHead><TableHead>สถานะสลิป</TableHead><TableHead className="text-right pr-6">จัดการ</TableHead></TableRow></TableHeader>
