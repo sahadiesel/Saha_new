@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
-import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField } from "firebase/firestore";
+import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet, PlusCircle } from "lucide-react";
+import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet, PlusCircle, CheckCircle2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { WithId } from "@/firebase";
 import type { Document as DocumentType, AccountingAccount } from "@/lib/types";
@@ -105,14 +105,13 @@ function AccountingInboxPageContent() {
       }
     );
 
-    // Docs approved but no receipt issued yet (only for cash/mixed)
+    // Docs approved but no receipt issued yet (only for tax invoices)
     const approvedQuery = query(
         collection(db, "documents"),
         where("status", "==", "APPROVED"),
-        where("receiptStatus", "==", "NONE"), // Assuming we set this or it's empty
+        where("docType", "==", "TAX_INVOICE"),
         limit(100)
     );
-    // Note: If receiptStatus is not existing, we might need a different query or client-side filter
     const unsubApproved = onSnapshot(approvedQuery, (snap) => {
         setApprovedDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId));
     });
@@ -211,6 +210,7 @@ function AccountingInboxPageContent() {
     setConfirmError(null);
     setIsSubmitting(true);
     const jobId = confirmingDoc.jobId;
+    const isDeliveryNote = confirmingDoc.docType === 'DELIVERY_NOTE';
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -222,57 +222,80 @@ function AccountingInboxPageContent() {
           throw new Error("รายการนี้ถูกตรวจสอบไปก่อนหน้านี้แล้ว");
         }
 
-        const arId = `AR_${confirmingDoc.id}`;
-        const arRef = doc(db, 'accountingObligations', arId);
         const customerName = confirmingDoc.customerSnapshot?.name || 'Unknown';
-
-        // Prepare final data with inferred methods
         const finalPayments = suggestedPayments.map(p => {
             const acc = accounts.find(a => a.id === p.accountId);
-            return {
-                ...p,
-                method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER'
-            };
+            return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
         });
 
-        // Update Sale Document
-        // NEW LOGIC: Just approve, do not close job yet for cash sales
-        transaction.update(docRef, { 
-            status: 'APPROVED', 
-            arStatus: 'UNPAID', 
-            paymentSummary: {
-                paidTotal: 0,
+        if (isDeliveryNote) {
+            // DELIVERY NOTE: Complete immediately
+            const entryId = `AUTO_CASH_${confirmingDoc.id}`;
+            const entryRef = doc(db, 'accountingEntries', entryId);
+            const firstPayment = finalPayments[0];
+
+            transaction.set(entryRef, {
+                entryType: 'CASH_IN',
+                entryDate: selectedPaymentDate,
+                amount: confirmingDoc.grandTotal,
+                accountId: firstPayment.accountId,
+                paymentMethod: firstPayment.method,
+                description: `รับเงินสด/โอนตามใบส่งของ: ${confirmingDoc.docNo} (${customerName})`,
+                sourceDocType: 'DELIVERY_NOTE',
+                sourceDocId: confirmingDoc.id,
+                sourceDocNo: confirmingDoc.docNo,
+                customerNameSnapshot: customerName,
+                createdAt: serverTimestamp(),
+            });
+
+            transaction.update(docRef, { 
+                status: 'PAID', 
+                arStatus: 'PAID', 
+                paymentSummary: { paidTotal: confirmingDoc.grandTotal, balance: 0, paymentStatus: 'PAID' },
+                accountingEntryId: entryId,
+                paymentDate: selectedPaymentDate,
+                receivedAccountId: firstPayment.accountId,
+                updatedAt: serverTimestamp()
+            });
+        } else {
+            // TAX INVOICE: Require Receipt flow
+            const arId = `AR_${confirmingDoc.id}`;
+            const arRef = doc(db, 'accountingObligations', arId);
+
+            transaction.update(docRef, { 
+                status: 'APPROVED', 
+                arStatus: 'UNPAID', 
+                paymentSummary: { paidTotal: 0, balance: confirmingDoc.grandTotal, paymentStatus: 'UNPAID' },
+                suggestedPayments: finalPayments,
+                paymentDate: selectedPaymentDate,
+                updatedAt: serverTimestamp()
+            });
+
+            transaction.set(arRef, {
+                id: arId,
+                type: 'AR', 
+                status: 'UNPAID', 
+                sourceDocType: confirmingDoc.docType, 
+                sourceDocId: confirmingDoc.id, 
+                sourceDocNo: confirmingDoc.docNo,
+                amountTotal: confirmingDoc.grandTotal, 
+                amountPaid: 0, 
                 balance: confirmingDoc.grandTotal,
-                paymentStatus: 'UNPAID'
-            },
-            suggestedPayments: finalPayments,
-            paymentDate: selectedPaymentDate,
-            updatedAt: serverTimestamp()
-        });
-
-        // Set AR Obligation as UNPAID
-        transaction.set(arRef, {
-          id: arId,
-          type: 'AR', 
-          status: 'UNPAID', 
-          sourceDocType: confirmingDoc.docType, 
-          sourceDocId: confirmingDoc.id, 
-          sourceDocNo: confirmingDoc.docNo,
-          amountTotal: confirmingDoc.grandTotal, 
-          amountPaid: 0, 
-          balance: confirmingDoc.grandTotal,
-          createdAt: serverTimestamp(), 
-          updatedAt: serverTimestamp(), 
-          customerNameSnapshot: customerName,
-          jobId: jobId || null,
-          dueDate: confirmingDoc.dueDate || null,
-        });
+                createdAt: serverTimestamp(), 
+                updatedAt: serverTimestamp(), 
+                customerNameSnapshot: customerName,
+                jobId: jobId || null,
+                dueDate: confirmingDoc.dueDate || null,
+            });
+        }
       });
 
-      toast({ 
-        title: "ตรวจสอบความถูกต้องสำเร็จ", 
-        description: "กรุณาออกใบเสร็จรับเงินเพื่อบันทึกการรับเงินเข้าบัญชีจริง และงานจะปิดเมื่อยืนยันรับเงินค่ะ" 
-      });
+      if (isDeliveryNote) {
+          toast({ title: "บันทึกรายรับและใบส่งของเรียบร้อย", description: "ระบบกำลังปิดงานและย้ายเข้าประวัติให้ค่ะ" });
+          if (jobId) await callCloseJobFunction(jobId, 'PAID');
+      } else {
+          toast({ title: "ตรวจสอบความถูกต้องสำเร็จ", description: "กรุณาออกใบเสร็จรับเงินเพื่อบันทึกการรับเงินเข้าบัญชีจริง และงานจะปิดเมื่อยืนยันรับเงินค่ะ" });
+      }
       
       setConfirmingDoc(null);
     } catch(e: any) {
@@ -296,6 +319,7 @@ function AccountingInboxPageContent() {
     const arRef = doc(db, 'accountingObligations', arId);
     const docRef = doc(db, 'documents', docObj.id);
     const customerName = docObj.customerSnapshot?.name || 'Unknown';
+    const isDeliveryNote = docObj.docType === 'DELIVERY_NOTE';
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -323,7 +347,7 @@ function AccountingInboxPageContent() {
           updatedAt: serverTimestamp()
         });
       });
-      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ" });
+      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ระบบกำลังปิดงานและย้ายเข้าประวัติให้ค่ะ" : "" });
       if (docObj.jobId) callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
@@ -421,7 +445,7 @@ function AccountingInboxPageContent() {
                                 <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onSelect={() => router.push(`/app/office/documents/${doc.id}`)}>
+                                <DropdownMenuItem onSelect={() => router.push(doc.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${doc.id}` : `/app/office/documents/tax-invoice/${doc.id}`)}>
                                   <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => handleOpenConfirmDialog(doc)} className="text-green-600 focus:text-green-600 font-bold">
@@ -476,7 +500,7 @@ function AccountingInboxPageContent() {
                                 <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onSelect={() => router.push(`/app/office/documents/${doc.id}`)}>
+                                <DropdownMenuItem onSelect={() => router.push(doc.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${doc.id}` : `/app/office/documents/tax-invoice/${doc.id}`)}>
                                   <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => setArDocToConfirm(doc)} disabled={isSubmitting} className="font-bold text-amber-600 focus:text-amber-600">
@@ -496,7 +520,6 @@ function AccountingInboxPageContent() {
               </Table>
             </TabsContent>
             <TabsContent value="receipts" className="mt-0 space-y-8">
-              {/* Added a section for Approved Invoices to provide clear next steps */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b pb-2">
                     <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. บิลที่ตรวจสอบแล้ว (รอดำเนินการออกใบเสร็จ)</h3>
@@ -578,7 +601,9 @@ function AccountingInboxPageContent() {
           <DialogHeader className="p-6 pb-0">
             <DialogTitle>ตรวจสอบรายการขาย</DialogTitle>
             <DialogDescription>
-                ตรวจสอบความถูกต้องของบิลและช่องทางการรับเงิน ก่อนส่งไปขั้นตอนออกใบเสร็จ
+                {confirmingDoc?.docType === 'DELIVERY_NOTE' 
+                  ? "ยืนยันการรับเงินสด/โอน และปิดงานทันที" 
+                  : "ตรวจสอบความถูกต้องของบิลก่อนส่งไปขั้นตอนออกใบเสร็จ"}
             </DialogDescription>
           </DialogHeader>
           
@@ -646,8 +671,14 @@ function AccountingInboxPageContent() {
                         <Info className="h-4 w-4 mt-0.5 shrink-0" />
                         <div className="space-y-1">
                             <p className="font-bold">ขั้นตอนการบันทึกบัญชี</p>
-                            <p>เมื่อกดปุ่มด้านล่าง ระบบจะบันทึกสถานะบิลว่า "ตรวจสอบแล้ว" และเปิดให้ไปออกใบเสร็จรับเงินได้</p>
-                            <p className="text-destructive font-bold">เงินจะยังไม่เข้าบัญชีจริง จนกว่าใบเสร็จจะถูกสร้างและยืนยันรับเงินในภายหลังค่ะ</p>
+                            {confirmingDoc?.docType === 'DELIVERY_NOTE' ? (
+                                <p>เมื่อกดปุ่มด้านล่าง ระบบจะบันทึกรายรับเข้าสมุดบัญชี ปรับสถานะบิลเป็น "รับเงินแล้ว" และ <b>ปิดงานซ่อมย้ายเข้าประวัติทันที</b> ค่ะ</p>
+                            ) : (
+                                <>
+                                    <p>เมื่อกดปุ่มด้านล่าง ระบบจะบันทึกสถานะบิลว่า "ตรวจสอบแล้ว" และเปิดให้ไปออกใบเสร็จรับเงินได้</p>
+                                    <p className="text-destructive font-bold">เงินจะยังไม่เข้าบัญชีจริง จนกว่าใบเสร็จจะถูกสร้างและยืนยันรับเงินในภายหลังค่ะ</p>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -664,7 +695,7 @@ function AccountingInboxPageContent() {
                 ) : (
                   <>
                     <CheckCircle className="mr-2 h-4 w-4" />
-                    ยืนยันความถูกต้องของรายการ
+                    {confirmingDoc?.docType === 'DELIVERY_NOTE' ? "ยืนยันรับเงินและปิดงาน" : "ยืนยันความถูกต้องของรายการ"}
                   </>
                 )}
             </Button>
@@ -695,6 +726,7 @@ function AccountingInboxPageContent() {
             <AlertDialogTitle>ยืนยันตั้งยอดลูกหนี้</AlertDialogTitle>
             <AlertDialogDescription>
               ยืนยันการตั้งยอดค้างชำระ (AR) จำนวน {formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า {arDocToConfirm?.customerSnapshot?.name}
+              {arDocToConfirm?.docType === 'DELIVERY_NOTE' && <p className="mt-2 font-bold text-primary">ระบบจะทำการปิดงานซ่อมนี้ให้ทันทีหลังจากตั้งลูกหนี้ค่ะ</p>}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -113,10 +113,11 @@ export function ReceiptForm() {
       setSourceDocs([]);
       return;
     }
+    // EXCLUDE DELIVERY_NOTE as requested: "ใบส่งของชั่วคราว...ไม่ต้องออกใบเสร็จ"
     const q = query(
       collection(db, "documents"),
       where("customerId", "==", selectedCustomerId),
-      where("docType", "in", ["TAX_INVOICE", "BILLING_NOTE", "DELIVERY_NOTE"]),
+      where("docType", "in", ["TAX_INVOICE", "BILLING_NOTE"]),
       where("status", "in", ["UNPAID", "PARTIAL", "APPROVED"])
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -175,7 +176,7 @@ export function ReceiptForm() {
     const amount2dec = Math.round(data.amount * 100) / 100;
     
     const items = selectedDocs.map(doc => ({
-      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : doc.docType === 'BILLING_NOTE' ? 'ใบวางบิล' : 'ใบส่งของชั่วคราว'} เลขที่ ${doc.docNo}`,
+      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบวางบิล'} เลขที่ ${doc.docNo}`,
       quantity: 1,
       unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
       total: doc.paymentSummary?.balance ?? doc.grandTotal
@@ -318,7 +319,7 @@ export function ReceiptForm() {
                         <ScrollArea className="h-60">
                         {filteredCustomers.length > 0 ? (
                             filteredCustomers.map(c => (
-                                <Button variant="ghost" key={c.id} onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); form.setValue('sourceDocIds', []); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 text-left">
+                                <Button variant="ghost" key={c.id} onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); form.setValue('sourceDocIds', []); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 px-3 text-left">
                                     <div className="flex flex-col">
                                         <span>{c.name}</span>
                                         <span className="text-xs text-muted-foreground">{c.phone}</span>
@@ -383,7 +384,7 @@ export function ReceiptForm() {
                             <strong>คำแนะนำ:</strong>
                             <ul className="list-disc pl-4 mt-1">
                                 <li>ระบบจะแสดงเฉพาะบิลที่ค้างชำระ และบิลภาษีที่ระบุ "ต้องวางบิล" จะต้องทำใบวางบิลก่อนถึงจะขึ้นที่นี่ค่ะ</li>
-                                <li>การรวมบิลหลายใบในใบเสร็จเดียว ยอดเงินจะถูกนำไปจัดสรรตัดหนี้รายใบเมื่อฝ่ายบัญชียืนยันรับเงินจริงครับ</li>
+                                <li><b>ใบส่งของชั่วคราว:</b> จะไม่ปรากฏในหน้านี้ เนื่องจากสามารถรับเงินและปิดงานได้ทันทีผ่านหน้า Inbox ค่ะ</li>
                             </ul>
                         </div>
                     </div>
