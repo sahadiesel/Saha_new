@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet, PlusCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, Search, CheckCircle, Ban, HandCoins, MoreHorizontal, Eye, AlertCircle, ExternalLink, Calendar, Info, RefreshCw, Save, Wallet, PlusCircle, CheckCircle2, Send } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { WithId } from "@/firebase";
 import type { Document as DocumentType, AccountingAccount } from "@/lib/types";
@@ -106,7 +106,7 @@ function AccountingInboxPageContent() {
       }
     );
 
-    // Docs approved but no receipt issued yet (only for tax invoices)
+    // Docs approved but no receipt issued yet (ONLY for Tax Invoices)
     const approvedQuery = query(
         collection(db, "documents"),
         where("status", "==", "APPROVED"),
@@ -230,7 +230,7 @@ function AccountingInboxPageContent() {
         });
 
         if (isDeliveryNote) {
-            // DELIVERY NOTE: Complete immediately
+            // DELIVERY NOTE: Complete immediately (One-stop)
             const entryId = `AUTO_CASH_${confirmingDoc.id}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
             const firstPayment = finalPayments[0];
@@ -259,7 +259,7 @@ function AccountingInboxPageContent() {
                 updatedAt: serverTimestamp()
             });
         } else {
-            // TAX INVOICE: Require Receipt flow
+            // TAX INVOICE: Move to APPROVED status (Wait for Receipt confirmed)
             const arId = `AR_${confirmingDoc.id}`;
             const arRef = doc(db, 'accountingObligations', arId);
 
@@ -295,7 +295,7 @@ function AccountingInboxPageContent() {
           toast({ title: "บันทึกรายรับและใบส่งของเรียบร้อย", description: "ระบบกำลังปิดงานและย้ายเข้าประวัติให้ค่ะ" });
           if (jobId) await callCloseJobFunction(jobId, 'PAID');
       } else {
-          toast({ title: "ตรวจสอบความถูกต้องสำเร็จ", description: "กรุณาออกใบเสร็จรับเงินเพื่อบันทึกการรับเงินเข้าบัญชีจริง และงานจะปิดเมื่อยืนยันรับเงินค่ะ" });
+          toast({ title: "ตรวจสอบความถูกต้องสำเร็จ", description: "บิลรอฝ่ายบัญชีออกใบเสร็จและยืนยันรับเงินตามระบบค่ะ" });
       }
       
       setConfirmingDoc(null);
@@ -341,15 +341,15 @@ function AccountingInboxPageContent() {
           dueDate: docObj.dueDate || null,
         });
         transaction.update(docRef, {
-          status: 'UNPAID',
+          status: isDeliveryNote ? 'UNPAID' : 'APPROVED', // DN goes to UNPAID (Credit), TI goes to APPROVED
           arStatus: 'UNPAID',
           paymentSummary: { paidTotal: 0, balance: docObj.grandTotal, paymentStatus: 'UNPAID' },
           arObligationId: arId,
           updatedAt: serverTimestamp()
         });
       });
-      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ระบบกำลังปิดงานและย้ายเข้าประวัติให้ค่ะ" : "" });
-      if (docObj.jobId) callCloseJobFunction(docObj.jobId, 'UNPAID');
+      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ใบส่งของเครดิตเรียบร้อย ระบบกำลังปิดงานให้ค่ะ" : "" });
+      if (isDeliveryNote && docObj.jobId) callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
       errorEmitter.emit('permission-error', new FirestorePermissionError({ path: docRef.path, operation: 'write' }));
@@ -450,7 +450,7 @@ function AccountingInboxPageContent() {
                                   <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => handleOpenConfirmDialog(doc)} className="text-green-600 focus:text-green-600 font-bold">
-                                  <CheckCircle className="mr-2 h-4 w-4"/> ยืนยันตรวจสอบ
+                                  <CheckCircle className="mr-2 h-4 w-4"/> ยืนยันตรวจสอบและรับเงิน
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => setDisputingDoc(doc)} className="text-destructive focus:text-destructive">
                                   <Ban className="mr-2 h-4 w-4"/> ตีกลับให้แก้ไข
@@ -584,7 +584,7 @@ function AccountingInboxPageContent() {
                         <TableCell className="font-bold text-green-600">{formatCurrency(doc.grandTotal)}</TableCell>
                         <TableCell className="text-right">
                             <Button variant="outline" size="sm" onClick={() => router.push(`/app/management/accounting/documents/receipt/${doc.id}/confirm`)}>
-                            <CheckCircle className="mr-2 h-4 w-4 text-green-600"/> ยืนยันรับเงิน
+                            <CheckCircle className="mr-2 h-4 w-4 text-green-600"/> ยืนยันรับเงินจริง
                             </Button>
                         </TableCell>
                         </TableRow>
@@ -603,7 +603,7 @@ function AccountingInboxPageContent() {
             <DialogTitle>ตรวจสอบรายการขาย</DialogTitle>
             <DialogDescription>
                 {confirmingDoc?.docType === 'DELIVERY_NOTE' 
-                  ? "ยืนยันการรับเงินสด/โอน และปิดงานทันที" 
+                  ? "ยืนยันการรับเงินสด/โอน และปิดงานซ่อมทันที" 
                   : "ตรวจสอบความถูกต้องของบิลก่อนส่งไปขั้นตอนออกใบเสร็จ"}
             </DialogDescription>
           </DialogHeader>
@@ -732,7 +732,7 @@ function AccountingInboxPageContent() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={() => arDocToConfirm && handleCreateAR(arDocToConfirm)}>ตกลง</AlertDialogAction>
+            <AlertDialogAction onClick={() => arDocToConfirm && handleCreateAR(arDocToConfirm)}>ตกลง ยืนยันข้อมูล</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

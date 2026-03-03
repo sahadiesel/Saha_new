@@ -170,12 +170,12 @@ function JobDetailsPageContent() {
   // STRICT CHECK: Is the job already billed with ANY active sales document?
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
-    // Check main collection first
-    const hasMainBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
-    if (hasMainBill) return true;
+    if (job.isArchived) return true;
+    if (job.status === 'CLOSED') return true;
     
-    // Also consider job status - if it's already in WAITING_CUSTOMER_PICKUP, it must have a bill somewhere
-    if (job.status === 'WAITING_CUSTOMER_PICKUP' || job.status === 'CLOSED') return true;
+    // Check if job already has a sales document assigned
+    const hasActiveBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+    if (hasActiveBill) return true;
     
     return false;
   }, [job]);
@@ -864,7 +864,7 @@ function JobDetailsPageContent() {
                 (['QUOTATION', 'DELIVERY_NOTE', 'TAX_INVOICE', 'RECEIPT'] as DocType[]).map(docType => {
                     const label = { QUOTATION: 'ใบเสนอราคา', DELIVERY_NOTE: 'ใบส่งของชั่วคราว', TAX_INVOICE: 'ใบกำกับภาษี', RECEIPT: 'ใบเสร็จ' }[docType];
                     const latestDoc = relatedDocuments[docType]?.[0];
-                    return (
+                    return (latestDoc || docType !== 'RECEIPT') ? (
                       <div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0">
                         <span className="text-muted-foreground pt-1">{label}:</span>
                         {latestDoc ? (
@@ -890,7 +890,7 @@ function JobDetailsPageContent() {
                           </div>
                         ) : <span className="pt-1">— ไม่มี —</span>}
                       </div>
-                    );
+                    ) : null;
                 })
               )}
             </CardContent></Card>

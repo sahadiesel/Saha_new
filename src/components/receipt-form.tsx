@@ -111,7 +111,7 @@ export function ReceiptForm() {
       return;
     }
     // STRICT FILTER: Only TAX_INVOICE and BILLING_NOTE can issue a receipt.
-    // DELIVERY_NOTE is explicitly excluded as requested.
+    // DELIVERY_NOTE is explicitly excluded per business requirements.
     const q = query(
       collection(db, "documents"),
       where("customerId", "==", selectedCustomerId),
@@ -266,7 +266,7 @@ export function ReceiptForm() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <h2 className="text-lg font-semibold flex items-center gap-2 text-primary">
                 <Info className="h-5 w-5" /> 
-                {editDocId ? `แก้ไขใบเสร็จ ${docToEdit?.docNo}` : "เลือกบิลที่ลูกค้าต้องการรวมใบเสร็จ"}
+                {editDocId ? `แก้ไขใบเสร็จ ${docToEdit?.docNo}` : "เลือกบิลที่ต้องการรวมใบเสร็จ"}
             </h2>
             <div className="flex gap-2 w-full sm:w-auto">
                 <Button 
@@ -284,7 +284,7 @@ export function ReceiptForm() {
                     onClick={form.handleSubmit(d => handleProcessSubmission(d, 'PENDING_REVIEW'))}
                 >
                     {isSubmitting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
-                    บันทึกและส่งตรวจสอบรับเงิน
+                    บันทึกและส่งตรวจสอบ
                 </Button>
             </div>
         </div>
