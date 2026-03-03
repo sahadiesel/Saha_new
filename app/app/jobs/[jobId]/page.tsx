@@ -169,6 +169,12 @@ function JobDetailsPageContent() {
   const isLockedForBilled = job?.status === 'WAITING_CUSTOMER_PICKUP' && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
+  // New check: Is the job already billed with a final document?
+  const isAlreadyBilled = useMemo(() => {
+    if (!job) return false;
+    return !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+  }, [job]);
+
   useEffect(() => {
     if (searchParams.get('action') === 'revert' && job?.status === 'DONE' && canIssueBill) {
       setIsRevertDialogOpen(true);
@@ -788,7 +794,7 @@ function JobDetailsPageContent() {
                           </Button>
                       )}
 
-                      {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && (
+                      {['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(job.status) && canIssueBill && !isAlreadyBilled && (
                           <Button 
                             onClick={() => setIsBillingSelectionOpen(true)}
                             disabled={isSubmittingNote || isViewOnly} 
@@ -870,8 +876,8 @@ function JobDetailsPageContent() {
                               )}
                               <Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge>
                             </div>
-                            {/* Short link to Receipt creation if APPROVED but not issued yet */}
-                            {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType !== 'QUOTATION' && (
+                            {/* Short link to Receipt creation: Only for TAX_INVOICE. DN does not need receipt. */}
+                            {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType === 'TAX_INVOICE' && (
                               <Button asChild size="sm" variant="outline" className="h-6 text-[9px] px-2 border-primary text-primary hover:bg-primary/5">
                                 <Link href={`/app/management/accounting/documents/receipt?customerId=${latestDoc.customerId}&sourceDocId=${latestDoc.id}`}>
                                   <Receipt className="h-2.5 w-2.5 mr-1" /> ออกใบเสร็จ (Issue Receipt)
