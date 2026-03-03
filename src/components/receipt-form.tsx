@@ -80,7 +80,6 @@ export function ReceiptForm() {
   const selectedCustomerId = form.watch('customerId');
   const watchedSourceDocIds = form.watch('sourceDocIds');
 
-  // Master Data Loading
   useEffect(() => {
     if (!db) return;
     const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
@@ -93,7 +92,6 @@ export function ReceiptForm() {
     return () => { unsubCustomers(); unsubAccounts(); };
   }, [db]);
 
-  // Handle Edit Data Population
   useEffect(() => {
     if (docToEdit && !isSubmitting) {
       form.reset({
@@ -107,13 +105,13 @@ export function ReceiptForm() {
     }
   }, [docToEdit, form, isSubmitting]);
 
-  // Fetch candidate source documents for selection
   useEffect(() => {
     if (!db || !selectedCustomerId) {
       setSourceDocs([]);
       return;
     }
-    // EXCLUDE DELIVERY_NOTE as requested: "ใบส่งของชั่วคราว...ไม่ต้องออกใบเสร็จ"
+    // STRICT FILTER: Only TAX_INVOICE and BILLING_NOTE can issue a receipt.
+    // DELIVERY_NOTE is explicitly excluded as requested.
     const q = query(
       collection(db, "documents"),
       where("customerId", "==", selectedCustomerId),
@@ -125,8 +123,6 @@ export function ReceiptForm() {
       
       const filtered = allDocs.filter(doc => {
           if (doc.status === 'CANCELLED' || doc.status === 'PAID') return false;
-          
-          // Allow documents that are already in this receipt if we are editing
           if (doc.receiptStatus === 'CONFIRMED') return false;
           if (doc.receiptDocId && doc.receiptDocId !== editDocId) return false;
           
@@ -141,13 +137,11 @@ export function ReceiptForm() {
     return unsubscribe;
   }, [db, selectedCustomerId, editDocId]);
   
-  // Auto-calculate Total Amount when selection changes
   useEffect(() => {
     const selected = sourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
     const total = selected.reduce((sum, d) => sum + (d.paymentSummary?.balance ?? d.grandTotal), 0);
     form.setValue('amount', Math.round(total * 100) / 100);
     
-    // Suggested account for new receipts
     if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId') && !editDocId) {
         form.setValue('accountId', selected[0].suggestedAccountId);
     }
@@ -221,7 +215,6 @@ export function ReceiptForm() {
 
       const batch = writeBatch(db);
       
-      // If editing, reset status of docs that were removed from the selection
       if (editDocId && docToEdit?.referencesDocIds) {
           const removedDocIds = docToEdit.referencesDocIds.filter(id => !data.sourceDocIds.includes(id));
           removedDocIds.forEach(id => {
@@ -234,7 +227,6 @@ export function ReceiptForm() {
           });
       }
 
-      // Update status of all currently selected source docs
       selectedDocs.forEach(sourceDoc => {
           batch.update(doc(db, 'documents', sourceDoc.id), {
               receiptStatus: 'ISSUED_NOT_CONFIRMED',
@@ -336,10 +328,10 @@ export function ReceiptForm() {
 
             {selectedCustomerId && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
-                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (เลือกได้หลายรายการ)</FormLabel>
+                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (เฉพาะใบกำกับภาษีและใบวางบิล)</FormLabel>
                     <div className="border rounded-md">
                         <Table>
-                            <TableHeader className="bg-muted/50">
+                            <TableHeader>
                                 <TableRow>
                                     <TableHead className="w-12 text-center">เลือก</TableHead>
                                     <TableHead>เลขที่เอกสาร</TableHead>
@@ -359,7 +351,7 @@ export function ReceiptForm() {
                                         <TableCell>
                                             <div className="flex items-center gap-2">
                                                 <span className="font-mono text-xs">{doc.docNo}</span>
-                                                <Badge variant="outline" className="text-[8px] h-4 px-1">{doc.docType === 'BILLING_NOTE' ? 'วางบิล' : doc.docType === 'TAX_INVOICE' ? 'กำกับภาษี' : 'ใบส่งของ'}</Badge>
+                                                <Badge variant="outline" className="text-[8px] h-4 px-1">{doc.docType === 'BILLING_NOTE' ? 'วางบิล' : 'กำกับภาษี'}</Badge>
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-xs">{safeFormat(new Date(doc.docDate), "dd/MM/yy")}</TableCell>
@@ -383,8 +375,8 @@ export function ReceiptForm() {
                         <div>
                             <strong>คำแนะนำ:</strong>
                             <ul className="list-disc pl-4 mt-1">
-                                <li>ระบบจะแสดงเฉพาะบิลที่ค้างชำระ และบิลภาษีที่ระบุ "ต้องวางบิล" จะต้องทำใบวางบิลก่อนถึงจะขึ้นที่นี่ค่ะ</li>
-                                <li><b>ใบส่งของชั่วคราว:</b> จะไม่ปรากฏในหน้านี้ เนื่องจากสามารถรับเงินและปิดงานได้ทันทีผ่านหน้า Inbox ค่ะ</li>
+                                <li><b>ใบส่งของชั่วคราว (DN):</b> จบในขั้นตอนตรวจสอบรับเงินหน้า Inbox โดยไม่ต้องออกใบเสร็จค่ะ</li>
+                                <li><b>ใบกำกับภาษี (TI):</b> ที่ระบุ "ต้องวางบิล" จะต้องทำใบวางบิลก่อนถึงจะขึ้นที่นี่ค่ะ</li>
                             </ul>
                         </div>
                     </div>
@@ -424,7 +416,6 @@ export function ReceiptForm() {
                                 {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'ธนาคาร'})</SelectItem>)}
                             </SelectContent>
                         </Select>
-                        <FormDescription className="text-[10px]">ระบบจะบันทึกวิธีชำระให้อัตโนมัติตามประเภทบัญชีที่เลือกค่ะ</FormDescription>
                         <FormMessage />
                     </FormItem>
                 )} />

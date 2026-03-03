@@ -130,7 +130,6 @@ function JobDetailsPageContent() {
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  // New state for document type selection
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
@@ -165,14 +164,20 @@ function JobDetailsPageContent() {
 
   const canUpdateActivity = isStaff && !isJobInFinishedState;
   
-  // RESTRICTION: Once job is in WAITING_CUSTOMER_PICKUP, details are locked for everyone except with 'edit' override.
   const isLockedForBilled = job?.status === 'WAITING_CUSTOMER_PICKUP' && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
-  // New check: Is the job already billed with a final document?
+  // STRICT CHECK: Is the job already billed with ANY active sales document?
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
-    return !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+    // Check main collection first
+    const hasMainBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+    if (hasMainBill) return true;
+    
+    // Also consider job status - if it's already in WAITING_CUSTOMER_PICKUP, it must have a bill somewhere
+    if (job.status === 'WAITING_CUSTOMER_PICKUP' || job.status === 'CLOSED') return true;
+    
+    return false;
   }, [job]);
 
   useEffect(() => {
@@ -558,7 +563,6 @@ function JobDetailsPageContent() {
       await restoreJobFromArchive(db, job.id, year, profile);
       toast({ title: "กู้คืนงานสำเร็จ", description: "งานถูกย้ายกลับมาเป็นงานที่กำลังดำเนินการ (Active) เรียบร้อยแล้วค่ะ" });
       setIsRestoreDialogOpen(false);
-      // Data will refresh via onSnapshot automatically
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'กู้คืนไม่สำเร็จ', description: e.message });
     } finally {
@@ -592,7 +596,7 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { 
-      status: 'DONE', // Changed from CLOSED to DONE
+      status: 'DONE', 
       lastActivityAt: serverTimestamp(), 
       updatedAt: serverTimestamp() 
     });
@@ -713,7 +717,6 @@ function JobDetailsPageContent() {
                           {job.assigneeUid ? 'เปลี่ยนผู้รับผิดชอบ' : 'มอบหมายงาน'}
                       </Button>
                   )}
-                  {/* RESTRICTION: Revert button only for status DONE */}
                   {job.status === 'DONE' && canIssueBill && (
                     <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10" onClick={() => setIsRevertDialogOpen(true)}>
                       <RotateCcw className="mr-2 h-4 w-4" /> ส่งกลับแก้ไข
@@ -876,7 +879,7 @@ function JobDetailsPageContent() {
                               )}
                               <Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge>
                             </div>
-                            {/* Short link to Receipt creation: Only for TAX_INVOICE. DN does not need receipt. */}
+                            {/* STRICT FILTER: Only TAX_INVOICE needs a receipt flow. DN MUST NOT issue receipt. */}
                             {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType === 'TAX_INVOICE' && (
                               <Button asChild size="sm" variant="outline" className="h-6 text-[9px] px-2 border-primary text-primary hover:bg-primary/5">
                                 <Link href={`/app/management/accounting/documents/receipt?customerId=${latestDoc.customerId}&sourceDocId=${latestDoc.id}`}>
@@ -970,7 +973,6 @@ function JobDetailsPageContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Select Document Type Dialog */}
       <AlertDialog open={isBillingSelectionOpen} onOpenChange={setIsBillingSelectionOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
