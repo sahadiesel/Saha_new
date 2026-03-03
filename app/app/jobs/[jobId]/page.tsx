@@ -167,18 +167,22 @@ function JobDetailsPageContent() {
   const isLockedForBilled = job?.status === 'WAITING_CUSTOMER_PICKUP' && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
-  // STRICT CHECK: Is the job already billed with ANY active sales document?
+  // STRICT CHECK: Is the job already billed?
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
     if (job.isArchived) return true;
     if (job.status === 'CLOSED') return true;
     
-    // Check if job already has a sales document assigned
-    const hasActiveBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
-    if (hasActiveBill) return true;
+    // 1. Check denormalized field in Job document
+    const hasActiveBillField = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+    if (hasActiveBillField) return true;
+
+    // 2. Check live documents related to this job (covers cases where field update failed)
+    const hasLiveDn = relatedDocuments['DELIVERY_NOTE']?.some(d => d.status !== 'CANCELLED');
+    const hasLiveTi = relatedDocuments['TAX_INVOICE']?.some(d => d.status !== 'CANCELLED');
     
-    return false;
-  }, [job]);
+    return !!(hasLiveDn || hasLiveTi);
+  }, [job, relatedDocuments]);
 
   useEffect(() => {
     if (searchParams.get('action') === 'revert' && job?.status === 'DONE' && canIssueBill) {
