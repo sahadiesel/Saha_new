@@ -22,8 +22,23 @@ import { docStatusLabel } from "@/lib/ui-labels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+interface DocumentListProps {
+  docType: DocType;
+  limit?: number;
+  orderByField?: string;
+  orderByDirection?: OrderByDirection;
+  baseContext?: 'office' | 'accounting';
+}
+
 const getDocDisplayStatus = (doc: Document): { key: string; label: string; description: string; variant: "default" | "secondary" | "destructive" | "outline" } => {
-    const status = String(doc.status ?? "").toUpperCase();
+    let status = String(doc.status ?? "").toUpperCase();
+    
+    // STRICT FIX: Delivery Notes should not show "Approved" (ตรวจสอบแล้ว)
+    // If somehow stuck in APPROVED, show as "รอบัญชีตรวจสอบ" (PENDING_REVIEW)
+    if (doc.docType === 'DELIVERY_NOTE' && status === 'APPROVED') {
+        status = 'PENDING_REVIEW';
+    }
+
     const label = docStatusLabel(status) || status;
 
     let description = "สถานะเอกสารปกติ";
@@ -76,7 +91,14 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
-  const uniqueStatuses = useMemo(() => ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"], []);
+  // Filter out APPROVED from unique statuses for Delivery Notes
+  const uniqueStatuses = useMemo(() => {
+    const base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
+    if (docType === 'DELIVERY_NOTE') {
+        return base.filter(s => s !== "APPROVED");
+    }
+    return base;
+  }, [docType]);
 
   const stableQuery = useMemo(() => {
     if (!db) return null;
@@ -92,7 +114,7 @@ export function DocumentList({
     if (!stableQuery) return;
     
     setLoading(true);
-    setIndexCreationUrl(null);
+    setIndexErrorUrl(null);
     const unsubscribe = onSnapshot(stableQuery, (snapshot) => {
         const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document));
         setAllDocuments(docsData);
