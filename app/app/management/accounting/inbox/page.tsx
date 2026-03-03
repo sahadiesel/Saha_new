@@ -258,6 +258,15 @@ function AccountingInboxPageContent() {
                 receivedAccountId: firstPayment.accountId,
                 updatedAt: serverTimestamp()
             });
+
+            // SYNC: Close job immediately in active collection
+            if (jobId) {
+                transaction.update(doc(db, 'jobs', jobId), {
+                    status: 'CLOSED',
+                    updatedAt: serverTimestamp(),
+                    lastActivityAt: serverTimestamp()
+                });
+            }
         } else {
             // TAX INVOICE: Move to APPROVED status (Wait for Receipt confirmed)
             const arId = `AR_${confirmingDoc.id}`;
@@ -347,9 +356,18 @@ function AccountingInboxPageContent() {
           arObligationId: arId,
           updatedAt: serverTimestamp()
         });
+
+        // SYNC: If DN, close job immediately
+        if (isDeliveryNote && docObj.jobId) {
+            transaction.update(doc(db, 'jobs', docObj.jobId), {
+                status: 'CLOSED',
+                updatedAt: serverTimestamp(),
+                lastActivityAt: serverTimestamp()
+            });
+        }
       });
       toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ใบส่งของเครดิตเรียบร้อย ระบบกำลังปิดงานให้ค่ะ" : "" });
-      if (isDeliveryNote && docObj.jobId) callCloseJobFunction(docObj.jobId, 'UNPAID');
+      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
       errorEmitter.emit('permission-error', new FirestorePermissionError({ path: docRef.path, operation: 'write' }));

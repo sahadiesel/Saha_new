@@ -410,7 +410,13 @@ function ConfirmReceiptPageContent() {
                             updatedAt: serverTimestamp(),
                         });
 
+                        // SYNC: If document is fully paid, also close the linked job
                         if (newStatus === 'PAID' && ob.jobId) {
+                            transaction.update(doc(db, 'jobs', ob.jobId), {
+                                status: 'CLOSED',
+                                updatedAt: serverTimestamp(),
+                                lastActivityAt: serverTimestamp()
+                            });
                             jobsToArchive.push(ob.jobId);
                         }
                     }

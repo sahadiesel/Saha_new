@@ -249,8 +249,25 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
           arStatus: submitForReview ? 'PENDING' : (isEditing ? docToEdit?.arStatus : null), 
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
+        
         if (isEditing && editDocId) {
-            await updateDoc(doc(db, 'documents', editDocId), sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
+            const batch = writeBatch(db);
+            const docRef = doc(db, 'documents', editDocId);
+            batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
+            
+            // SYNC: Ensure Job is always linked and status updated when editing a draft/rejected doc
+            if (data.jobId) {
+                const jobRef = doc(db, 'jobs', data.jobId);
+                batch.update(jobRef, {
+                    status: 'WAITING_CUSTOMER_PICKUP',
+                    salesDocId: editDocId,
+                    salesDocNo: docToEdit?.docNo || "",
+                    salesDocType: 'DELIVERY_NOTE',
+                    lastActivityAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
+                });
+            }
+            await batch.commit();
         } else {
             await createDocument(db, 'DELIVERY_NOTE', payload, profile, data.jobId ? 'WAITING_CUSTOMER_PICKUP' : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
