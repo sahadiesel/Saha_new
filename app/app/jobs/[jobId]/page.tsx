@@ -10,7 +10,7 @@ import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { safeFormat } from '@/lib/date-utils';
-import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
+import { jobStatusLabel, deptLabel, docStatusLabel } from "@/lib/ui-labels";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -877,7 +877,9 @@ function JobDetailsPageContent() {
                                   <Link href={`/app/office/documents/${latestDoc.id}`}>{latestDoc.docNo}</Link>
                                 </Button>
                               )}
-                              <Badge variant="outline" className="text-[8px] px-1 h-4">{latestDoc.status}</Badge>
+                              <Badge variant="outline" className="text-[8px] px-1 h-4">
+                                {docStatusLabel(latestDoc.status, latestDoc.docType)}
+                              </Badge>
                             </div>
                             {/* STRICT FILTER: Only TAX_INVOICE needs a receipt flow. DN MUST NOT issue receipt. */}
                             {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType === 'TAX_INVOICE' && (

@@ -112,9 +112,17 @@ export function docTypeLabel(docType: string | undefined): string {
     return DOC_TYPE_LABELS[docType] || docType;
 }
 
-export function docStatusLabel(status: string | undefined): string {
+export function docStatusLabel(status: string | undefined, docType?: string): string {
     if (!status) return '';
-    return DOC_STATUS_LABELS[status] || status;
+    const s = status.toUpperCase();
+    
+    // DN-specific mapping: DN should never be "Approved" (ตรวจสอบแล้ว)
+    // If it is, it means it's waiting for payment/credit confirmation in the old or mixed flow
+    if (docType === 'DELIVERY_NOTE' && s === 'APPROVED') {
+        return DOC_STATUS_LABELS['PENDING_REVIEW'];
+    }
+    
+    return DOC_STATUS_LABELS[s] || status;
 }
 
 export function payTypeLabel(payType: string | undefined): string {

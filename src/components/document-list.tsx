@@ -31,18 +31,11 @@ interface DocumentListProps {
 }
 
 const getDocDisplayStatus = (doc: Document): { key: string; label: string; description: string; variant: "default" | "secondary" | "destructive" | "outline" } => {
-    let status = String(doc.status ?? "").toUpperCase();
-    
-    // STRICT FIX: Delivery Notes should not show "Approved" (ตรวจสอบแล้ว)
-    // If somehow stuck in APPROVED, show as "รอบัญชีตรวจสอบ" (PENDING_REVIEW)
-    if (doc.docType === 'DELIVERY_NOTE' && status === 'APPROVED') {
-        status = 'PENDING_REVIEW';
-    }
-
-    const label = docStatusLabel(status) || status;
+    const statusKey = String(doc.status ?? "").toUpperCase();
+    const label = docStatusLabel(doc.status, doc.docType);
 
     let description = "สถานะเอกสารปกติ";
-    switch(status) {
+    switch(statusKey) {
         case "DRAFT": description = "ออฟฟิศกำลังจัดทำ ยังไม่ได้ส่งให้บัญชีตรวจสอบ"; break;
         case "PENDING_REVIEW": description = "ส่งเรื่องให้ฝ่ายบัญชีตรวจสอบแล้ว"; break;
         case "REJECTED": description = "ฝ่ายบัญชีพบจุดที่ต้องแก้ไขและส่งกลับมาให้ออฟฟิศ"; break;
@@ -53,13 +46,18 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
         case "PARTIAL": description = "ได้รับเงินมาบางส่วนแล้ว ยอดที่เหลือยังค้างชำระ"; break;
     }
 
-    if (status === "CANCELLED") return { key: "CANCELLED", label, description, variant: "destructive" };
-    if (status === "PAID") return { key: "PAID", label, description, variant: "default" };
-    if (status === "REJECTED") return { key: "REJECTED", label, description, variant: "destructive" };
-    if (status === "PENDING_REVIEW") return { key: "PENDING_REVIEW", label, description, variant: "secondary" };
-    if (status === "DRAFT") return { key: "DRAFT", label, description, variant: "outline" };
+    // Force special label description for DNs that are technically approved but mapped to review
+    if (doc.docType === 'DELIVERY_NOTE' && statusKey === 'APPROVED') {
+        description = "ใบส่งของรอฝ่ายบัญชียืนยันรับเงินเพื่อปิดงาน";
+    }
 
-    return { key: status, label, description, variant: "outline" };
+    if (statusKey === "CANCELLED") return { key: "CANCELLED", label, description, variant: "destructive" };
+    if (statusKey === "PAID") return { key: "PAID", label, description, variant: "default" };
+    if (statusKey === "REJECTED") return { key: "REJECTED", label, description, variant: "destructive" };
+    if (statusKey === "PENDING_REVIEW" || (doc.docType === 'DELIVERY_NOTE' && statusKey === 'APPROVED')) return { key: "PENDING_REVIEW", label, description, variant: "secondary" };
+    if (statusKey === "DRAFT") return { key: "DRAFT", label, description, variant: "outline" };
+
+    return { key: statusKey, label, description, variant: "outline" };
 };
 
 export function DocumentList({ 
@@ -91,7 +89,7 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
-  // Filter out APPROVED from unique statuses for Delivery Notes
+  // Filter out APPROVED from unique statuses for Delivery Notes to keep UI clean
   const uniqueStatuses = useMemo(() => {
     const base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
     if (docType === 'DELIVERY_NOTE') {
@@ -312,7 +310,7 @@ export function DocumentList({
               <SelectTrigger className="w-full sm:w-[200px]"><SelectValue placeholder="กรองตามสถานะ..." /></SelectTrigger>
               <SelectContent>
                 {uniqueStatuses.map(status => (
-                    <SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status) || status}</SelectItem>
+                    <SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
