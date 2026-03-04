@@ -267,11 +267,41 @@ export function DocumentList({
   };
 
   const confirmDelete = async () => {
-    if (!db || !docToAction) return;
+    if (!db || !docToAction || !profile) return;
     setIsActionLoading(true);
     try {
+      const batch = writeBatch(db);
+      const docRef = doc(db, 'documents', docToAction.id);
+      
+      // Sync logic similar to cancel: if doc is deleted, unlink from job
+      if (docToAction.jobId) {
+        const jobRef = doc(db, 'jobs', docToAction.jobId);
+        const jobSnap = await getDoc(jobRef);
+        if (jobSnap.exists()) {
+          const jobData = jobSnap.data();
+          if (jobData.salesDocId === docToAction.id) {
+            batch.update(jobRef, {
+              status: 'DONE',
+              salesDocId: deleteField(),
+              salesDocNo: deleteField(),
+              salesDocType: deleteField(),
+              lastActivityAt: serverTimestamp(),
+            });
+
+            const activityRef = doc(collection(db, 'jobs', docToAction.jobId, 'activities'));
+            batch.set(activityRef, {
+              text: `ลบเอกสาร ${docToAction.docNo} ออกจากระบบถาวร: ระบบล้างข้อมูลการผูกบิลและย้อนสถานะงานกลับเป็น "ทำเสร็จ" เพื่อให้ออกบิลใหม่ได้ค่ะ`,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      }
+
+      batch.delete(docRef);
+      await batch.commit();
       await cleanBillingRun(docToAction);
-      await deleteDoc(doc(db, 'documents', docToAction.id));
       toast({ title: "ลบเอกสารสำเร็จ" });
     } catch (err: any) {
       toast({ variant: 'destructive', title: "ลบไม่สำเร็จ", description: err.message });
@@ -424,7 +454,7 @@ export function DocumentList({
 
       <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>ยืนยันการลบ</AlertDialogTitle><AlertDialogDescription>คุณต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างประวัติการผูกพันกับใบงานด้วยเช่นกัน และเลขที่นี้จะถูกนำกลับมาใช้ใหม่ในบิลใบถัดไป</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>ยืนยันการลบ</AlertDialogTitle><AlertDialogDescription>คุณต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างประวัติการผูกพันกับใบงานด้วยเช่นกัน และย้อนสถานะงานกลับไปเป็น "ทำเสร็จ" เพื่อให้ออกบิลใหม่ได้ค่ะ</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันการลบ'}</AlertDialogAction>
