@@ -463,6 +463,30 @@ function JobDetailsPageContent() {
     } catch (error: any) { toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: error.message }); } finally { setIsAddingPhotos(false); }
   };
 
+  const handleDeleteActivityPhoto = async (activityId: string, url: string) => {
+    if (!db || !storage || !profile || !isUserAdmin || isViewOnly) return;
+    if (!confirm("คุณต้องการลบรูปภาพกิจกรรมนี้ออกจากระบบถาวรใช่หรือไม่?")) return;
+    
+    setIsSubmittingNote(true);
+    try {
+        const jobRef = getJobRef();
+        if (!jobRef) return;
+        const activityRef = doc(db, jobRef.path, "activities", activityId);
+        
+        await updateDoc(activityRef, {
+            photos: arrayRemove(url)
+        });
+        
+        await deleteObject(ref(storage, url)).catch(e => console.warn("File already deleted from storage", e));
+        
+        toast({ title: "ลบรูปกิจกรรมสำเร็จแล้วค่ะ" });
+    } catch (error: any) {
+        toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: error.message });
+    } finally {
+        setIsSubmittingNote(false);
+    }
+  };
+
   const handleTransferJob = async () => {
     if (!canEditDetails || !transferDepartment || !job || !db || !profile) return;
     setIsTransferring(true);
@@ -862,7 +886,32 @@ function JobDetailsPageContent() {
                 activities.map((activity) => (
                   <div key={activity.id} className="flex gap-4">
                       <User className="h-5 w-5 mt-1 text-muted-foreground flex-shrink-0" />
-                      <div className="flex-1"><p className="font-semibold text-sm">{activity.userName} <span className="text-[10px] font-normal text-muted-foreground ml-2">{safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}</span></p>{activity.text && <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>}{activity.photos && activity.photos.length > 0 && (<div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">{activity.photos.map((url, i) => (<a key={i} href={url} target="_blank" rel="noopener noreferrer"><Image src={url} alt="Activity" width={100} height={100} className="rounded-md object-cover w-full aspect-square" /></a>))}</div>)}</div>
+                      <div className="flex-1">
+                          <p className="font-semibold text-sm">{activity.userName} <span className="text-[10px] font-normal text-muted-foreground ml-2">{safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}</span></p>
+                          {activity.text && <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>}
+                          {activity.photos && activity.photos.length > 0 && (
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                                  {activity.photos.map((url, i) => (
+                                      <div key={i} className="relative group aspect-square">
+                                          <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
+                                              <Image src={url} alt="Activity" width={100} height={100} className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
+                                          </a>
+                                          {isUserAdmin && !isViewOnly && (
+                                              <Button 
+                                                  type="button" 
+                                                  variant="destructive" 
+                                                  size="icon" 
+                                                  className="absolute -top-1 -right-1 h-5 w-5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" 
+                                                  onClick={(e) => { e.preventDefault(); handleDeleteActivityPhoto(activity.id!, url); }}
+                                              >
+                                                  <Trash2 className="h-3 w-3" />
+                                              </Button>
+                                          )}
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
                   </div>
               ))) : <p className="text-muted-foreground text-sm text-center h-24 flex items-center justify-center">ยังไม่มีประวัติกิจกรรม</p>}
             </CardContent>
