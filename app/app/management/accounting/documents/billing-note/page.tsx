@@ -60,6 +60,7 @@ import { createDocument } from '@/firebase/documents';
 import { safeFormat } from '@/lib/date-utils';
 import { DocumentList } from '@/components/document-list';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -71,7 +72,7 @@ interface GroupedCustomerData {
   separateGroups: Record<string, Document[]>;
   totalIncludedAmount: number;
   createdNoteIds?: { main?: string; separate?: Record<string, string> };
-  warnings?: string[]; // New: Track data integrity issues
+  warnings?: string[];
 }
 
 function BillingNoteBatchTab() {
@@ -123,7 +124,6 @@ function BillingNoteBatchTab() {
       const invoicesSnap = await getDocs(invoicesQuery);
       const allDocs = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Document));
       
-      // STRICT FILTER: Only Unpaid Credit Invoices that are NOT Cancelled
       const unpaidInvoices = allDocs.filter(doc => 
         (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
         doc.paymentTerms === 'CREDIT' &&
@@ -138,7 +138,6 @@ function BillingNoteBatchTab() {
         const customerId = inv.customerId || inv.customerSnapshot.id || inv.customerSnapshot.phone;
         if (!customerId) return;
         
-        // Track duplicate document numbers across all active docs
         docNoCount[inv.docNo] = (docNoCount[inv.docNo] || 0) + 1;
 
         if (!groupedByCustomer[customerId]) {
@@ -157,13 +156,13 @@ function BillingNoteBatchTab() {
         const warnings: string[] = [];
 
         invoices.forEach(inv => {
-          // Data Validation Checks
           if (docNoCount[inv.docNo] > 1) {
             warnings.push(`พบเลขที่เอกสารซ้ำ (${inv.docNo}) กรุณาตรวจสอบว่าบิลซ้ำหรือไม่`);
           }
           
-          const expectedName = customer.taxName || customer.name;
-          const invoiceName = inv.customerSnapshot?.taxName || inv.customerSnapshot?.name;
+          const expectedName = customer.useTax ? (customer.taxName || customer.name) : customer.name;
+          const invoiceName = inv.customerSnapshot?.useTax ? (inv.customerSnapshot?.taxName || inv.customerSnapshot?.name) : inv.customerSnapshot?.name;
+          
           if (invoiceName && invoiceName !== expectedName) {
             warnings.push(`ชื่อในบิล ${inv.docNo} ไม่ตรงกับชื่อปัจจุบันของลูกค้า`);
           }
@@ -186,7 +185,7 @@ function BillingNoteBatchTab() {
           separateGroups,
           totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0),
           createdNoteIds: billingRun?.createdBillingNotes?.[customer.id],
-          warnings: Array.from(new Set(warnings)), // Unique warnings only
+          warnings: Array.from(new Set(warnings)),
         };
       });
 
@@ -264,7 +263,7 @@ function BillingNoteBatchTab() {
           grandTotal: totalAmount,
           notes: groupKey === 'MAIN' ? '' : `เอกสารกลุ่ม: ${groupKey}`,
           senderName: profile.displayName,
-          receiverName: customer.taxName || customer.name,
+          receiverName: customer.useTax ? (customer.taxName || customer.name) : customer.name,
           billingRunId: monthId
         }, profile);
 
@@ -396,7 +395,7 @@ function BillingNoteBatchTab() {
                     <TableRow key={data.customer.id} className="hover:bg-muted/30 transition-colors">
                       <TableCell className="font-semibold">
                         <div className="flex items-center gap-2">
-                          {data.customer.taxName || data.customer.name}
+                          {data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name}
                           {data.warnings && data.warnings.length > 0 && (
                             <Tooltip>
                               <TooltipTrigger asChild>

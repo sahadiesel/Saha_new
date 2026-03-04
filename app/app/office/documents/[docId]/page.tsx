@@ -83,7 +83,6 @@ function DocumentView({
     const isTaxDoc = ['TAX_INVOICE', 'RECEIPT', 'BILLING_NOTE', 'CREDIT_NOTE', 'WITHHOLDING_TAX'].includes(document.docType);
     const isBilling = document.docType === 'BILLING_NOTE';
     
-    // NEW LOGIC: Pull name based on useTax flag
     const displayCustomerName = customer.useTax 
         ? (customer.taxName || customer.name) 
         : (customer.name);
@@ -129,7 +128,6 @@ function DocumentView({
                         </p>
                         <p className="text-[11px]">
                             โทร {document.storeSnapshot.phone}
-                            {/* REMOVE Tax ID for Billing Notes as requested visually */}
                             {document.storeSnapshot.taxId && !isBilling && (
                                 <span className="ml-4">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</span>
                             )}
@@ -205,7 +203,6 @@ function DocumentView({
                         <Separator className="my-1" />
                         <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
                         
-                        {/* Baht Text */}
                         <div className="text-right pt-1">
                             <span className="text-[11px] font-bold italic">{thaiBahtText(document.grandTotal)}</span>
                         </div>
@@ -213,7 +210,6 @@ function DocumentView({
                 </div>
             </div>
             
-            {/* Signature Section */}
             <div className="grid grid-cols-2 gap-12 mt-auto text-center text-[11px] pb-4 pt-10">
                 <div className="flex flex-col items-center">
                     <p className="mb-6">.................................................</p>
@@ -225,7 +221,6 @@ function DocumentView({
                 </div>
             </div>
 
-            {/* Footer Disclaimer for Receipt */}
             {isReceipt && (
                 <div className="text-center text-[10px] text-muted-foreground border-t pt-2 mt-4 italic">
                     "เอกสารฉบับนี้จะสมบูรณ์เมื่อได้รับเงินครบถ้วนแล้วเท่านั้น"
@@ -248,13 +243,11 @@ function DocumentPageContent() {
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
 
-    // Fetch live customer data to ensure latest address is used
     const customerRef = useMemo(() => (db && document?.customerId ? doc(db, 'customers', document.customerId) : null), [db, document?.customerId]);
     const { data: liveCustomer } = useDoc<Customer>(customerRef);
 
     const effectiveCustomer = useMemo(() => {
         if (!document) return null;
-        // Merge live customer data over the snapshot to fix stale data issues
         return {
             ...document.customerSnapshot,
             ...(liveCustomer || {})
@@ -270,7 +263,6 @@ function DocumentPageContent() {
         }
     }, [document, searchParams]);
 
-    // Fetch account name for receipts
     useEffect(() => {
         if (document?.docType === 'RECEIPT' && document.receivedAccountId && db) {
             getDoc(doc(db, 'accountingAccounts', document.receivedAccountId)).then(snap => {
