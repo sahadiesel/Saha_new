@@ -17,7 +17,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Save, Globe, Eye, Edit, ArrowLeft, X } from "lucide-react";
+import { Loader2, Save, Globe, Eye, Edit, ArrowLeft, X, ShieldCheck, CheckCircle2, Wrench, Gauge } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,15 @@ const landingPageSchema = z.object({
   heroTitle: z.string().min(1, "กรุณากรอกพาดหัวหลัก"),
   heroDescription: z.string().min(1, "กรุณากรอกคำอธิบาย"),
   buttonText: z.string().min(1, "กรุณากรอกข้อความบนปุ่ม"),
-  footerText: z.string().optional(),
+  servicesTitle: z.string().min(1, "กรุณากรอกหัวข้อบริการ"),
+  s1Title: z.string().min(1, "กรุณากรอกชื่อบริการที่ 1"),
+  s1Desc: z.string().min(1, "กรุณากรอกคำอธิบายที่ 1"),
+  s2Title: z.string().min(1, "กรุณากรอกชื่อบริการที่ 2"),
+  s2Desc: z.string().min(1, "กรุณากรอกคำอธิบายที่ 2"),
+  s3Title: z.string().min(1, "กรุณากรอกชื่อบริการที่ 3"),
+  s3Desc: z.string().min(1, "กรุณากรอกคำอธิบายที่ 3"),
+  s4Title: z.string().min(1, "กรุณากรอกชื่อบริการที่ 4"),
+  s4Desc: z.string().min(1, "กรุณากรอกคำอธิบายที่ 4"),
 });
 
 type LandingPageFormData = z.infer<typeof landingPageSchema>;
@@ -44,7 +52,15 @@ export default function WebManagementPage() {
       heroTitle: "SAHADIESEL SERVICE CENTER",
       heroDescription: "ศูนย์บริการรถยนต์ครบวงจรที่มีมาตรฐานและเครื่องมือครบครัน...",
       buttonText: "ตรวจสอบสถานะรถ",
-      footerText: "",
+      servicesTitle: "SAHADIESEL บริการแบบ 4S",
+      s1Title: "Standard",
+      s1Desc: "บริการมาตรฐานสากล ใส่ใจทุกขั้นตอนการตรวจเช็คและซ่อมบำรุง",
+      s2Title: "Space",
+      s2Desc: "ให้บริการบนพื้นที่กว้างขวาง รองรับรถได้มากกว่า 50 คันต่อวัน พร้อมห้องรับรองลูกค้า",
+      s3Title: "Specialist",
+      s3Desc: "ทีมช่างผู้เชี่ยวชาญเฉพาะทาง แก้ปัญหาได้ตรงจุด รวดเร็ว แม่นยำ ด้วยระบบวิเคราะห์อัจฉริยะ",
+      s4Title: "Service",
+      s4Desc: "ศูนย์บริการรถยนต์นำเข้าและปั๊มหัวฉีดแบบครบวงจร One Stop Service ครอบคลุมแบบ 360 องศา ดูแลรักษา ซ่อม ทำสี เคลมประกัน ครบจบในที่เดียว",
     },
   });
 
@@ -89,7 +105,7 @@ export default function WebManagementPage() {
   if (loading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin" /></div>;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center">
         <Button variant="outline" onClick={() => router.push('/app')}>
           <ArrowLeft className="mr-2 h-4 w-4" />
@@ -118,21 +134,17 @@ export default function WebManagementPage() {
 
       <PageHeader title="จัดการหน้าแรก (Home)" description="แก้ไขข้อความที่ปรากฏบนหน้าแรกของเว็บไซต์" />
 
-      <Card className="max-w-3xl">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="h-5 w-5 text-primary" />
-            เนื้อหาหลัก (Hero Section)
-          </CardTitle>
-          <CardDescription>
-            {isEditing 
-              ? "กำลังอยู่ในโหมดแก้ไขข้อมูล" 
-              : "ข้อมูลปัจจุบัน (กดปุ่มแก้ไขด้านบนเพื่อเริ่มปรับปรุงข้อความ)"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Globe className="h-5 w-5 text-primary" />
+                ส่วนหัวเว็บไซต์ (Hero Section)
+              </CardTitle>
+              <CardDescription>เนื้อหาที่จะปรากฏส่วนบนสุดของเว็บไซต์</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
               <FormField
                 control={form.control}
                 name="heroTitle"
@@ -142,7 +154,6 @@ export default function WebManagementPage() {
                     <FormControl>
                       <Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted cursor-default")} />
                     </FormControl>
-                    <FormDescription>ใช้ตัวพิมพ์ใหญ่เพื่อความสวยงามตามธีมเดิม</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -156,7 +167,7 @@ export default function WebManagementPage() {
                     <FormLabel>คำอธิบายหลัก (Hero Description)</FormLabel>
                     <FormControl>
                       <Textarea 
-                        rows={6} 
+                        rows={4} 
                         {...field} 
                         disabled={!isEditing} 
                         className={cn(!isEditing && "bg-muted cursor-default")}
@@ -167,43 +178,171 @@ export default function WebManagementPage() {
                 )}
               />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="buttonText"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>ข้อความบนปุ่มกด</FormLabel>
-                      <FormControl>
-                        <Input 
-                          {...field} 
-                          disabled={!isEditing} 
-                          className={cn(!isEditing && "bg-muted cursor-default")}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <FormField
+                control={form.control}
+                name="buttonText"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ข้อความบนปุ่มกด</FormLabel>
+                    <FormControl>
+                      <Input 
+                        {...field} 
+                        disabled={!isEditing} 
+                        className={cn(!isEditing && "bg-muted cursor-default")}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          </Card>
 
-              {isEditing && (
-                <>
-                  <Separator />
-                  <div className="flex justify-end gap-3 animate-in fade-in slide-in-from-bottom-2">
-                    <Button type="button" variant="outline" onClick={handleCancel}>ยกเลิก</Button>
-                    <Button type="submit" disabled={form.formState.isSubmitting}>
-                      {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      <Save className="mr-2 h-4 w-4" />
-                      บันทึกข้อมูล
-                    </Button>
-                  </div>
-                </>
-              )}
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                ส่วนบริการแบบ 4S (Services Section)
+              </CardTitle>
+              <CardDescription>เนื้อหาในส่วนอธิบายการบริการของบริษัท</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-8">
+              <FormField
+                control={form.control}
+                name="servicesTitle"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>หัวข้อหลักส่วนบริการ</FormLabel>
+                    <FormControl>
+                      <Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted cursor-default")} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <Separator />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                  <div className="flex items-center gap-2 font-bold text-primary"><ShieldCheck className="h-4 w-4"/> S1: Standard</div>
+                  <FormField
+                    control={form.control}
+                    name="s1Title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ชื่อหัวข้อ</FormLabel>
+                        <FormControl><Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="s1Desc"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>คำอธิบาย</FormLabel>
+                        <FormControl><Textarea {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                  <div className="flex items-center gap-2 font-bold text-primary"><CheckCircle2 className="h-4 w-4"/> S2: Space</div>
+                  <FormField
+                    control={form.control}
+                    name="s2Title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ชื่อหัวข้อ</FormLabel>
+                        <FormControl><Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="s2Desc"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>คำอธิบาย</FormLabel>
+                        <FormControl><Textarea {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                  <div className="flex items-center gap-2 font-bold text-primary"><Wrench className="h-4 w-4"/> S3: Specialist</div>
+                  <FormField
+                    control={form.control}
+                    name="s3Title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ชื่อหัวข้อ</FormLabel>
+                        <FormControl><Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="s3Desc"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>คำอธิบาย</FormLabel>
+                        <FormControl><Textarea {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                  <div className="flex items-center gap-2 font-bold text-primary"><Gauge className="h-4 w-4"/> S4: Service</div>
+                  <FormField
+                    control={form.control}
+                    name="s4Title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ชื่อหัวข้อ</FormLabel>
+                        <FormControl><Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="s4Desc"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>คำอธิบาย</FormLabel>
+                        <FormControl><Textarea {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted")} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {isEditing && (
+            <div className="flex justify-end gap-3 sticky bottom-6 z-20">
+              <Button type="button" variant="outline" size="lg" onClick={handleCancel}>ยกเลิก</Button>
+              <Button type="submit" size="lg" disabled={form.formState.isSubmitting}>
+                {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="mr-2 h-4 w-4" />
+                บันทึกข้อมูลทั้งหมด
+              </Button>
+            </div>
+          )}
+        </form>
+      </Form>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { PublicHeader } from "@/components/public-header";
@@ -17,6 +17,15 @@ interface LandingPageContent {
   heroTitle: string;
   heroDescription: string;
   buttonText: string;
+  servicesTitle: string;
+  s1Title: string;
+  s1Desc: string;
+  s2Title: string;
+  s2Desc: string;
+  s3Title: string;
+  s3Desc: string;
+  s4Title: string;
+  s4Desc: string;
 }
 
 export default function LandingPage() {
@@ -25,6 +34,15 @@ export default function LandingPage() {
     heroTitle: "SAHADIESEL SERVICE CENTER",
     heroDescription: "ศูนย์บริการรถยนต์ครบวงจรที่มีมาตรฐานและเครื่องมือครบครัน พร้อมเครื่องวิเคราะห์รถยนต์ที่ทันสมัย ให้บริการเช็คระยะ ซ่อมเครื่องยนต์และระบบไฟฟ้า ซ่อมบำรุงรถยนต์นำเข้าได้หลากรุ่น หลายแบรนด์ โดยทีมช่างมากประสบการณ์ และมีระบบออนไลน์ในการติดตามงาน ซึ่งลูกค้าสามารถตรวจสอบสถานะการซ่อมได้ตลอดเวลา",
     buttonText: "ตรวจสอบสถานะรถ",
+    servicesTitle: "SAHADIESEL บริการแบบ 4S",
+    s1Title: "Standard",
+    s1Desc: "บริการมาตรฐานสากล ใส่ใจทุกขั้นตอนการตรวจเช็คและซ่อมบำรุง",
+    s2Title: "Space",
+    s2Desc: "ให้บริการบนพื้นที่กว้างขวาง รองรับรถได้มากกว่า 50 คันต่อวัน พร้อมห้องรับรองลูกค้า",
+    s3Title: "Specialist",
+    s3Desc: "ทีมช่างผู้เชี่ยวชาญเฉพาะทาง แก้ปัญหาได้ตรงจุด รวดเร็ว แม่นยำ ด้วยระบบวิเคราะห์อัจฉริยะ",
+    s4Title: "Service",
+    s4Desc: "ศูนย์บริการรถยนต์นำเข้าและปั๊มหัวฉีดแบบครบวงจร One Stop Service ครอบคลุมแบบ 360 องศา ดูแลรักษา ซ่อม ทำสี เคลมประกัน ครบจบในที่เดียว",
   });
 
   useEffect(() => {
@@ -42,7 +60,6 @@ export default function LandingPage() {
     fetchContent();
   }, [db]);
 
-  // Use the professional workshop background
   const bgImage = PlaceHolderImages.find(img => img.id === "login-bg") || PlaceHolderImages[0];
 
   return (
@@ -67,7 +84,6 @@ export default function LandingPage() {
               {content.heroTitle}
             </h1>
             
-            {/* Styled border box for description similar to the provided layout */}
             <div className="relative mb-8 p-6 md:p-10 border-2 border-primary/40 rounded-sm bg-black/20 backdrop-blur-sm animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
                 <p className="text-lg md:text-xl text-slate-200 leading-relaxed font-medium">
                   {content.heroDescription}
@@ -90,35 +106,35 @@ export default function LandingPage() {
           <div className="container mx-auto px-4">
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
-                <h2 className="text-3xl font-bold border-l-4 border-primary pl-4">SAHADIESEL บริการแบบ 4S</h2>
+                <h2 className="text-3xl font-bold border-l-4 border-primary pl-4">{content.servicesTitle}</h2>
                 
                 <div className="space-y-6">
-                  <div className="flex gap-4">
-                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary"><ShieldCheck className="h-6 w-6"/></div>
+                  <div className="flex gap-4 group">
+                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><ShieldCheck className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">Standard</h3>
-                      <p className="text-slate-400 text-sm">บริการมาตรฐานสากล ใส่ใจทุกขั้นตอนการตรวจเช็คและซ่อมบำรุง</p>
+                      <h3 className="font-bold text-lg text-white">{content.s1Title}</h3>
+                      <p className="text-slate-400 text-sm">{content.s1Desc}</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary"><CheckCircle2 className="h-6 w-6"/></div>
+                  <div className="flex gap-4 group">
+                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><CheckCircle2 className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">Space</h3>
-                      <p className="text-slate-400 text-sm">ให้บริการบนพื้นที่กว้างขวาง รองรับรถได้มากกว่า 50 คันต่อวัน พร้อมห้องรับรองลูกค้า</p>
+                      <h3 className="font-bold text-lg text-white">{content.s2Title}</h3>
+                      <p className="text-slate-400 text-sm">{content.s2Desc}</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary"><Wrench className="h-6 w-6"/></div>
+                  <div className="flex gap-4 group">
+                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><Wrench className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">Specialist</h3>
-                      <p className="text-slate-400 text-sm">ทีมช่างผู้เชี่ยวชาญเฉพาะทาง แก้ปัญหาได้ตรงจุด รวดเร็ว แม่นยำ ด้วยระบบวิเคราะห์อัจฉริยะ</p>
+                      <h3 className="font-bold text-lg text-white">{content.s3Title}</h3>
+                      <p className="text-slate-400 text-sm">{content.s3Desc}</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary"><Gauge className="h-6 w-6"/></div>
+                  <div className="flex gap-4 group">
+                    <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><Gauge className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">Service</h3>
-                      <p className="text-slate-400 text-sm">ศูนย์บริการรถยนต์นำเข้าและปั๊มหัวฉีดแบบครบวงจร One Stop Service ครอบคลุมแบบ 360 องศา ดูแลรักษา ซ่อม ทำสี เคลมประกัน ครบจบในที่เดียว</p>
+                      <h3 className="font-bold text-lg text-white">{content.s4Title}</h3>
+                      <p className="text-slate-400 text-sm">{content.s4Desc}</p>
                     </div>
                   </div>
                 </div>
