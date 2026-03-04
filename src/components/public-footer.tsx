@@ -31,18 +31,18 @@ export function PublicFooter({ content }: PublicFooterProps) {
           <div className="space-y-4">
             <h3 className="text-white font-bold text-lg border-l-2 border-primary pl-3">{contactTitle}</h3>
             <div className="space-y-3 text-sm">
-              <p className="flex items-center gap-3">
+              <div className="flex items-center gap-3">
                 <div className="bg-primary/10 p-1.5 rounded-full"><Phone className="h-4 w-4 text-primary" /></div>
                 {phone}
-              </p>
-              <p className="flex items-start gap-3">
+              </div>
+              <div className="flex items-start gap-3">
                 <div className="bg-primary/10 p-1.5 rounded-full mt-0.5"><MapPin className="h-4 w-4 text-primary" /></div>
                 <span className="flex-1">{address}</span>
-              </p>
-              <p className="flex items-center gap-3">
+              </div>
+              <div className="flex items-center gap-3">
                 <div className="bg-primary/10 p-1.5 rounded-full"><Globe className="h-4 w-4 text-primary" /></div>
                 {website}
-              </p>
+              </div>
             </div>
           </div>
 
