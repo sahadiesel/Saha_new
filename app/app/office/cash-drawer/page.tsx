@@ -42,7 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
   Loader2, PlusCircle, History, Wallet, ArrowDownCircle, ArrowUpCircle, 
-  Lock, Unlock, CheckCircle2, AlertCircle, Camera, X, Image as ImageIcon, ExternalLink
+  Lock, Unlock, CheckCircle2, AlertCircle, Camera, X, Image as ImageIcon, ExternalLink, Eye, Receipt
 } from "lucide-react";
 import { cashDrawerStatusLabel } from "@/lib/ui-labels";
 import { safeFormat } from "@/lib/date-utils";
@@ -58,6 +58,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import type { CashDrawerSession, CashDrawerTransaction } from "@/lib/types";
 
 export const dynamic = 'force-dynamic';
@@ -95,6 +97,11 @@ export default function OfficeCashDrawerPage() {
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // History Details States
+  const [viewingSession, setViewingSession] = useState<CashDrawerSession | null>(null);
+  const [viewingTransactions, setViewingTransactions] = useState<CashDrawerTransaction[]>([]);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   const [transPhotos, setTransPhotos] = useState<File[]>([]);
   const [transPhotoPreviews, setTransPhotoPreviews] = useState<string[]>([]);
@@ -163,6 +170,29 @@ export default function OfficeCashDrawerPage() {
       setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as CashDrawerTransaction)));
     });
   }, [db, activeSession]);
+
+  // Load Transactions for viewing a history session
+  useEffect(() => {
+    if (!db || !viewingSession) {
+      setViewingTransactions([]);
+      return;
+    }
+    setIsLoadingDetails(true);
+    const transQ = query(
+      collection(db, "cashDrawerSessions", viewingSession.id, "transactions"),
+      orderBy("createdAt", "asc")
+    );
+    
+    const unsubscribe = onSnapshot(transQ, (snap) => {
+      setViewingTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as CashDrawerTransaction)));
+      setIsLoadingDetails(false);
+    }, (err) => {
+      console.error(err);
+      setIsLoadingDetails(false);
+    });
+
+    return () => unsubscribe();
+  }, [db, viewingSession]);
 
   const handleOpenSession = async (values: z.infer<typeof openSessionSchema>) => {
     if (!db || !profile) return;
@@ -394,11 +424,12 @@ export default function OfficeCashDrawerPage() {
                   <TableHead className="text-right">เงินปลายรอบ</TableHead>
                   <TableHead className="text-right">ผลต่าง</TableHead>
                   <TableHead>สถานะ</TableHead>
+                  <TableHead className="text-right">จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sessions.map(s => (
-                  <TableRow key={s.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableRow key={s.id}>
                     <TableCell className="text-xs">{safeFormat(s.openedAt, "dd/MM/yy HH:mm")}</TableCell>
                     <TableCell className="text-sm font-medium">{s.openedByName}</TableCell>
                     <TableCell className="text-right">{s.openingAmount.toLocaleString()}</TableCell>
@@ -411,6 +442,12 @@ export default function OfficeCashDrawerPage() {
                         {cashDrawerStatusLabel(s.status)}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" className="h-8 gap-1" onClick={() => setViewingSession(s)}>
+                        <Eye className="h-3 w-3" />
+                        ดูรายการ
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -419,13 +456,130 @@ export default function OfficeCashDrawerPage() {
         </CardContent>
       </Card>
 
+      {/* History Details Dialog */}
+      <Dialog open={!!viewingSession} onOpenChange={(open) => !open && setViewingSession(null)}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-0">
+            <div className="flex justify-between items-start">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5 text-primary" />
+                  รายละเอียดรอบงาน: {safeFormat(viewingSession?.openedAt, "dd MMM yy")}
+                </DialogTitle>
+                <DialogDescription>
+                  รอบเปิดโดย {viewingSession?.openedByName} เมื่อ {safeFormat(viewingSession?.openedAt, "HH:mm")}
+                </DialogDescription>
+              </div>
+              <Badge variant={viewingSession?.status === "OPEN" ? "default" : "secondary"}>
+                {viewingSession?.status}
+              </Badge>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 border rounded-lg bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-bold">เงินต้น (Opening)</p>
+                <p className="text-lg font-bold">฿{viewingSession?.openingAmount.toLocaleString()}</p>
+              </div>
+              <div className="p-3 border rounded-lg bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-bold">ยอดในระบบ</p>
+                <p className="text-lg font-bold">฿{viewingSession?.expectedAmount.toLocaleString()}</p>
+              </div>
+              <div className="p-3 border rounded-lg bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-bold">นับจริง (Counted)</p>
+                <p className="text-lg font-bold">฿{viewingSession?.countedAmount?.toLocaleString() || "-"}</p>
+              </div>
+              <div className={cn("p-3 border rounded-lg", (viewingSession?.difference || 0) < 0 ? "bg-destructive/5 border-destructive/20" : "bg-green-50 border-green-200")}>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold">ผลต่าง</p>
+                <p className={cn("text-lg font-bold", (viewingSession?.difference || 0) < 0 ? "text-destructive" : "text-green-600")}>
+                  {viewingSession?.difference !== undefined ? (viewingSession.difference > 0 ? `+${viewingSession.difference}` : viewingSession.difference) : "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="font-bold text-sm flex items-center gap-2">
+                <ArrowDownCircle className="h-4 w-4 text-green-600" />
+                รายการเดินเงิน (Transactions)
+              </h4>
+              
+              {isLoadingDetails ? (
+                <div className="flex justify-center py-12"><Loader2 className="animate-spin" /></div>
+              ) : viewingTransactions.length > 0 ? (
+                <div className="border rounded-md overflow-hidden">
+                  <Table>
+                    <TableHeader className="bg-muted/50">
+                      <TableRow>
+                        <TableHead className="w-20">เวลา</TableHead>
+                        <TableHead>รายการ</TableHead>
+                        <TableHead className="text-right">จำนวนเงิน</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {viewingTransactions.map(t => (
+                        <TableRow key={t.id} className="hover:bg-transparent">
+                          <TableCell className="text-xs text-muted-foreground align-top pt-3">{safeFormat(t.createdAt, "HH:mm")}</TableCell>
+                          <TableCell className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={t.type === "IN" ? "secondary" : "destructive"} className="h-4 text-[8px] px-1">
+                                {t.type === "IN" ? "รับ" : "จ่าย"}
+                              </Badge>
+                              <span className="font-medium text-sm">{t.description}</span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">{t.category}</p>
+                            {t.photos && t.photos.length > 0 && (
+                              <div className="flex gap-1 mt-2">
+                                {t.photos.map((url, idx) => (
+                                  <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="relative w-10 h-10 rounded border overflow-hidden block">
+                                    <Image src={url} alt="proof" fill className="object-cover" />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className={cn("text-right font-bold align-top pt-3", t.type === "IN" ? "text-green-600" : "text-destructive")}>
+                            {t.type === "IN" ? "+" : "-"}{t.amount.toLocaleString()}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="text-center py-12 border rounded-md border-dashed text-muted-foreground italic text-sm">
+                  ไม่มีรายการบันทึกในรอบนี้
+                </div>
+              )}
+            </div>
+
+            {viewingSession?.notes && (
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-muted-foreground uppercase">หมายเหตุการปิดรอบ</Label>
+                <div className="p-3 bg-muted/30 rounded-md text-sm italic">
+                  "{viewingSession.notes}"
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="p-4 border-t bg-muted/10">
+            <Button variant="outline" onClick={() => setViewingSession(null)}>ปิดหน้าต่าง</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isOpening} onOpenChange={setIsOpening}>
         <DialogContent>
           <DialogHeader><DialogTitle>เปิดรอบการทำงาน</DialogTitle></DialogHeader>
           <Form {...openForm}>
             <form onSubmit={openForm.handleSubmit(handleOpenSession)} className="space-y-4">
               <FormField name="openingAmount" render={({ field }) => (
-                <FormItem><FormLabel>จำนวนเงินทอนเริ่มต้น (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem>
+                  <FormLabel>จำนวนเงินทอนเริ่มต้น (บาท)</FormLabel>
+                  <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
               )} />
               <DialogFooter><Button type="submit" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันเปิดรอบ</Button></DialogFooter>
             </form>
@@ -513,7 +667,11 @@ export default function OfficeCashDrawerPage() {
           <Form {...closeForm}>
             <form onSubmit={closeForm.handleSubmit(handleCloseSession)} className="space-y-4">
               <FormField name="countedAmount" render={({ field }) => (
-                <FormItem><FormLabel>จำนวนเงินที่นับได้จริง (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem>
+                  <FormLabel>จำนวนเงินที่นับได้จริง (บาท)</FormLabel>
+                  <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
               )} />
               <FormField name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุการปิดรอบ</FormLabel><FormControl><Textarea {...field} placeholder="เช่น สาเหตุที่เงินขาดหรือเกิน..." /></FormControl></FormItem>)} />
               <DialogFooter><Button type="submit" variant="destructive" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันการปิดรอบ</Button></DialogFooter>
