@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { useRouter } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +17,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Save, Globe, Eye } from "lucide-react";
+import { Loader2, Save, Globe, Eye, Edit, ArrowLeft, X } from "lucide-react";
 import Link from "next/link";
 
 const landingPageSchema = z.object({
@@ -32,7 +33,9 @@ export default function WebManagementPage() {
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
 
   const form = useForm<LandingPageFormData>({
     resolver: zodResolver(landingPageSchema),
@@ -71,23 +74,48 @@ export default function WebManagementPage() {
         updatedByName: profile.displayName,
       });
       toast({ title: "บันทึกการเปลี่ยนแปลงสำเร็จ" });
+      setIsEditing(false);
     } catch (e: any) {
       toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: e.message });
     }
+  };
+
+  const handleCancel = () => {
+    form.reset();
+    setIsEditing(false);
   };
 
   if (loading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="จัดการหน้าแรก (Home)" description="แก้ไขข้อความที่ปรากฏบนหน้าแรกของเว็บไซต์">
-        <Button asChild variant="outline">
-          <Link href="/" target="_blank">
-            <Eye className="mr-2 h-4 w-4" />
-            ดูหน้าเว็บจริง
-          </Link>
+      <div className="flex justify-between items-center">
+        <Button variant="outline" onClick={() => router.push('/app')}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          ย้อนกลับหน้าหลัก
         </Button>
-      </PageHeader>
+        <div className="flex gap-2">
+          {!isEditing ? (
+            <Button onClick={() => setIsEditing(true)}>
+              <Edit className="mr-2 h-4 w-4" />
+              แก้ไขเนื้อหา
+            </Button>
+          ) : (
+            <Button variant="ghost" onClick={handleCancel}>
+              <X className="mr-2 h-4 w-4" />
+              ยกเลิก
+            </Button>
+          )}
+          <Button asChild variant="outline">
+            <Link href="/" target="_blank">
+              <Eye className="mr-2 h-4 w-4" />
+              ดูหน้าเว็บจริง
+            </Link>
+          </Button>
+        </div>
+      </div>
+
+      <PageHeader title="จัดการหน้าแรก (Home)" description="แก้ไขข้อความที่ปรากฏบนหน้าแรกของเว็บไซต์" />
 
       <Card className="max-w-3xl">
         <CardHeader>
@@ -95,7 +123,11 @@ export default function WebManagementPage() {
             <Globe className="h-5 w-5 text-primary" />
             เนื้อหาหลัก (Hero Section)
           </CardTitle>
-          <CardDescription>ข้อความส่วนหัวที่แสดงบนภาพแบคกราวด์</CardDescription>
+          <CardDescription>
+            {isEditing 
+              ? "กำลังอยู่ในโหมดแก้ไขข้อมูล" 
+              : "ข้อมูลปัจจุบัน (กดปุ่มแก้ไขด้านบนเพื่อเริ่มปรับปรุงข้อความ)"}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Form {...form}>
@@ -106,7 +138,9 @@ export default function WebManagementPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>พาดหัวหลัก (Main Title)</FormLabel>
-                    <FormControl><Input {...field} /></FormControl>
+                    <FormControl>
+                      <Input {...field} disabled={!isEditing} className={cn(!isEditing && "bg-muted cursor-default")} />
+                    </FormControl>
                     <FormDescription>ใช้ตัวพิมพ์ใหญ่เพื่อความสวยงามตามธีมเดิม</FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -119,7 +153,14 @@ export default function WebManagementPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>คำอธิบายหลัก (Hero Description)</FormLabel>
-                    <FormControl><Textarea rows={6} {...field} /></FormControl>
+                    <FormControl>
+                      <Textarea 
+                        rows={6} 
+                        {...field} 
+                        disabled={!isEditing} 
+                        className={cn(!isEditing && "bg-muted cursor-default")}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -132,22 +173,32 @@ export default function WebManagementPage() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>ข้อความบนปุ่มกด</FormLabel>
-                      <FormControl><Input {...field} /></FormControl>
+                      <FormControl>
+                        <Input 
+                          {...field} 
+                          disabled={!isEditing} 
+                          className={cn(!isEditing && "bg-muted cursor-default")}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
 
-              <Separator />
-
-              <div className="flex justify-end">
-                <Button type="submit" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  <Save className="mr-2 h-4 w-4" />
-                  บันทึกข้อมูล
-                </Button>
-              </div>
+              {isEditing && (
+                <>
+                  <Separator />
+                  <div className="flex justify-end gap-3 animate-in fade-in slide-in-from-bottom-2">
+                    <Button type="button" variant="outline" onClick={handleCancel}>ยกเลิก</Button>
+                    <Button type="submit" disabled={form.formState.isSubmitting}>
+                      {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      <Save className="mr-2 h-4 w-4" />
+                      บันทึกข้อมูล
+                    </Button>
+                  </div>
+                </>
+              )}
             </form>
           </Form>
         </CardContent>
