@@ -157,12 +157,14 @@ function JobDetailsPageContent() {
   const isTechnicalDept = ['CAR_SERVICE', 'COMMONRAIL', 'MECHANIC', 'OUTSOURCE'].includes(profile?.department || '');
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
+  // Relax view-only logic to allow technical staff to add activities even if the status is DONE or WAITING_CUSTOMER_PICKUP.
+  // Full lock only applies when CLOSED.
   const isViewOnly = job?.isArchived || 
                      profile?.role === 'VIEWER' || 
-                     (job?.status === 'CLOSED' && !allowEditing) ||
-                     (isJobInFinishedState && !allowEditing && isTechnicalDept);
+                     (job?.status === 'CLOSED' && !allowEditing);
 
-  const canUpdateActivity = isStaff && !isJobInFinishedState;
+  // canUpdateActivity allows adding activities until the job is CLOSED.
+  const canUpdateActivity = isStaff && (job?.status !== 'CLOSED' || allowEditing);
   
   const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
@@ -770,7 +772,7 @@ function JobDetailsPageContent() {
             ) : <p className="text-muted-foreground text-sm">ยังไม่มีรูปตอนรับงาน</p>}</CardContent>
           </Card>
           
-          {(!isJobInFinishedState || allowEditing) && (
+          {(job.status !== 'CLOSED' || allowEditing) && (
             <Card>
                 <CardHeader><CardTitle>อัปเดทการทำงาน/รูปงาน</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
