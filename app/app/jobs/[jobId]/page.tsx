@@ -165,12 +165,10 @@ function JobDetailsPageContent() {
   const isTechnicalDept = ['CAR_SERVICE', 'COMMONRAIL', 'MECHANIC', 'OUTSOURCE'].includes(profile?.department || '');
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
-  // Strict view-only logic: Lock if job is in a finished state (DONE or higher) unless allowEditing is true
   const isViewOnly = job?.isArchived || 
                      profile?.role === 'VIEWER' || 
                      (isJobInFinishedState && !allowEditing);
 
-  // canUpdateActivity follows the view-only lock
   const canUpdateActivity = isStaff && !isViewOnly;
   
   const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
@@ -1029,7 +1027,7 @@ function JobDetailsPageContent() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={| () => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
+            <Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
             <Button variant="secondary" onClick={() => { router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
               <FileText className="mr-2 h-4 w-4" /> ใบส่งของชั่วคราว
             </Button>
