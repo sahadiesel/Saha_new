@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -23,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { JOB_DEPARTMENTS } from "@/lib/constants";
 import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle } from "lucide-react";
 import type { Customer } from "@/lib/types";
