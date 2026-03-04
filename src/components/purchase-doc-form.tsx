@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -30,6 +30,8 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Calendar } from "@/components/ui/calendar";
+import { format, parseISO } from "date-fns";
 
 import { createPurchaseDoc, getNextAvailablePurchaseDocNo } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
@@ -435,7 +437,41 @@ export function PurchaseDocForm() {
                       
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล</FormLabel><FormControl><Input {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
-                        <FormField name="docDate" render={({ field }) => (<FormItem><FormLabel>วันที่ในบิล</FormLabel><FormControl><Input type="date" {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
+                        <FormField
+                          control={form.control}
+                          name="docDate"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel>วันที่ในบิล</FormLabel>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <FormControl>
+                                    <Button
+                                      variant={"outline"}
+                                      className={cn(
+                                        "w-full pl-3 text-left font-normal",
+                                        !field.value && "text-muted-foreground"
+                                      )}
+                                      disabled={isSubmitting}
+                                    >
+                                      {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                      <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </FormControl>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar
+                                    mode="single"
+                                    selected={field.value ? parseISO(field.value) : undefined}
+                                    onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                                    initialFocus
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                       </div>
                   </CardContent>
               </Card>
@@ -459,7 +495,41 @@ export function PurchaseDocForm() {
                           </FormItem>
                       )} />
                       {watchedPaymentMode === 'CREDIT' ? (
-                          <FormField name="dueDate" render={({ field }) => (<FormItem><FormLabel>วันครบกำหนด</FormLabel><FormControl><Input type="date" {...field} value={field.value || ''} disabled={isSubmitting}/></FormControl><FormMessage/></FormItem>)} />
+                          <FormField
+                            control={form.control}
+                            name="dueDate"
+                            render={({ field }) => (
+                              <FormItem className="flex flex-col">
+                                <FormLabel>วันครบกำหนด</FormLabel>
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <FormControl>
+                                      <Button
+                                        variant={"outline"}
+                                        className={cn(
+                                          "w-full pl-3 text-left font-normal",
+                                          !field.value && "text-muted-foreground"
+                                        )}
+                                        disabled={isSubmitting}
+                                      >
+                                        {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                        <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                                      </Button>
+                                    </FormControl>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-auto p-0" align="start">
+                                    <Calendar
+                                      mode="single"
+                                      selected={field.value ? parseISO(field.value) : undefined}
+                                      onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                                      initialFocus
+                                    />
+                                  </PopoverContent>
+                                </Popover>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
                       ) : (
                           <div className="grid grid-cols-2 gap-4">
                               <FormField name="suggestedPaymentMethod" render={({ field }) => (

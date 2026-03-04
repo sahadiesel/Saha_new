@@ -10,14 +10,14 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ArrowLeft, Calculator, Info, AlertCircle } from "lucide-react";
+import { Loader2, Save, ArrowLeft, Calculator, Info, AlertCircle, CalendarDays } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -36,6 +36,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 const allocationSchema = z.object({
   invoiceId: z.string(),
@@ -301,17 +303,6 @@ function ConfirmReceiptPageContent() {
     return { totalNetApplied, totalWht, totalGrossApplied, remainingToAllocate };
   }, [watchedAllocations, form]);
 
-  const callCloseJobFunction = async (jobId: string, paymentStatus: 'PAID' | 'UNPAID' = 'PAID') => {
-    if (!firebaseApp) return;
-    const functions = getFunctions(firebaseApp, 'us-central1');
-    const closeJob = httpsCallable(functions, "closeJobAfterAccounting");
-    try {
-      await closeJob({ jobId, paymentStatus });
-    } catch (e) {
-      console.error("Failed to archive job:", jobId, e);
-    }
-  };
-
   const executeSubmit = async (data: ConfirmReceiptFormData) => {
     if (!db || !profile || !receipt) return;
     setIsLoading(true);
@@ -427,7 +418,9 @@ function ConfirmReceiptPageContent() {
         if (jobsToArchive.length > 0) {
             const uniqueJobs = Array.from(new Set(jobsToArchive));
             for (const jId of uniqueJobs) {
-                await callCloseJobFunction(jId, 'PAID');
+                const functions = getFunctions(firebaseApp!, 'us-central1');
+                const closeJob = httpsCallable(functions, "closeJobAfterAccounting");
+                await closeJob({ jobId: jId, paymentStatus: 'PAID' }).catch(e => console.error("Archive error", e));
             }
         }
 
@@ -451,6 +444,7 @@ function ConfirmReceiptPageContent() {
 
   return (
     <>
+        <Suspense fallback={<Loader2 className="animate-spin" />}>
         <PageHeader title="ยืนยันรับเงินเข้าบัญชี" description={`สำหรับใบเสร็จเลขที่: ${receipt?.docNo}`} />
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handlePreSubmit)} className="space-y-6">
@@ -464,7 +458,40 @@ function ConfirmReceiptPageContent() {
                 <Card>
                     <CardHeader><CardTitle className="text-base">1. สรุปยอดรับเงิน</CardTitle></CardHeader>
                     <CardContent className="grid md:grid-cols-2 gap-4">
-                        <FormField name="paymentDate" control={form.control} render={({ field }) => (<FormItem><FormLabel>วันที่รับเงินจริง</FormLabel><FormControl><Input type="date" {...field}/></FormControl><FormMessage /></FormItem>)} />
+                        <FormField
+                          control={form.control}
+                          name="paymentDate"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel>วันที่รับเงินจริง</FormLabel>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <FormControl>
+                                    <Button
+                                      variant={"outline"}
+                                      className={cn(
+                                        "w-full pl-3 text-left font-normal",
+                                        !field.value && "text-muted-foreground"
+                                      )}
+                                    >
+                                      {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                      <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </FormControl>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar
+                                    mode="single"
+                                    selected={field.value ? parseISO(field.value) : undefined}
+                                    onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                                    initialFocus
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                         <FormField name="accountId" control={form.control} render={({ field }) => (
                           <FormItem>
                             <FormLabel>เข้าบัญชี</FormLabel>
@@ -573,6 +600,7 @@ function ConfirmReceiptPageContent() {
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+        </Suspense>
     </>
   );
 }

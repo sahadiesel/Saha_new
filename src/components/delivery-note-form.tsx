@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink } from "lucide-react";
+import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink, CalendarDays } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,6 +34,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Calendar } from "@/components/ui/calendar";
+import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
@@ -426,12 +428,41 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                   </Badge>
                 </div>
               )}
-              <FormField control={form.control} name="issueDate" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>วันที่ออกเอกสาร</FormLabel>
-                  <FormControl><Input type="date" {...field} value={field.value ?? ''} disabled={isLocked} /></FormControl>
-                </FormItem>
-              )} />
+              <FormField
+                control={form.control}
+                name="issueDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>วันที่ออกเอกสาร</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                            disabled={isLocked}
+                          >
+                            {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                            <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value ? parseISO(field.value) : undefined}
+                          onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
           </div>
 
@@ -567,7 +598,30 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                 <Button variant="outline" size="sm" className="w-full h-8 border-dashed" onClick={() => setSuggestedPayments([...suggestedPayments, {accountId: '', amount: 0}])}><PlusCircle className="mr-2 h-3 w-3" /> เพิ่มบัญชีรับเงิน</Button>
             </div>
             <div className="pt-4 border-t"><div className={cn("flex justify-between items-center p-3 rounded-md border", remainingAmount > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}><span className="text-sm font-bold">ยอดคงเหลือ:</span><span className={cn("text-lg font-black", remainingAmount > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingAmount)}</span></div>
-            {remainingAmount > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit" className="font-bold text-amber-700">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนด</Label><Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} /></div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing" className="text-xs">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
+            {remainingAmount > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit" className="font-bold text-amber-700">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนด</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant={"outline"}
+                  className={cn(
+                    "w-full pl-3 text-left font-normal h-9",
+                    !submitDueDate && "text-muted-foreground"
+                  )}
+                >
+                  {submitDueDate ? format(parseISO(submitDueDate), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                  <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={submitDueDate ? parseISO(submitDueDate) : undefined}
+                  onSelect={(date) => setSubmitDueDate(date ? format(date, "yyyy-MM-dd") : "")}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+            </div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing" className="text-xs">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
           </div>
           <DialogFooter className="bg-muted/30 p-6 border-t"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { if(isProcessing) return; const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingFormData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, true); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))}>{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>

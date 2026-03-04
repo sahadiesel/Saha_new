@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -23,6 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Calendar } from "@/components/ui/calendar";
+import { format, parseISO } from "date-fns";
 
 import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
@@ -379,13 +381,41 @@ export function ReceiptForm() {
             <CardHeader><CardTitle className="text-base">2. รายละเอียดการรับเงินรวม (คาดการณ์)</CardTitle></CardHeader>
             <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField name="paymentDate" render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>วันที่ออกใบเสร็จ</FormLabel>
-                        <FormControl><Input type="date" {...field} disabled={isSubmitting} /></FormControl>
-                        <FormMessage />
+                <FormField
+                  control={form.control}
+                  name="paymentDate"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>วันที่ออกใบเสร็จ</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant={"outline"}
+                              className={cn(
+                                "w-full pl-3 text-left font-normal h-10",
+                                !field.value && "text-muted-foreground"
+                              )}
+                              disabled={isSubmitting}
+                            >
+                              {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                              <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={field.value ? parseISO(field.value) : undefined}
+                            onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
                     </FormItem>
-                )} />
+                  )}
+                />
                 <FormField name="amount" render={({ field }) => (
                     <FormItem>
                         <FormLabel>ยอดเงินรวมตามใบเสร็จ (บาท)</FormLabel>

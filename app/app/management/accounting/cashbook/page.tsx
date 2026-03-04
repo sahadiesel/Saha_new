@@ -43,11 +43,11 @@ import {
 import { 
   Form, 
   FormControl, 
+  FormDescription, 
   FormField, 
   FormItem, 
   FormLabel, 
-  FormMessage, 
-  FormDescription 
+  FormMessage 
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -57,7 +57,7 @@ import { Badge } from "@/components/ui/badge";
 import { 
   Loader2, PlusCircle, Search, CalendarIcon, 
   ArrowDownCircle, ArrowUpCircle, Trash2, 
-  ChevronLeft, ChevronRight, Filter, AlertCircle, FileText, Wallet, Save, ExternalLink
+  ChevronLeft, ChevronRight, Filter, AlertCircle, FileText, Wallet, Save, ExternalLink, CalendarDays
 } from "lucide-react";
 import { safeFormat } from "@/lib/date-utils";
 import {
@@ -71,6 +71,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 const entrySchema = z.object({
   entryType: z.enum(["CASH_IN", "CASH_OUT"]),
@@ -297,7 +299,6 @@ export default function CashbookPage() {
         </Alert>
       )}
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-green-50 border-green-200">
           <CardHeader className="pb-2">
@@ -431,7 +432,40 @@ export default function CashbookPage() {
                     </Select>
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="entryDate" render={({ field }) => (<FormItem><FormLabel>วันที่</FormLabel><FormControl><Input type="date" {...field} /></FormControl></FormItem>)} />
+                <FormField
+                  control={form.control}
+                  name="entryDate"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>วันที่</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant={"outline"}
+                              className={cn(
+                                "w-full pl-3 text-left font-normal",
+                                !field.value && "text-muted-foreground"
+                              )}
+                            >
+                              {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                              <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={field.value ? parseISO(field.value) : undefined}
+                            onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
