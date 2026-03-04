@@ -35,6 +35,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { JobVehicleDetails } from "@/components/job-details/job-vehicle-details";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
@@ -77,6 +83,8 @@ function JobDetailsPageContent() {
   
   const quickCameraRef = useRef<HTMLInputElement>(null);
   const quickGalleryRef = useRef<HTMLInputElement>(null);
+  const activityCameraRef = useRef<HTMLInputElement>(null);
+  const activityGalleryRef = useRef<HTMLInputElement>(null);
 
   const jobId = useMemo(() => {
     const id = params?.jobId;
@@ -741,18 +749,29 @@ function JobDetailsPageContent() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between"><CardTitle>รูปประกอบงาน (ตอนรับงาน)</CardTitle>{canUpdateActivity && !isViewOnly && (
-                <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="sm" disabled={isAddingPhotos || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS} onClick={() => quickCameraRef.current?.click()}>
-                        {isAddingPhotos ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} ถ่ายรูปเพิ่ม
-                        <input type="file" ref={quickCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handleQuickPhotoUpload} />
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>รูปประกอบงาน (ตอนรับงาน)</CardTitle>
+              {canUpdateActivity && !isViewOnly && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={isAddingPhotos || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS}>
+                      {isAddingPhotos ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เพิ่มภาพถ่าย
                     </Button>
-                    <Button type="button" variant="outline" size="sm" disabled={isAddingPhotos || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS} onClick={() => quickGalleryRef.current?.click()}>
-                        <ImageIcon className="mr-2 h-4 w-4" /> เลือกรูปถ่าย
-                        <input type="file" ref={quickGalleryRef} className="hidden" multiple accept="image/*" onChange={handleQuickPhotoUpload} />
-                    </Button>
-                </div>
-            )}</CardHeader>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => quickCameraRef.current?.click()}>
+                      <Camera className="mr-2 h-4 w-4" /> ถ่ายรูปจากกล้อง
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => quickGalleryRef.current?.click()}>
+                      <ImageIcon className="mr-2 h-4 w-4" /> เลือกจากอัลบั้ม
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {/* Hidden inputs for Quick Photo Upload */}
+              <input type="file" ref={quickCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handleQuickPhotoUpload} />
+              <input type="file" ref={quickGalleryRef} className="hidden" multiple accept="image/*" onChange={handleQuickPhotoUpload} />
+            </CardHeader>
             <CardContent>{job.photos && job.photos.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{job.photos.map((url, i) => (
                     <div key={i} className="relative group aspect-square">
@@ -775,7 +794,25 @@ function JobDetailsPageContent() {
                   )}
                    <div className="flex flex-wrap gap-2">
                       <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
-                      <Button asChild variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isViewOnly}><label className="cursor-pointer flex items-center"><Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม<input type="file" className="hidden" multiple accept="image/*" capture="environment" onChange={handlePhotoChange} /></label></Button>
+                      
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isViewOnly}>
+                            <Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem onClick={() => activityCameraRef.current?.click()}>
+                            <Camera className="mr-2 h-4 w-4" /> ถ่ายรูปจากกล้อง
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => activityGalleryRef.current?.click()}>
+                            <ImageIcon className="mr-2 h-4 w-4" /> เลือกจากอัลบั้ม
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      {/* Hidden inputs for Activity Photo Upload */}
+                      <input type="file" ref={activityCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
+                      <input type="file" ref={activityGalleryRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
                       
                       {!isSubTask && !isViewOnly && (
                           <Button variant="outline" className="border-amber-500 text-amber-600 hover:bg-amber-50" onClick={() => setIsSubTransferDialogOpen(true)}>
@@ -992,7 +1029,7 @@ function JobDetailsPageContent() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
+            <Button variant="outline" onClick={| () => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
             <Button variant="secondary" onClick={() => { router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
               <FileText className="mr-2 h-4 w-4" /> ใบส่งของชั่วคราว
             </Button>
