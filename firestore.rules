@@ -85,7 +85,8 @@ service cloud.firestore {
 
     // Settings
     match /settings/{docId} {
-      allow read: if signedIn();
+      // Allow public read for landingPage setting so guests can see customized text
+      allow read: if docId == "landingPage" || signedIn();
       allow write: if isMgmt();
     }
 
