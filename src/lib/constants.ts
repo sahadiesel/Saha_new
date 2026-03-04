@@ -1,4 +1,4 @@
-export const DEPARTMENTS = ["MANAGEMENT", "OFFICE", "CAR_SERVICE", "COMMONRAIL", "MECHANIC", "OUTSOURCE"] as const;
+export const DEPARTMENTS = ["MANAGEMENT", "OFFICE", "CAR_SERVICE", "COMMONRAIL", "MECHANIC", "OUTSOURCE", "WEB_MANAGEMENT"] as const;
 export type Department = (typeof DEPARTMENTS)[number];
 
 export const USER_ROLES = ["ADMIN", "MANAGER", "OFFICER", "WORKER", "VIEWER"] as const;

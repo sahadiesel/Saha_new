@@ -1,4 +1,3 @@
-
 "use client"
 
 import Link from "next/link"
@@ -6,7 +5,7 @@ import { usePathname } from "next/navigation"
 import React, { useMemo, useState, useEffect } from "react"
 import {
   Building, Factory, Wrench, Truck, Package, Landmark,
-  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays
+  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays, Globe
 } from "lucide-react"
 import { collection, query, where, getDocs } from "firebase/firestore"
 
@@ -30,6 +29,7 @@ const departmentNames: Record<Department, string> = {
     COMMONRAIL: "แผนกคอมมอนเรล",
     MECHANIC: "แผนกแมคคานิค",
     OUTSOURCE: "งานนอก",
+    WEB_MANAGEMENT: "จัดการเว็บไซต์",
 };
 
 const SubNavLink = ({ href, label, icon: Icon, onClick }: { href: string; label: string; icon?: React.ElementType; onClick?: () => void }) => {
@@ -143,6 +143,7 @@ const AdminSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
             </CollapsibleTrigger>
             <CollapsibleContent className="py-1 pl-4 space-y-1">
                 <SubNavLink href="/app/admin/users" label="จัดการผู้ใช้ / Maintenance" onClick={onLinkClick} />
+                <SubNavLink href="/app/admin/web-management" label="จัดการเว็บไซต์ (Web)" icon={Globe} onClick={onLinkClick} />
             </CollapsibleContent>
         </Collapsible>
     );
@@ -247,6 +248,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
         COMMONRAIL: Factory,
         MECHANIC: Wrench,
         OUTSOURCE: Package,
+        WEB_MANAGEMENT: Globe,
     };
     const Icon = icons[department];
     const canSeeAccounting = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT';
@@ -372,6 +374,11 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                                 </Collapsible>
                             </>
                         )}
+                    </>
+                )}
+                {department === 'WEB_MANAGEMENT' && (
+                    <>
+                        <SubNavLink href="/app/admin/web-management" label="จัดการหน้าแรก (Home)" icon={Settings} onClick={onLinkClick} />
                     </>
                 )}
             </CollapsibleContent>

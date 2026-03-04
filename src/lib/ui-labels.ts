@@ -5,6 +5,7 @@ export const DEPARTMENT_LABELS: Record<string, string> = {
     COMMONRAIL: "แผนกคอมมอนเรล",
     MECHANIC: "แผนกแมคคานิค",
     OUTSOURCE: "งานนอก",
+    WEB_MANAGEMENT: "จัดการเว็บไซต์",
 };
 
 export const JOB_STATUS_LABELS: Record<string, string> = {
