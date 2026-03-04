@@ -92,6 +92,7 @@ function AccountingInboxPageContent() {
         const needingReview = all.filter(d => {
             if (d.docType === 'DELIVERY_NOTE') return d.status === 'PENDING_REVIEW' || d.status === 'APPROVED';
             if (d.docType === 'TAX_INVOICE') return d.status === 'PENDING_REVIEW';
+            if (d.docType === 'RECEIPT') return true; // Include receipts for the receipts tab
             return false;
         });
         setDocuments(needingReview); 
@@ -121,7 +122,10 @@ function AccountingInboxPageContent() {
         limit(100)
     );
     const unsubApproved = onSnapshot(approvedQuery, (snap) => {
-        setApprovedDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId));
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId);
+        // เรียงลำดับวันที่ล่าสุดขึ้นก่อน
+        data.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
+        setApprovedDocs(data);
     });
 
     const accountsQuery = query(
@@ -150,17 +154,27 @@ function AccountingInboxPageContent() {
   }, [db, hasPermission, authLoading]);
 
   const filteredDocs = useMemo(() => {
-    const filteredByTab = documents.filter(doc => {
+    let filteredByTab = documents.filter(doc => {
       if (activeTab === 'receive') {
-        return (doc.paymentTerms === 'CASH' || !doc.paymentTerms);
+        return (doc.paymentTerms === 'CASH' || !doc.paymentTerms) && doc.docType !== 'RECEIPT';
       }
       if (activeTab === 'ar') {
-        return doc.paymentTerms === 'CREDIT';
+        return doc.paymentTerms === 'CREDIT' && doc.docType !== 'RECEIPT';
       }
       if (activeTab === 'receipts') {
         return doc.docType === 'RECEIPT';
       }
       return false;
+    });
+
+    // เรียงลำดับวันที่ล่าสุดขึ้นก่อนเสมอ
+    filteredByTab.sort((a, b) => {
+        const dateCompare = (b.docDate || "").localeCompare(a.docDate || "");
+        if (dateCompare !== 0) return dateCompare;
+        // ถ้าวันเดียวกัน ให้เรียงตามเวลาที่สร้าง (จากล่าสุดไปเก่า)
+        const timeA = a.createdAt?.toMillis?.() || 0;
+        const timeB = b.createdAt?.toMillis?.() || 0;
+        return timeB - timeA;
     });
 
     if (!searchTerm) return filteredByTab;
