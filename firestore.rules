@@ -202,6 +202,10 @@ service cloud.firestore {
       allow write: if isMgmt();
     }
     
+    function isLeaveOwner(leaveId) {
+      return get(/databases/$(database)/documents/hrLeaves/$(leaveId)).data.userId == request.auth.uid;
+    }
+
     match /hrLeaves/{id} {
         allow read: if isMgmt() || (signedIn() && request.auth.uid == resource.data.userId);
         allow create: if signedIn() && !isViewer();

@@ -157,35 +157,26 @@ function JobDetailsPageContent() {
   const isTechnicalDept = ['CAR_SERVICE', 'COMMONRAIL', 'MECHANIC', 'OUTSOURCE'].includes(profile?.department || '');
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
-  // Relax view-only logic to allow technical staff to add activities even if the status is DONE or WAITING_CUSTOMER_PICKUP.
-  // Full lock only applies when CLOSED.
+  // Strict view-only logic: Lock if job is in a finished state (DONE or higher) unless allowEditing is true
   const isViewOnly = job?.isArchived || 
                      profile?.role === 'VIEWER' || 
-                     (job?.status === 'CLOSED' && !allowEditing);
+                     (isJobInFinishedState && !allowEditing);
 
-  // canUpdateActivity allows adding activities until the job is CLOSED.
-  const canUpdateActivity = isStaff && (job?.status !== 'CLOSED' || allowEditing);
+  // canUpdateActivity follows the view-only lock
+  const canUpdateActivity = isStaff && !isViewOnly;
   
   const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
-  // STRICT CHECK: Is the job already billed?
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
     if (job.isArchived) return true;
     if (job.status === 'CLOSED') return true;
-    
-    // 1. Status Check: WAITING_CUSTOMER_PICKUP is the "Billed" state
     if (job.status === 'WAITING_CUSTOMER_PICKUP') return true;
-
-    // 2. Check denormalized field in Job document
     const hasActiveBillField = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
     if (hasActiveBillField) return true;
-
-    // 3. Check live documents related to this job (fallback)
     const hasLiveDn = relatedDocuments['DELIVERY_NOTE']?.some(d => d.status !== 'CANCELLED');
     const hasLiveTi = relatedDocuments['TAX_INVOICE']?.some(d => d.status !== 'CANCELLED');
-    
     return !!(hasLiveDn || hasLiveTi);
   }, [job, relatedDocuments]);
 
@@ -899,7 +890,6 @@ function JobDetailsPageContent() {
                                 {docStatusLabel(latestDoc.status, latestDoc.docType)}
                               </Badge>
                             </div>
-                            {/* STRICT FILTER: Only TAX_INVOICE needs a receipt flow. DN MUST NOT issue receipt. */}
                             {canIssueBill && latestDoc.status === 'APPROVED' && !latestDoc.receiptDocId && docType === 'TAX_INVOICE' && (
                               <Button asChild size="sm" variant="outline" className="h-6 text-[9px] px-2 border-primary text-primary hover:bg-primary/5">
                                 <Link href={`/app/management/accounting/documents/receipt?customerId=${latestDoc.customerId}&sourceDocId=${latestDoc.id}`}>
