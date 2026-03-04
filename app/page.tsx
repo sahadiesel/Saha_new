@@ -13,7 +13,7 @@ import { ArrowRight, CheckCircle2, ShieldCheck, Wrench, Gauge } from "lucide-rea
 
 export const dynamic = 'force-dynamic';
 
-interface LandingPageContent {
+export interface LandingPageContent {
   heroTitle: string;
   heroDescription: string;
   buttonText: string;
@@ -26,6 +26,14 @@ interface LandingPageContent {
   s3Desc: string;
   s4Title: string;
   s4Desc: string;
+  // Footer
+  footerAboutTitle: string;
+  footerAboutDesc: string;
+  footerContactTitle: string;
+  footerPhone: string;
+  footerAddress: string;
+  footerWebsite: string;
+  footerFacebookUrl: string;
 }
 
 export default function LandingPage() {
@@ -43,6 +51,13 @@ export default function LandingPage() {
     s3Desc: "ทีมช่างผู้เชี่ยวชาญเฉพาะทาง แก้ปัญหาได้ตรงจุด รวดเร็ว แม่นยำ ด้วยระบบวิเคราะห์อัจฉริยะ",
     s4Title: "Service",
     s4Desc: "ศูนย์บริการรถยนต์นำเข้าและปั๊มหัวฉีดแบบครบวงจร One Stop Service ครอบคลุมแบบ 360 องศา ดูแลรักษา ซ่อม ทำสี เคลมประกัน ครบจบในที่เดียว",
+    footerAboutTitle: "เกี่ยวกับเรา",
+    footerAboutDesc: "Sahadiesel Service Center ผู้เชี่ยวชาญด้านการซ่อมบำรุงรถยนต์และระบบปั๊มหัวฉีดคอมมอนเรล ด้วยประสบการณ์กว่า 20 ปี เรามุ่งมั่นส่งมอบบริการที่ดีที่สุดให้กับลูกค้าทุกท่าน",
+    footerContactTitle: "ติดต่อเรา",
+    footerPhone: "02-XXX-XXXX",
+    footerAddress: "เขตภาษีเจริญ กรุงเทพมหานคร",
+    footerWebsite: "www.sahadiesel.com",
+    footerFacebookUrl: "https://facebook.com/sahadiesel",
   });
 
   useEffect(() => {
@@ -167,7 +182,7 @@ export default function LandingPage() {
         </section>
       </main>
 
-      <PublicFooter />
+      <PublicFooter content={content} />
     </div>
   );
 }
