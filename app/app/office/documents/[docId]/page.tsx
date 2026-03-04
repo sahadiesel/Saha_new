@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, Suspense, useState, useEffect } from "react";
@@ -311,8 +310,8 @@ function DocumentPageContent() {
     const showMultiCopy = ['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document.docType);
 
     return (
-        <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden">
-            <div className="max-w-[210mm] mx-auto space-y-6 print:m-0 print:max-w-none">
+        <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden print:overflow-visible">
+            <div className="max-w-[210mm] mx-auto space-y-6 print:space-y-0 print:m-0 print:max-w-none">
                 <div className="flex justify-between items-center bg-background p-4 rounded-lg border shadow-sm print:hidden mx-4 md:mx-0">
                     <Button variant="outline" onClick={handleBack}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
                     <div className="flex gap-2">

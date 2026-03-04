@@ -123,13 +123,14 @@
     padding: 10mm 15mm !important;
     border: none !important;
     width: 210mm !important;
-    /* Force at least one page height minus padding to keep signature at bottom */
-    min-height: 277mm !important; 
+    /* Force height enough to push signatures down but not overflow A4 (297mm) */
+    /* 260mm Content + 20mm (10mm*2) padding = 280mm Total height (Safe within 297mm) */
+    min-height: 260mm !important; 
     background: #fff !important;
     box-shadow: none !important;
     margin: 0 !important;
     box-sizing: border-box !important;
-    overflow: visible !important;
+    overflow: hidden !important; /* Prevent any stray pixels from triggering page 2 */
     display: flex !important;
     flex-direction: column !important;
   }
