@@ -16,11 +16,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck } from "lucide-react";
+import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History } from "lucide-react";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
 import type { Job } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function AdminUsersPage() {
   const { db, app: firebaseApp } = useFirebase();
@@ -29,9 +30,10 @@ export default function AdminUsersPage() {
   
   // States
   const [jobSearchTerm, setJobSearchTerm] = useState("");
+  const [searchInArchive, setSearchInArchive] = useState(false);
   const [foundJobs, setFoundJobs] = useState<Job[]>([]);
   const [isSearchingJobs, setIsSearchingJobs] = useState(false);
-  const [editingJob, setEditingPayslip] = useState<Job | null>(null);
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   // Migration & Cleanup States
@@ -46,9 +48,13 @@ export default function AdminUsersPage() {
   const handleSearchJobs = async () => {
     if (!db || !jobSearchTerm.trim()) return;
     setIsSearchingJobs(true);
+    setFoundJobs([]);
     try {
-      const q = query(collection(db, "jobs"), limit(50));
+      const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
+      // Increase limit to 1000 and sort by newest first to ensure we find problematic cases
+      const q = query(collection(db, colName), orderBy("createdAt", "desc"), limit(1000));
       const snap = await getDocs(q);
+      
       const term = jobSearchTerm.toLowerCase();
       const filtered = snap.docs
         .map(d => ({ id: d.id, ...d.data() } as Job))
@@ -56,12 +62,32 @@ export default function AdminUsersPage() {
           j.id.toLowerCase().includes(term) || 
           j.customerSnapshot?.name?.toLowerCase().includes(term) ||
           j.customerSnapshot?.phone?.includes(term) ||
-          j.salesDocNo?.toLowerCase().includes(term)
+          j.salesDocNo?.toLowerCase().includes(term) ||
+          j.description?.toLowerCase().includes(term)
         );
+      
       setFoundJobs(filtered);
-      if (filtered.length === 0) toast({ title: "ไม่พบข้อมูลงานซ่อมที่ระบุ" });
+      if (filtered.length === 0) toast({ title: "ไม่พบข้อมูลงานซ่อมที่ระบุ", description: searchInArchive ? "ลองค้นหาใน 'งานที่กำลังทำ' ดูนะคะ" : "ลองติ๊ก 'ค้นหาในประวัติ' ดูนะคะ" });
     } catch (e: any) {
-      toast({ variant: 'destructive', title: "ค้นหาล้มเหลว", description: e.message });
+      // Fallback for missing index error
+      if (e.message?.includes('requires an index')) {
+          const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
+          const qSimple = query(collection(db, colName), limit(1000));
+          const snapSimple = await getDocs(qSimple);
+          const term = jobSearchTerm.toLowerCase();
+          const filtered = snapSimple.docs
+            .map(d => ({ id: d.id, ...d.data() } as Job))
+            .filter(j => 
+              j.id.toLowerCase().includes(term) || 
+              j.customerSnapshot?.name?.toLowerCase().includes(term) ||
+              j.customerSnapshot?.phone?.includes(term) ||
+              j.salesDocNo?.toLowerCase().includes(term) ||
+              j.description?.toLowerCase().includes(term)
+            );
+          setFoundJobs(filtered);
+      } else {
+          toast({ variant: 'destructive', title: "ค้นหาล้มเหลว", description: e.message });
+      }
     } finally {
       setIsSearchingJobs(false);
     }
@@ -72,7 +98,8 @@ export default function AdminUsersPage() {
     setIsSaving(true);
     try {
       const batch = writeBatch(db);
-      const jobRef = doc(db, "jobs", jobId);
+      const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
+      const jobRef = doc(db, colName, jobId);
       
       batch.update(jobRef, {
         ...updates,
@@ -90,7 +117,7 @@ export default function AdminUsersPage() {
 
       await batch.commit();
       toast({ title: "ปรับปรุงข้อมูลสำเร็จ" });
-      setEditingPayslip(null);
+      setEditingJob(null);
       handleSearchJobs(); // Refresh list
     } catch (e: any) {
       toast({ variant: 'destructive', title: "บันทึกไม่สำเร็จ", description: e.message });
@@ -168,18 +195,30 @@ export default function AdminUsersPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="flex gap-2 max-w-xl">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="พิมพ์ชื่อลูกค้า / เบอร์โทร / เลขจ๊อบ / เลขบิล..." 
-                  className="pl-8 bg-background"
-                  value={jobSearchTerm}
-                  onChange={(e) => setJobSearchTerm(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearchJobs()}
-                />
+            <div className="flex flex-col sm:flex-row gap-4 max-w-2xl">
+              <div className="flex-1 space-y-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="พิมพ์ชื่อลูกค้า / ทะเบียน / อาการ / เลขจ๊อบ..." 
+                    className="pl-8 bg-background h-10"
+                    value={jobSearchTerm}
+                    onChange={(e) => setJobSearchTerm(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearchJobs()}
+                  />
+                </div>
+                <div className="flex items-center space-x-2 px-1">
+                  <Checkbox 
+                    id="archive-search" 
+                    checked={searchInArchive} 
+                    onCheckedChange={(v) => setSearchInArchive(!!v)} 
+                  />
+                  <Label htmlFor="archive-search" className="text-xs text-muted-foreground cursor-pointer flex items-center gap-1">
+                    <History className="h-3 w-3" /> ค้นหาในประวัติงานซ่อม (Archive)
+                  </Label>
+                </div>
               </div>
-              <Button onClick={handleSearchJobs} disabled={isSearchingJobs}>
+              <Button onClick={handleSearchJobs} disabled={isSearchingJobs} className="h-10">
                 {isSearchingJobs ? <Loader2 className="h-4 w-4 animate-spin" /> : "ค้นหาจ๊อบ"}
               </Button>
             </div>
@@ -201,6 +240,7 @@ export default function AdminUsersPage() {
                         <TableCell>
                           <div className="font-bold text-sm">{job.customerSnapshot?.name}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">{job.id}</div>
+                          <p className="text-[10px] text-muted-foreground truncate max-w-[150px]">{job.description}</p>
                         </TableCell>
                         <TableCell>
                           {job.salesDocNo ? (
@@ -212,7 +252,7 @@ export default function AdminUsersPage() {
                         </TableCell>
                         <TableCell><Badge variant="outline">{jobStatusLabel(job.status)}</Badge></TableCell>
                         <TableCell className="text-right">
-                          <Button variant="outline" size="sm" onClick={() => setEditingPayslip(job)}>
+                          <Button variant="outline" size="sm" onClick={() => setEditingJob(job)}>
                             <Wrench className="h-3 w-3 mr-1" /> แก้ไขข้อมูล
                           </Button>
                         </TableCell>
@@ -227,7 +267,7 @@ export default function AdminUsersPage() {
       )}
 
       {/* Manual Job Editor Dialog */}
-      <Dialog open={!!editingJob} onOpenChange={(o) => !o && setEditingPayslip(null)}>
+      <Dialog open={!!editingJob} onOpenChange={(o) => !o && setEditingJob(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>เครื่องมือแก้ไขจ๊อบ: {editingJob?.customerSnapshot?.name}</DialogTitle>
@@ -268,7 +308,7 @@ export default function AdminUsersPage() {
                     variant="destructive" 
                     size="sm" 
                     className="h-7 text-[10px]"
-                    disabled={!editingJob?.salesDocId}
+                    disabled={!editingJob?.salesDocNo && !editingJob?.salesDocId}
                     onClick={() => handleUpdateJobManual(editingJob!.id, {
                       salesDocId: deleteField(),
                       salesDocNo: deleteField(),
@@ -283,7 +323,7 @@ export default function AdminUsersPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditingPayslip(null)}>ปิดหน้าต่าง</Button>
+            <Button variant="ghost" onClick={() => setEditingJob(null)}>ปิดหน้าต่าง</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
