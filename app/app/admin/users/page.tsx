@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Database, AlertTriangle, CheckCircle2, XCircle, RefreshCw, Trash2, Wrench, Search, FileText, CheckCircle, RotateCcw, Ban, Link as LinkIcon, Sparkles, FileWarning } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { docStatusLabel } from "@/lib/ui-labels";
+import { docStatusLabel, jobStatusLabel } from "@/lib/ui-labels";
 import type { Document as DocumentType, Job } from "@/lib/types";
 
 export default function AdminUsersPage() {
