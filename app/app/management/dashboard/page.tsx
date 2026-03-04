@@ -18,7 +18,8 @@ import {
   isWithinInterval,
   isBefore,
   parseISO,
-  startOfDay
+  startOfDay,
+  endOfDay
 } from "date-fns";
 import { 
   BarChart, 
@@ -57,7 +58,8 @@ import { deptLabel } from "@/lib/ui-labels";
 const toDateSafe = (ts: any): Date | null => {
   if (!ts) return null;
   if (ts instanceof Date) return ts;
-  if (ts instanceof Timestamp) return ts.toDate();
+  if (typeof ts.toDate === 'function') return ts.toDate();
+  if (ts.seconds !== undefined) return new Date(ts.seconds * 1000);
   if (typeof ts === "string") {
     const d = new Date(ts);
     return isNaN(d.getTime()) ? null : d;
@@ -107,6 +109,8 @@ function AppDashboardPage() {
     to: endOfMonth(startOfToday()),
   });
 
+  const selectedYear = useMemo(() => dateRange?.from ? dateRange.from.getFullYear() : new Date().getFullYear(), [dateRange]);
+
   useEffect(() => {
     if (!db) return;
     setLoading(true);
@@ -115,9 +119,8 @@ function AppDashboardPage() {
       setJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Job)));
     });
 
-    // Fetch archived jobs for current year
-    const currentYear = new Date().getFullYear();
-    const unsubArchived = onSnapshot(collection(db, `jobsArchive_${currentYear}`), (snap) => {
+    // Fetch archived jobs for selected year
+    const unsubArchived = onSnapshot(collection(db, `jobsArchive_${selectedYear}`), (snap) => {
       setArchivedJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Job)));
     });
 
@@ -141,7 +144,7 @@ function AppDashboardPage() {
     return () => {
       unsubJobs(); unsubArchived(); unsubDocs(); unsubEntries(); unsubObligations(); unsubPurchases(); unsubCustomers();
     };
-  }, [db]);
+  }, [db, selectedYear]);
 
   const stats = useMemo(() => {
     if (!dateRange?.from || !dateRange?.to) return null;
@@ -178,8 +181,14 @@ function AppDashboardPage() {
       const mEnd = endOfMonth(mStart);
       const interval = { start: mStart, end: mEnd };
       
-      const inf = jobs.filter(j => isWithinInterval(toDateSafe(j.createdAt)!, interval)).length;
-      const outf = jobs.filter(j => isOutflow(j) && isWithinInterval(toDateSafe(j.lastActivityAt)!, interval)).length;
+      const inf = jobs.filter(j => {
+        const d = toDateSafe(j.createdAt);
+        return d && isWithinInterval(d, interval);
+      }).length;
+      const outf = jobs.filter(j => {
+        const d = toDateSafe(j.lastActivityAt);
+        return isOutflow(j) && d && isWithinInterval(d, interval);
+      }).length;
       
       return { 
         name: format(mStart, "MM/yy"), 
@@ -213,8 +222,14 @@ function AppDashboardPage() {
       const mEnd = endOfMonth(mStart);
       const interval = { start: mStart, end: mEnd };
       
-      const cin = entries.filter(e => (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') && isWithinInterval(toDateSafe(e.entryDate)!, interval)).reduce((s, e) => s + e.amount, 0);
-      const cout = entries.filter(e => e.entryType === 'CASH_OUT' && isWithinInterval(toDateSafe(e.entryDate)!, interval)).reduce((s, e) => s + e.amount, 0);
+      const cin = entries.filter(e => {
+        const d = toDateSafe(e.entryDate);
+        return (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') && d && isWithinInterval(d, interval);
+      }).reduce((s, e) => s + e.amount, 0);
+      const cout = entries.filter(e => {
+        const d = toDateSafe(e.entryDate);
+        return e.entryType === 'CASH_OUT' && d && isWithinInterval(d, interval);
+      }).reduce((s, e) => s + e.amount, 0);
       
       return { name: format(mStart, "MM/yy"), "เงินรับเข้า": cin, "เงินจ่ายออก": cout, Net: cin - cout };
     });
@@ -226,11 +241,17 @@ function AppDashboardPage() {
       const interval = { start: mStart, end: mEnd };
 
       const salesVat = documents
-        .filter(d => d.docType === 'TAX_INVOICE' && d.status !== 'CANCELLED' && isWithinInterval(parseISO(d.docDate), interval))
+        .filter(d => {
+          const dt = parseISO(d.docDate);
+          return d.docType === 'TAX_INVOICE' && d.status !== 'CANCELLED' && isWithinInterval(dt, interval);
+        })
         .reduce((sum, d) => sum + (d.vatAmount || 0), 0);
 
       const purchaseVat = purchaseDocs
-        .filter(p => p.status !== 'CANCELLED' && isWithinInterval(parseISO(p.docDate), interval))
+        .filter(p => {
+          const pt = parseISO(p.docDate);
+          return p.status !== 'CANCELLED' && isWithinInterval(pt, interval);
+        })
         .reduce((sum, p) => sum + (p.vatAmount || 0), 0);
 
       return {
@@ -241,7 +262,7 @@ function AppDashboardPage() {
       };
     });
 
-    // 6. Customer Acquisition Stats - UPDATED TO INCLUDE ARCHIVED JOBS
+    // 6. Customer Acquisition Stats (REFINED LOGIC)
     const acqCounts = {
       EXISTING: 0,
       REFERRAL: 0,
@@ -253,27 +274,29 @@ function AppDashboardPage() {
     };
 
     const periodStart = startOfDay(from);
+    const periodEnd = endOfDay(to);
     
-    // Combine Active and Archived Jobs that were opened during the period
+    // Combine ALL jobs opened in this period (Active + Archive)
     const allJobsInPeriod = [
       ...jobs.filter(j => isInPeriod(toDateSafe(j.createdAt))),
       ...archivedJobs.filter(j => isInPeriod(toDateSafe(j.createdAt)))
     ];
 
-    // Get UNIQUE customers who had jobs in this period (active or archived)
-    const customersInPeriodIds = Array.from(new Set(allJobsInPeriod.map(j => j.customerId)));
+    // Identify UNIQUE customers who had a job in this period
+    const uniqueCidsInPeriod = Array.from(new Set(allJobsInPeriod.map(j => j.customerId).filter(Boolean)));
 
-    customersInPeriodIds.forEach(cid => {
+    uniqueCidsInPeriod.forEach(cid => {
       const customer = customers.find(c => c.id === cid);
       if (!customer) return;
 
       const customerCreatedAt = toDateSafe(customer.createdAt);
 
-      // CRITICAL LOGIC: If customer was created BEFORE this period, count as EXISTING (ลูกค้าเก่า)
+      // CLASSIFY: If customer was created BEFORE the period start, they are EXISTING (ลูกค้าเก่า)
       if (customerCreatedAt && isBefore(startOfDay(customerCreatedAt), periodStart)) {
         acqCounts.EXISTING++;
       } else {
-        // Customer was created DURING this period, use source from their profile or representative job
+        // Customer was created WITHIN the period -> Use acquisition source
+        // Prefer source from the job if available, fallback to customer profile
         const representativeJob = allJobsInPeriod.find(j => j.customerId === cid);
         const rawSrc = (representativeJob?.customerAcquisitionSource || customer.acquisitionSource || 'OTHER').toString().toUpperCase();
         
@@ -424,7 +447,7 @@ function AppDashboardPage() {
                 <BarChart data={stats.last6Months}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" fontSize={12} />
-                  <YAxis fontSize={12} />
+                  <YAxis fontSize={12} tickFormatter={(v) => Number.isInteger(v) ? v : ''} />
                   <Tooltip cursor={{fill: 'transparent'}} />
                   <Legend iconType="circle" />
                   <Bar dataKey="Inflow" name="งานเข้า" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
@@ -503,6 +526,7 @@ function AppDashboardPage() {
               )}
             </div>
           </CardContent>
+        </Card>
 
         <Card className="h-full flex flex-col">
           <CardHeader>
@@ -537,7 +561,7 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>แหล่งที่มาของลูกค้า</CardTitle>
-            <CardDescription>สัดส่วนลูกค้าที่เข้าใช้บริการในช่วงเวลาที่เลือก (นับรายบุคคล)</CardDescription>
+            <CardDescription>สัดส่วนลูกค้าที่เปิดงานซ่อมในช่วงเวลานี้ (นับรวมงานในประวัติ)</CardDescription>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col justify-center">
             <div className="h-[180px]">
@@ -585,6 +609,7 @@ function AppDashboardPage() {
               ))}
             </div>
           </CardContent>
+        </Card>
 
         <Card className="h-full flex flex-col min-h-[260px]">
           <CardHeader>
@@ -634,10 +659,11 @@ export default function ManagementDashboardPage() {
           <CardContent>
             <Button asChild variant="outline"><Link href="/app/jobs">กลับไปยังหน้างาน</Link></Button>
           </CardContent>
-        </div>
+        </Card>
       </div>
     );
   }
 
   return <AppDashboardPage />;
 }
+    
