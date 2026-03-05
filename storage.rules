@@ -1,32 +1,61 @@
 rules_version = '2';
-
 service firebase.storage {
   match /b/{bucket}/o {
-    // กำหนดสิทธิ์แยกตามประเภทงานเพื่อให้ระบบตรวจสอบได้แม่นยำขึ้น
-    
-    // 1. โฟลเดอร์สำหรับอะไหล่ (Inventory Parts)
-    match /parts/{allPaths=**} {
-      allow read, write: if request.auth != null;
-    }
-    
-    // 2. โฟลเดอร์สำหรับงานซ่อม (Job Photos)
-    match /jobs/{allPaths=**} {
-      allow read, write: if request.auth != null;
-    }
-    
-    // 3. โฟลเดอร์สำหรับรายการซื้อ (Purchase Bills)
-    match /purchases/{allPaths=**} {
-      allow read, write: if request.auth != null;
-    }
-    
-    // 4. โฟลเดอร์สำหรับเงินสดหน้าร้าน (Cash Drawer Proofs)
-    match /cash-drawer/{allPaths=**} {
-      allow read, write: if request.auth != null;
+
+    function signedIn() { return request.auth != null; }
+
+    function isImageUnder5MB() {
+      return request.resource != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
 
-    // กฎสำรองสำหรับไฟล์อื่นๆ ทั้งหมด
+    // มาตรฐานใหม่: JobPhoto/{jobId}/...
+    match /JobPhoto/{jobId}/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // รูป cover/รูปงาน: jobs/{jobId}/{fileName}
+    match /jobs/{jobId}/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // รูป activity: jobs/{jobId}/activity/{fileName}
+    match /jobs/{jobId}/activity/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+    
+    // รูปเพิ่มเติมในงาน: jobs/{jobId}/photos/{fileName}
+    match /jobs/{jobId}/photos/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // อะไหล่: parts/...
+    match /parts/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // รายการซื้อ: purchases/...
+    match /purchases/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // เงินสดหน้าร้าน: cash-drawer/{sessionId}/{fileName}
+    match /cash-drawer/{sessionId}/{fileName} {
+      allow read: if signedIn();
+      allow write: if signedIn() && isImageUnder5MB();
+    }
+
+    // Default deny for other paths
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read: if signedIn();
+      allow write: if false;
     }
   }
 }
