@@ -446,6 +446,28 @@ function AccountingInboxPageContent() {
     }
   };
 
+  const handleOpenConfirmDialog = (docObj: WithId<DocumentType>) => {
+    setConfirmingDoc(docObj);
+    setSelectedPaymentDate(docObj.docDate || format(new Date(), "yyyy-MM-dd"));
+    
+    if (docObj.suggestedPayments && docObj.suggestedPayments.length > 0) {
+      setSuggestedPayments(docObj.suggestedPayments.map(p => ({ accountId: p.accountId, amount: p.amount })));
+    } else {
+      // Default to full amount in first cash account or first available
+      const defaultAccount = accounts.find(a => a.type === 'CASH') || accounts[0];
+      setSuggestedPayments([{ accountId: defaultAccount?.id || "", amount: docObj.grandTotal }]);
+    }
+    setConfirmError(null);
+  };
+
+  const handleUpdatePaymentLine = (index: number, field: 'accountId' | 'amount', value: any) => {
+    setSuggestedPayments(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
   if (authLoading) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
   }
