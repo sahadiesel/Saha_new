@@ -332,7 +332,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 )}
                 {department === 'PURCHASING' && (
                     <>
-                        <SubNavLink href="/app/office/jobs/management/by-status" label="งานตามสถานะ" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/withdraw" label="เบิกอะไหล่" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/receive" label="รับอะไหล่" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อ" onClick={onLinkClick} />
@@ -413,7 +413,9 @@ export function AppNav({ onLinkClick }: { onLinkClick?: () => void }) {
 
     const isManagementUser = useMemo(() => {
         if (!profile) return false;
-        return profile.department === "MANAGEMENT" || profile.department === "ACCOUNTING_HR" || ["ADMIN", "MANAGER"].includes(profile.role);
+        // Management users are only those in MANAGEMENT/ACHR depts OR ADMINS.
+        // Purchasing/Office managers should still see QR for their attendance unless they are Admin.
+        return profile.department === "MANAGEMENT" || profile.department === "ACCOUNTING_HR" || profile.role === "ADMIN";
     }, [profile]);
 
     const isRestrictedAdminWorker = useMemo(() => {
@@ -425,17 +427,12 @@ export function AppNav({ onLinkClick }: { onLinkClick?: () => void }) {
     const departmentsToShow = useMemo(() => {
         if (!profile) return [];
         
-        // Admins, Managers, and Management staff see all administrative departments
-        if (profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT') {
-            const depts: Department[] = ["MANAGEMENT", "OFFICE", "PURCHASING", "ACCOUNTING_HR"];
-            // If they are technically in a service department, include that too
-            if (profile.department && !depts.includes(profile.department as any)) {
-                depts.push(profile.department as any);
-            }
-            return depts;
+        // ADMIN or MANAGEMENT department sees all main administrative departments
+        if (profile.role === 'ADMIN' || profile.department === 'MANAGEMENT') {
+            return ["MANAGEMENT", "OFFICE", "PURCHASING", "ACCOUNTING_HR"];
         }
         
-        // Staff see ONLY their assigned department
+        // Staff (and Managers in specific departments) see ONLY their assigned department
         return profile.department ? [profile.department as Department] : [];
     }, [profile]);
 

@@ -23,8 +23,9 @@ export default function AppHomePage() {
     const role = profile.role;
     const department = profile.department;
 
-    // 1. Management & Admins go to Dashboard
-    if (role === 'ADMIN' || department === 'MANAGEMENT' || role === 'MANAGER') {
+    // 1. System Admins and MANAGEMENT department go to Dashboard
+    // We no longer send generic MANAGERS to dashboard to respect departmental boundaries
+    if (role === 'ADMIN' || department === 'MANAGEMENT') {
       router.replace('/app/management/dashboard');
       return;
     }
@@ -35,10 +36,18 @@ export default function AppHomePage() {
       return;
     }
 
-    // 3. Regular Department Routing
+    // 3. Regular Department Routing (Land on the most relevant operational page)
     switch (department) {
       case 'OFFICE':
         router.replace('/app/office/intake');
+        break;
+      case 'PURCHASING':
+        // Land on Job Management filtered to parts status
+        router.replace('/app/office/jobs/management/by-status?status=pending-parts');
+        break;
+      case 'ACCOUNTING_HR':
+        // Land on Accounting Inbox
+        router.replace('/app/management/accounting/inbox');
         break;
       case 'CAR_SERVICE':
         router.replace('/app/car-service/jobs/all');
