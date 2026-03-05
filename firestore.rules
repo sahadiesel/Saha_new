@@ -85,7 +85,6 @@ service cloud.firestore {
 
     // Settings
     match /settings/{docId} {
-      // Allow public read for landingPage setting so guests can see customized text
       allow read: if docId == "landingPage" || signedIn();
       allow write: if isMgmt();
     }
@@ -98,7 +97,7 @@ service cloud.firestore {
       
       match /transactions/{transId} {
         allow read: if signedIn();
-        allow create: if isOfficeOrMgmt();
+        allow create: if isOfficeOrMgmt() && request.resource.data.amount > 0;
         allow update, delete: if isMgmt();
       }
     }
@@ -106,24 +105,24 @@ service cloud.firestore {
     // Customers & Vendors
     match /customers/{id} {
       allow read: if signedIn();
-      allow create, update: if canEditJobs();
+      allow create, update: if canEditJobs() && request.resource.data.name.size() < 200;
       allow delete: if isAdmin();
     }
     match /vendors/{id} {
       allow read: if signedIn();
-      allow create, update: if canEditJobs();
+      allow create, update: if canEditJobs() && request.resource.data.companyName.size() < 200;
       allow delete: if isAdmin();
     }
 
     // Jobs & Main Documents
     match /jobs/{jobId} {
       allow read: if signedIn();
-      allow create: if signedIn() && !isViewer();
-      allow update: if canEditJobs();
+      allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4;
+      allow update: if canEditJobs() && request.resource.data.photos.size() <= 4;
       allow delete: if isMgmt();
       match /activities/{activityId} {
         allow read: if signedIn();
-        allow create: if signedIn() && !isViewer();
+        allow create: if signedIn() && !isViewer() && request.resource.data.text.size() < 5000 && (!('photos' in request.resource.data) || request.resource.data.photos.size() <= 10);
         allow update, delete: if canEditJobs();
       }
     }
@@ -140,8 +139,8 @@ service cloud.firestore {
 
     match /documents/{docId} {
       allow read: if signedIn();
-      allow create: if signedIn() && !isViewer();
-      allow update: if (isAccountingAllowed() || signedIn()) && !isViewer();
+      allow create: if signedIn() && !isViewer() && request.resource.data.items.size() <= 50;
+      allow update: if (isAccountingAllowed() || signedIn()) && !isViewer() && request.resource.data.items.size() <= 50;
       allow delete: if isAdmin();
     }
     
@@ -153,8 +152,8 @@ service cloud.firestore {
 
     match /purchaseDocs/{docId} {
       allow read: if signedIn();
-      allow create: if signedIn() && !isViewer();
-      allow update: if signedIn() && !isViewer();
+      allow create: if signedIn() && !isViewer() && request.resource.data.items.size() <= 50;
+      allow update: if signedIn() && !isViewer() && request.resource.data.items.size() <= 50;
       allow delete: if isAdmin();
     }
     
@@ -202,10 +201,6 @@ service cloud.firestore {
       allow write: if isMgmt();
     }
     
-    function isLeaveOwner(leaveId) {
-      return get(/databases/$(database)/documents/hrLeaves/$(leaveId)).data.userId == request.auth.uid;
-    }
-
     match /hrLeaves/{id} {
         allow read: if isMgmt() || (signedIn() && request.auth.uid == resource.data.userId);
         allow create: if signedIn() && !isViewer();
@@ -223,7 +218,7 @@ service cloud.firestore {
 
     match /quotationTemplates/{id} {
       allow read: if signedIn();
-      allow write: if isOfficeOrMgmt();
+      allow write: if isOfficeOrMgmt() && request.resource.data.items.size() <= 50;
     }
   }
 }

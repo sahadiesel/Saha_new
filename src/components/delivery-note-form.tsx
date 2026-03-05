@@ -40,9 +40,10 @@ import { format, parseISO } from "date-fns";
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
+import { DATA_LIMITS } from "@/lib/constants";
 
 const lineItemSchema = z.object({
-  description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ"),
+  description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ").max(DATA_LIMITS.MAX_STRING_SHORT, "ยาวเกินกำหนด"),
   quantity: z.coerce.number().min(0.01, "จำนวนต้องมากกว่า 0"),
   unitPrice: z.coerce.number().min(0, "ราคาต่อหน่วยห้ามติดลบ"),
   total: z.coerce.number(),
@@ -52,12 +53,12 @@ const deliveryNoteFormSchema = z.object({
   jobId: z.string().optional(),
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
   issueDate: z.string().min(1, "กรุณาเลือกวันที่"),
-  items: z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการ"),
+  items: z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการ").max(DATA_LIMITS.MAX_DOC_ITEMS, `ห้ามเกิน ${DATA_LIMITS.MAX_DOC_ITEMS} รายการ`),
   subtotal: z.coerce.number(),
   discountAmount: z.coerce.number().min(0).optional(),
   net: z.coerce.number(),
   grandTotal: z.coerce.number(),
-  notes: z.string().optional(),
+  notes: z.string().max(DATA_LIMITS.MAX_STRING_LONG, "ยาวเกินกำหนด").optional(),
   senderName: z.string().optional(),
   receiverName: z.string().optional(),
   isBackfill: z.boolean().default(false),
@@ -145,7 +146,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   
   const isLocked = isEditing && (docToEdit?.status === 'PAID' || docToEdit?.status === 'PENDING_REVIEW') && profile?.role !== 'ADMIN' && profile?.role !== 'MANAGER';
 
-  // Preview Document Number
   useEffect(() => {
     if (!db || isEditing || !watchedIssueDate) return;
     
@@ -159,7 +159,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
           setPreviewDocNo(result.docNo);
         }
       } catch (e: any) {
-        // Handle silenty
       }
     };
     fetchPreview();
@@ -259,7 +258,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
             
-            // CRITICAL SYNC: Ensure Job record always has the latest doc info
             const linkedJobId = data.jobId || docToEdit?.jobId;
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
@@ -303,7 +301,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   };
 
   const handleSaveWrapper = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
-    if (isProcessing) return; // ล็อคทันทีกันกดเบิ้ล
+    if (isProcessing) return;
     try {
       if (data.jobId) {
         const ok = await checkUniqueness(data.jobId);
@@ -526,11 +524,11 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
               )} />
               <div className="border rounded-md overflow-x-auto">
                 <Table>
-                  <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>รายการ (สูงสุด 50)</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>
                   <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} value={field.value ?? ''} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} value={field.value || ''} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, Math.round((v * form.getValues(`items.${index}.unitPrice`)) * 100) / 100); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} value={field.value || ''} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, Math.round((v * form.getValues(`items.${index}.quantity`)) * 100) / 100); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
                 </Table>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked || fields.length >= DATA_LIMITS.MAX_DOC_ITEMS}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
             </CardContent>
           </Card>
 
@@ -576,7 +574,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             <Alert variant="secondary" className="bg-amber-50 border-amber-200">
               <Info className="h-4 w-4 text-amber-600" />
               <AlertTitle className="text-amber-800">นโยบายระบบ</AlertTitle>
-              <AlertDescription className="text-amber-700 text-xs">หนึ่งงานซสามารถผูกใบส่งของได้เพียงฉบับเดียวเท่านั้นค่ะ</AlertDescription>
+              <AlertDescription className="text-amber-700 text-xs">หนึ่งงานสามารถผูกใบส่งของได้เพียงฉบับเดียวเท่านั้นค่ะ</AlertDescription>
             </Alert>
           </div>
           <DialogFooter className="gap-2">

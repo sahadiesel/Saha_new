@@ -1,11 +1,10 @@
-
 "use client";
 
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from 'next/link';
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -20,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { JOB_DEPARTMENTS, type JobStatus } from "@/lib/constants";
+import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
 import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
@@ -48,7 +47,6 @@ import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/e
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { restoreJobFromArchive } from "@/firebase/jobs-archive";
 
-const MAX_TOTAL_PHOTOS = 12;
 const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
 const getStatusStyles = (status: Job['status']) => {
@@ -206,7 +204,7 @@ function JobDetailsPageContent() {
     return query(collection(db, "jobs", jobId, "activities"), orderBy("createdAt", "desc"));
   }, [db, jobId, job?.isArchived, job?.closedDate]);
 
-  const { data: activities, isLoading: activitiesLoading, error: activitiesError } = useCollection<JobActivity>(activitiesQuery);
+  const { data: activities, isLoading: activitiesLoading } = useCollection<JobActivity>(activitiesQuery);
 
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
@@ -229,7 +227,6 @@ function JobDetailsPageContent() {
   const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
 
-  // Rule: Only Admin/Office/Management can edit intake photos. Technical workers cannot.
   const canEditIntakePhotos = isMgmtOrOffice && isStaff && !isViewOnly;
 
   const isAlreadyBilled = useMemo(() => {
@@ -419,6 +416,13 @@ function JobDetailsPageContent() {
     }
     if (!db || !profile || !job || !jobDocRef) return;
 
+    // Safety Limit: Check activities count
+    const activitiesCountSnap = await getCountFromServer(collection(jobDocRef, "activities"));
+    if (activitiesCountSnap.data().count >= DATA_LIMITS.MAX_ACTIVITY_LOGS) {
+        toast({ variant: "destructive", title: "รายการกิจกรรมเต็ม", description: `ไม่สามารถบันทึกเพิ่มได้เนื่องจากเกิน ${DATA_LIMITS.MAX_ACTIVITY_LOGS} รายการ กรุณาสรุปงานในช่องสมุดบันทึกแทนค่ะ` });
+        return;
+    }
+
     setIsSubmittingNote(true);
     try {
         const photoURLs: string[] = [];
@@ -457,6 +461,11 @@ function JobDetailsPageContent() {
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
+      if (newPhotos.length + files.length > DATA_LIMITS.MAX_ACTIVITY_PHOTOS) {
+          toast({ variant: "destructive", title: `เลือกรูปกิจกรรมได้สูงสุด ${DATA_LIMITS.MAX_ACTIVITY_PHOTOS} รูปต่อครั้งค่ะ` });
+          e.target.value = '';
+          return;
+      }
       setIsCompressing(true);
       try {
         for (const file of files) {
@@ -479,8 +488,8 @@ function JobDetailsPageContent() {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
     const currentPhotoCount = job?.photos?.length || 0;
-    if (currentPhotoCount + files.length > MAX_TOTAL_PHOTOS) {
-      toast({ variant: "destructive", title: `อัปโหลดรูปภาพรวมกันได้ไม่เกิน ${MAX_TOTAL_PHOTOS} รูปค่ะ` });
+    if (currentPhotoCount + files.length > DATA_LIMITS.MAX_INTAKE_PHOTOS) {
+      toast({ variant: "destructive", title: `อัปโหลดรูปภาพรวมกันได้ไม่เกิน ${DATA_LIMITS.MAX_INTAKE_PHOTOS} รูปค่ะ` });
       e.target.value = ''; return;
     }
     
@@ -590,7 +599,7 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { department: job.mainDepartment, status: 'IN_PROGRESS', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobRef, "activities")), { text: `แผนกย่อย (${deptLabel(job.department)}) ดำเนินการเสร็จสิ้น ส่งงานกลับแผนกหลัก (${deptLabel(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    batch.set(doc(collection(jobDocRef, "activities")), { text: `แผนกย่อย (${deptLabel(job.department)}) ดำเนินการเสร็จสิ้น ส่งงานกลับแผนกหลัก (${deptLabel(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => toast({ title: "ส่งงานกลับแผนกหลักเรียบร้อยแล้วค่ะ" }))
     .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
     .finally(() => setIsSubmittingNote(false));
@@ -789,7 +798,7 @@ function JobDetailsPageContent() {
                   เครื่องมือ Admin: กู้คืนงานจากประวัติ
                 </CardTitle>
                 <CardDescription className="text-amber-600 text-xs">
-                  หากงานนี้ถูกปิดโดยผิดพลาด หรือยังไม่ได้ออกใบเสร็จรับเงินจริง สามารถกู้คืนเพื่อให้ฝ่ายออฟฟิศจัดการต่อได้ค่ะ
+                  หากงานนี้ถูกปิดโดยผิดพลาด สามารถกู้คืนเพื่อให้ฝ่ายออฟฟิศจัดการต่อได้ค่ะ
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -847,7 +856,7 @@ function JobDetailsPageContent() {
               {canEditIntakePhotos && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" disabled={isAddingPhotos || isCompressing || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS}>
+                    <Button variant="outline" size="sm" disabled={isAddingPhotos || isCompressing || (job?.photos?.length || 0) >= DATA_LIMITS.MAX_INTAKE_PHOTOS}>
                       {isAddingPhotos || isCompressing ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -870,7 +879,6 @@ function JobDetailsPageContent() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {/* Hidden inputs for Quick Photo Upload */}
               <input type="file" ref={quickCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handleQuickPhotoUpload} />
               <input type="file" ref={quickGalleryRef} className="hidden" multiple accept="image/*" onChange={handleQuickPhotoUpload} />
             </CardHeader>
@@ -921,7 +929,6 @@ function JobDetailsPageContent() {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                      {/* Hidden inputs for Activity Photo Upload */}
                       <input type="file" ref={activityCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
                       <input type="file" ref={activityGalleryRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
                       
@@ -1107,14 +1114,14 @@ function JobDetailsPageContent() {
               ส่งกลับไปแก้ไข (Revert to Repair)
             </DialogTitle>
             <DialogDescription>
-              ระบุเหตุผลที่ต้องการให้ช่างดำเนินการเพิ่มเติม เพื่อบันทึกลงในระบบและเปลี่ยนสถานะงาน
+              ระบุเหตุผลที่ต้องการให้ช่างดำเนินการเพิ่มเติม
             </DialogDescription>
           </DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-2">
               <Label>เหตุผลการส่งกลับ</Label>
               <Textarea 
-                placeholder="เช่น อะไหล่ยังใส่ไม่ครบ, ลูกค้าต้องการเพิ่มรายการซ่อม..." 
+                placeholder="เช่น อะไหล่ยังใส่ไม่ครบ..." 
                 value={revertReason} 
                 onChange={(e) => setRevertReason(e.target.value)}
                 rows={4}
@@ -1139,7 +1146,7 @@ function JobDetailsPageContent() {
               ยืนยันการกู้คืนงานจากประวัติ?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะย้ายงานซ่อมชิ้นนี้จากประวัติกลับมาเป็นงานที่กำลังดำเนินการ (Active) ในสถานะ <b>"รอลูกค้ารับสินค้า"</b> เพื่อให้คุณสามารถไปออกใบเสร็จและปิดงานอย่างถูกต้องได้อีกครั้งค่ะ
+              ระบบจะย้ายงานซ่อมชิ้นนี้จากประวัติกลับมาเป็นงานที่กำลังดำเนินการ (Active)
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1161,7 +1168,7 @@ function JobDetailsPageContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>เลือกประเภทเอกสารที่ต้องการออก</AlertDialogTitle>
             <AlertDialogDescription>
-              กรุณาเลือกประเภทเอกสารเพื่อดำเนินการออกบิลสำหรับงานซ่อมของ <b>{job?.customerSnapshot.name}</b>
+              กรุณาเลือกประเภทเอกสารเพื่อดำเนินการออกบิล
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex flex-col sm:flex-row gap-2">

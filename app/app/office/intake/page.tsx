@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { JOB_DEPARTMENTS } from "@/lib/constants";
+import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
 import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
@@ -31,7 +31,6 @@ import { deptLabel } from "@/lib/ui-labels";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
-const MAX_INTAKE_PHOTOS = 8;
 const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
 // Helper function to compress image step by step
@@ -87,28 +86,26 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
   });
 };
 
-// Updated Schema to enforce all fields based on department
 const intakeSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
   department: z.enum(JOB_DEPARTMENTS, { required_error: "กรุณาเลือกแผนก" }),
-  description: z.string().min(1, "กรุณากรอกรายละเอียดงาน"),
+  description: z.string().min(1, "กรุณากรอกรายละเอียดงาน").max(DATA_LIMITS.MAX_STRING_LONG, `รายละเอียดต้องไม่เกิน ${DATA_LIMITS.MAX_STRING_LONG} ตัวอักษร`),
   carServiceDetails: z.object({
-    brand: z.string().optional(),
-    model: z.string().optional(),
-    licensePlate: z.string().optional(),
+    brand: z.string().optional().default(""),
+    model: z.string().optional().default(""),
+    licensePlate: z.string().optional().default(""),
   }).optional(),
   commonrailDetails: z.object({
-    brand: z.string().optional(),
-    partNumber: z.string().optional(),
-    registrationNumber: z.string().optional(),
+    brand: z.string().optional().default(""),
+    partNumber: z.string().optional().default(""),
+    registrationNumber: z.string().optional().default(""),
   }).optional(),
   mechanicDetails: z.object({
-    brand: z.string().optional(),
-    partNumber: z.string().optional(),
-    registrationNumber: z.string().optional(),
+    brand: z.string().optional().default(""),
+    partNumber: z.string().optional().default(""),
+    registrationNumber: z.string().optional().default(""),
   }).optional(),
 }).superRefine((data, ctx) => {
-  // Enforce all fields for CAR_SERVICE
   if (data.department === 'CAR_SERVICE') {
     if (!data.carServiceDetails?.brand?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อรถ", path: ['carServiceDetails', 'brand'] });
@@ -120,7 +117,6 @@ const intakeSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุทะเบียนรถ", path: ['carServiceDetails', 'licensePlate'] });
     }
   }
-  // Enforce all fields for COMMONRAIL
   if (data.department === 'COMMONRAIL') {
     if (!data.commonrailDetails?.brand?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อ", path: ['commonrailDetails', 'brand'] });
@@ -132,7 +128,6 @@ const intakeSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุเลขทะเบียนชิ้นส่วน", path: ['commonrailDetails', 'registrationNumber'] });
     }
   }
-  // Enforce all fields for MECHANIC
   if (data.department === 'MECHANIC') {
     if (!data.mechanicDetails?.brand?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "กรุณาระบุยี่ห้อ", path: ['mechanicDetails', 'brand'] });
@@ -178,9 +173,7 @@ export default function IntakePage() {
   const selectedDepartment = form.watch("department");
 
   const filteredCustomers = useMemo(() => {
-    if (!customerSearch) {
-      return customers;
-    }
+    if (!customerSearch) return customers;
     return customers.filter(
       (customer) =>
         customer.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
@@ -209,8 +202,8 @@ export default function IntakePage() {
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
-      if (photos.length + newFiles.length > MAX_INTAKE_PHOTOS) {
-        toast({ variant: "destructive", title: `คุณสามารถอัปโหลดรูปภาพได้สูงสุด ${MAX_INTAKE_PHOTOS} รูปเท่านั้น` });
+      if (photos.length + newFiles.length > DATA_LIMITS.MAX_INTAKE_PHOTOS) {
+        toast({ variant: "destructive", title: `คุณสามารถอัปโหลดรูปภาพได้สูงสุด ${DATA_LIMITS.MAX_INTAKE_PHOTOS} รูปเท่านั้น` });
         e.target.value = '';
         return;
       }
@@ -266,7 +259,6 @@ export default function IntakePage() {
         const jobDocRef = doc(collection(db, "jobs"));
         const jobId = jobDocRef.id;
 
-        // Upload photos with error handling
         for (const photo of photos) {
             try {
                 const photoRef = ref(storage, `jobs/${jobId}/${Date.now()}-${photo.name || 'blob'}`);
@@ -324,14 +316,12 @@ export default function IntakePage() {
         
         toast({ title: "สร้างใบงานสำเร็จ", description: `รหัสงาน: ${jobId}` });
         
-        // Final state cleanup
-        const currentPreviews = [...photoPreviews];
         form.reset();
         setPhotos([]);
         setPhotoPreviews([]);
         setCustomerSearch("");
         
-        currentPreviews.forEach(url => {
+        photoPreviews.forEach(url => {
             try { URL.revokeObjectURL(url); } catch (e) {}
         });
 
@@ -353,7 +343,7 @@ export default function IntakePage() {
 
   return (
     <>
-      <PageHeader title="เปิดงานใหม่" description="สร้างใบงานใหม่สำหรับลูกค้าในระบบ (จำเป็นต้องกรอกข้อมูลให้ครบทุกช่องและแนบรูป)" />
+      <PageHeader title="เปิดงานใหม่" description={`สร้างใบงานใหม่ (แนบรูปประกอบได้สูงสุด ${DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป)`} />
       <Card>
         <CardContent className="pt-6">
           <Form {...form}>
@@ -548,14 +538,14 @@ export default function IntakePage() {
               <FormField name="description" control={form.control} render={({ field }) => (
                 <FormItem>
                   <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม (Description) <span className="text-destructive">*</span></FormLabel>
-                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย หรือสิ่งที่ลูกค้าต้องการให้ทำ..." rows={5} {...field} disabled={isViewer || isSubmitting || isCompressing} /></FormControl>
+                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย..." rows={5} {...field} disabled={isViewer || isSubmitting || isCompressing} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
 
               <FormItem>
                 <FormLabel className="flex items-center gap-2">
-                  รูปภาพประกอบ (ต้องมีอย่างน้อย 1 รูป) <span className="text-destructive">*</span>
+                  รูปภาพประกอบ (สูงสุด {DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป) <span className="text-destructive">*</span>
                   {photos.length > 0 && <Badge variant="secondary" className="bg-green-100 text-green-700 h-5">เลือกแล้ว {photos.length} รูป</Badge>}
                 </FormLabel>
                 <div className="space-y-4">
@@ -564,7 +554,7 @@ export default function IntakePage() {
                           type="button"
                           variant="outline" 
                           className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
+                          disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
                           onClick={() => cameraInputRef.current?.click()}
                         >
                             {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <Camera className="h-8 w-8 text-primary" />}
@@ -583,7 +573,7 @@ export default function IntakePage() {
                           type="button" 
                           variant="outline" 
                           className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
+                          disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
                           onClick={() => galleryInputRef.current?.click()}
                         >
                             {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <ImageIcon className="h-8 w-8 text-primary" />}
@@ -619,15 +609,9 @@ export default function IntakePage() {
               <div className="pt-4">
                 <Button type="submit" className="w-full h-12 text-lg font-semibold" disabled={isSubmitting || isViewer || isCompressing}>
                   {isSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      กำลังบันทึกและอัปโหลด...
-                    </>
+                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" />กำลังบันทึก...</>
                   ) : isCompressing ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      กำลังประมวลผลรูปภาพ...
-                    </>
+                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" />กำลังลดขนาดรูป...</>
                   ) : isViewer ? "คุณไม่มีสิทธิ์สร้างใบงาน" : "สร้างใบงาน (Create Job)"}
                 </Button>
               </div>
