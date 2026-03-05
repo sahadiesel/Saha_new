@@ -18,9 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, Package, MapPin, ImageIcon } from "lucide-react";
+import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, Package, MapPin, ImageIcon, Info } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import Image from "next/image";
 import type { Part, PartCategory, Vendor } from "@/lib/types";
@@ -32,7 +32,6 @@ const partSchema = z.object({
   name: z.string().min(1, "กรุณากรอกชื่ออะไหล่"),
   categoryId: z.string().min(1, "กรุณาเลือกหมวดหมู่"),
   vendorId: z.string().min(1, "กรุณาเลือกผู้ขาย"),
-  costPrice: z.coerce.number().min(0, "ห้ามติดลบ"),
   sellingPrice: z.coerce.number().min(0, "ห้ามติดลบ"),
   stockQty: z.coerce.number().min(0, "ห้ามติดลบ"),
   location: z.string().optional().default(""),
@@ -68,7 +67,6 @@ export default function PartsInventoryPage() {
       name: "",
       categoryId: "",
       vendorId: "",
-      costPrice: 0,
       sellingPrice: 0,
       stockQty: 0,
       location: "",
@@ -97,14 +95,13 @@ export default function PartsInventoryPage() {
         name: editingPart.name,
         categoryId: editingPart.categoryId,
         vendorId: editingPart.vendorId,
-        costPrice: editingPart.costPrice,
         sellingPrice: editingPart.sellingPrice,
         stockQty: editingPart.stockQty,
         location: editingPart.location || "",
       });
       setPhotoPreview(editingPart.imageUrl || null);
     } else {
-      form.reset({ code: "", name: "", categoryId: "", vendorId: "", costPrice: 0, sellingPrice: 0, stockQty: 0, location: "" });
+      form.reset({ code: "", name: "", categoryId: "", vendorId: "", sellingPrice: 0, stockQty: 0, location: "" });
       setPhotoPreview(null);
       setPhoto(null);
     }
@@ -141,6 +138,7 @@ export default function PartsInventoryPage() {
         updatedAt: serverTimestamp(),
         createdByUid: profile.uid,
         createdByName: profile.displayName,
+        costPrice: editingPart?.costPrice || 0, // Preserve avg cost
       };
 
       if (editingPart) {
@@ -213,7 +211,7 @@ export default function PartsInventoryPage() {
                   <TableHead className="w-20">รูป</TableHead>
                   <TableHead>รหัส / ชื่อสินค้า</TableHead>
                   <TableHead>หมวดหมู่</TableHead>
-                  <TableHead className="text-right">ราคาทุน</TableHead>
+                  <TableHead className="text-right">ต้นทุนเฉลี่ย</TableHead>
                   <TableHead className="text-right">ราคาขาย</TableHead>
                   <TableHead className="text-right">สต็อก</TableHead>
                   <TableHead>ตำแหน่ง</TableHead>
@@ -240,7 +238,7 @@ export default function PartsInventoryPage() {
                         <p className="text-sm">{part.name}</p>
                       </TableCell>
                       <TableCell><Badge variant="outline">{part.categoryNameSnapshot}</Badge></TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">฿{part.costPrice.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">฿{(part.costPrice || 0).toLocaleString()}</TableCell>
                       <TableCell className="text-right font-bold text-primary">฿{part.sellingPrice.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
                         <Badge variant={part.stockQty > 5 ? "secondary" : "destructive"}>{part.stockQty}</Badge>
@@ -336,15 +334,21 @@ export default function PartsInventoryPage() {
                     )} />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 border-t pt-4">
-                    <FormField name="costPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel>ราคาทุน (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
-                    <FormField name="sellingPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel className="text-primary font-bold">ราคาขาย (บาท)</FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
+                  <div className="grid grid-cols-1 gap-4 border-t pt-4">
+                    <FormField name="sellingPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel className="text-primary font-bold">ราคาขาย (บาท) <span className="text-destructive">*</span></FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField name="stockQty" control={form.control} render={({ field }) => (<FormItem><FormLabel>สต็อกเริ่มต้น</FormLabel><FormControl><Input type="number" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
                     <FormField name="location" control={form.control} render={({ field }) => (<FormItem><FormLabel>ชั้นจัดเก็บ (Location)</FormLabel><FormControl><Input placeholder="เช่น A1-02" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
                   </div>
+
+                  <Alert className="bg-blue-50 border-blue-200">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <AlertDescription className="text-[10px] text-blue-700">
+                      ราคาทุนจะถูกคำนวณแบบถัวเฉลี่ยถ่วงน้ำหนักโดยอัตโนมัติจากรายการซื้อในระบบค่ะ
+                    </AlertDescription>
+                  </Alert>
                 </div>
               </div>
               <DialogFooter>

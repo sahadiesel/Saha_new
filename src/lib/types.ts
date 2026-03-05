@@ -727,6 +727,8 @@ export interface AccountingObligation {
 }
 
 export interface PurchaseDocItem {
+  partId?: string;
+  code?: string;
   description: string;
   quantity: number;
   unitPrice: number;
