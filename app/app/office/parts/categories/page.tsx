@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -12,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, PlusCircle, Trash2, Tags } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Tags, Save } from "lucide-react";
 import type { PartCategory } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import {
