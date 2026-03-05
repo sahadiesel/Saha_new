@@ -44,10 +44,10 @@ const allocationSchema = z.object({
   invoiceDocNo: z.string(),
   grossRemaining: z.coerce.number(),
   withTax: z.boolean().default(false),
-  netCashApplied: z.coerce.number().min(0, "ยอดเงินห้ามติดลบ"),
+  grossApplied: z.coerce.number().min(0, "ยอดตัดหนี้ห้ามติดลบ"),
   withholdingPercent: z.coerce.number().min(0).max(100).optional(),
   withholdingAmount: z.coerce.number().min(0).optional(),
-  grossApplied: z.coerce.number().min(0),
+  netCashApplied: z.coerce.number().min(0),
 });
 
 const confirmReceiptSchema = z.object({
@@ -58,16 +58,17 @@ const confirmReceiptSchema = z.object({
 }).refine(
   (data) => {
     const totalNetApplied = data.allocations.reduce((sum, alloc) => sum + (alloc.netCashApplied || 0), 0);
-    return Math.abs(totalNetApplied - data.netReceivedTotal) < 0.01;
+    // Allow for small rounding differences (0.05 baht)
+    return Math.abs(totalNetApplied - data.netReceivedTotal) < 0.06;
   },
   {
-    message: "ยอดเงินที่จัดสรรรวมต้องเท่ากับยอดรับโอนจริง",
+    message: "ยอดเงินที่จัดสรรรวมต้องเท่ากับยอดรับโอนจริง (ตรวจสอบยอดเงินที่ยังไม่ได้ระบุที่ท้ายตารางค่ะ)",
     path: ["netReceivedTotal"],
   }
 ).refine(
     (data) => data.allocations.every(alloc => alloc.grossApplied <= alloc.grossRemaining + 0.05), 
     {
-        message: "มียอดจัดสรรรวม (เงินสด+WHT) เกินยอดค้างชำระของบิลอ้างอิง",
+        message: "มียอดตัดหนี้รวม (Gross) เกินยอดค้างชำระของบิลอ้างอิง",
         path: ["allocations"],
     }
 );
@@ -132,16 +133,22 @@ function ConfirmReceiptPageContent() {
         let fetchedObligations: Record<string, WithId<AccountingObligation>> = {};
 
         if (invoiceIds.length > 0) {
-            // First check if any reference is a Billing Note
-            const firstRefId = invoiceIds[0];
-            const sourceDocSnap = await getDoc(doc(db, 'documents', firstRefId));
-            if (sourceDocSnap.exists() && sourceDocSnap.data().docType === 'BILLING_NOTE') {
-                invoiceIds = sourceDocSnap.data().invoiceIds || [];
-            }
+            // Check if referring to Billing Notes or Invoices
+            const sourceDocsQuery = query(collection(db, "documents"), where("__name__", "in", invoiceIds));
+            const sourceDocsSnap = await getDocs(sourceDocsQuery);
+            
+            let allRelevantInvoiceIds: string[] = [];
+            sourceDocsSnap.docs.forEach(d => {
+                if (d.data().docType === 'BILLING_NOTE') {
+                    allRelevantInvoiceIds = [...allRelevantInvoiceIds, ...(d.data().invoiceIds || [])];
+                } else {
+                    allRelevantInvoiceIds.push(d.id);
+                }
+            });
 
-            if (invoiceIds.length > 0) {
-                const invoicesQuery = query(collection(db, "documents"), where("__name__", "in", invoiceIds));
-                const obligationsQuery = query(collection(db, 'accountingObligations'), where('sourceDocId', 'in', invoiceIds));
+            if (allRelevantInvoiceIds.length > 0) {
+                const invoicesQuery = query(collection(db, "documents"), where("__name__", "in", allRelevantInvoiceIds));
+                const obligationsQuery = query(collection(db, 'accountingObligations'), where('sourceDocId', 'in', allRelevantInvoiceIds));
                 
                 const [invoicesSnap, obligationsSnap] = await Promise.all([
                     getDocs(invoicesQuery),
@@ -161,34 +168,34 @@ function ConfirmReceiptPageContent() {
         const accountsData = accountsSnap.docs.map(d => ({id: d.id, ...d.data()}) as WithId<AccountingAccount>);
         setAccounts(accountsData);
         
-        // Calculate Estimated Net Cash (Gross - 3% WHT on pre-vat)
-        const estimatedNetTotal = fetchedInvoices.reduce((sum, inv) => {
+        // Initial setup of allocations based on the outstanding debt
+        const initialAllocations = fetchedInvoices.map(inv => {
             const ob = fetchedObligations[inv.id];
             const grossRemaining = Math.round((ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal) * 100) / 100;
             const whtRate = inv.docType === 'TAX_INVOICE' ? 0.03 : 0;
             const whtBase = inv.withTax ? (grossRemaining / 1.07) : grossRemaining;
             const whtAmount = Math.round(whtBase * whtRate * 100) / 100;
-            return sum + (grossRemaining - whtAmount);
-        }, 0);
+            const netCash = Math.round((grossRemaining - whtAmount) * 100) / 100;
+
+            return {
+                invoiceId: inv.id,
+                invoiceDocNo: inv.docNo,
+                grossRemaining,
+                withTax: inv.withTax ?? false,
+                grossApplied: grossRemaining,
+                withholdingPercent: inv.docType === 'TAX_INVOICE' ? 3 : 0,
+                withholdingAmount: whtAmount,
+                netCashApplied: netCash,
+            };
+        });
+
+        const totalNet = initialAllocations.reduce((sum, a) => sum + a.netCashApplied, 0);
 
         form.reset({
             accountId: receiptData.receivedAccountId || accountsData[0]?.id || "",
             paymentDate: receiptData.paymentDate || format(new Date(), "yyyy-MM-dd"),
-            netReceivedTotal: Math.round(estimatedNetTotal * 100) / 100,
-            allocations: fetchedInvoices.map(inv => {
-                const ob = fetchedObligations[inv.id];
-                const grossRemaining = Math.round((ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal) * 100) / 100;
-                return {
-                    invoiceId: inv.id,
-                    invoiceDocNo: inv.docNo,
-                    grossRemaining,
-                    withTax: inv.withTax ?? false,
-                    netCashApplied: 0,
-                    withholdingAmount: 0,
-                    withholdingPercent: inv.docType === 'TAX_INVOICE' ? 3 : 0,
-                    grossApplied: 0,
-                };
-            })
+            netReceivedTotal: Math.round(totalNet * 100) / 100,
+            allocations: initialAllocations
         });
 
       } catch (err: any) {
@@ -200,58 +207,9 @@ function ConfirmReceiptPageContent() {
     fetchData();
   }, [db, receiptId, form]);
   
-  const handleAutoAllocate = useCallback(() => {
-    const totalCashToReceive = form.getValues('netReceivedTotal');
-    let remainingCashToAllocate = totalCashToReceive;
-    const currentAllocations = form.getValues('allocations');
-    
-    // Sort by date to pay oldest first
-    const sortedAllocations = [...currentAllocations].sort((a,b) => {
-        const invA = invoices.find(i => i.id === a.invoiceId);
-        const invB = invoices.find(i => i.id === b.invoiceId);
-        return new Date(invA?.docDate || 0).getTime() - new Date(invB?.docDate || 0).getTime();
-    });
-
-    const newAllocations = sortedAllocations.map(alloc => {
-      const { grossRemaining, withTax, withholdingPercent = 0 } = alloc;
-      
-      const rate = withholdingPercent / 100;
-      const factor = withTax ? (1 - (rate / 1.07)) : (1 - rate);
-      
-      const maxCashForThisInv = Math.round((grossRemaining * factor) * 100) / 100;
-      const cashForThisInv = Math.min(remainingCashToAllocate, maxCashForThisInv);
-      
-      const grossApplied = Math.round((cashForThisInv / factor) * 100) / 100;
-      const whtBase = withTax ? (grossApplied / 1.07) : grossApplied;
-      const whtAmount = Math.round((whtBase * rate) * 100) / 100;
-      
-      remainingCashToAllocate = Math.round((remainingCashToAllocate - cashForThisInv) * 100) / 100;
-      
-      return { 
-        ...alloc, 
-        netCashApplied: cashForThisInv, 
-        withholdingAmount: whtAmount, 
-        grossApplied: grossApplied 
-      };
-    });
-
-    newAllocations.forEach(newAlloc => {
-        const originalIndex = form.getValues('allocations').findIndex(a => a.invoiceId === newAlloc.invoiceId);
-        if (originalIndex !== -1) {
-            update(originalIndex, newAlloc);
-        }
-    });
-
-    if (remainingCashToAllocate > 0.01) {
-        toast({
-            title: "มียอดจัดสรรไม่ครบ",
-            description: `ยังมีเงินเหลือ ${formatCurrency(remainingCashToAllocate)} บาท ที่ยังไม่ได้ระบุลงในบิล`,
-        });
-    }
-  }, [form, invoices, toast, update]);
-
+  // Logic to recalculate line Net based on Gross and WHT %
   useEffect(() => {
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value, { name }) => {
       if (name && name.startsWith('allocations')) {
         const parts = name.split('.');
         if (parts.length >= 2) {
@@ -259,36 +217,23 @@ function ConfirmReceiptPageContent() {
           const currentAlloc = form.getValues(`allocations.${index}`);
           if (!currentAlloc) return;
           
-          let { netCashApplied, withholdingPercent, withholdingAmount, grossApplied, withTax } = currentAlloc;
-          netCashApplied = Number(netCashApplied) || 0;
+          let { grossApplied, withholdingPercent, withTax } = currentAlloc;
+          grossApplied = Number(grossApplied) || 0;
           withholdingPercent = Number(withholdingPercent) || 0;
+          
           const rate = withholdingPercent / 100;
+          const whtBase = withTax ? (grossApplied / 1.07) : grossApplied;
+          const whtAmount = Math.round(whtBase * rate * 100) / 100;
+          const netCash = Math.round((grossApplied - whtAmount) * 100) / 100;
 
-          if (parts[2] === 'netCashApplied' || parts[2] === 'withholdingPercent') {
-             const factor = withTax ? (1 - (rate / 1.07)) : (1 - rate);
-             grossApplied = Math.round((netCashApplied / factor) * 100) / 100;
-             const whtBase = withTax ? (grossApplied / 1.07) : grossApplied;
-             withholdingAmount = Math.round((whtBase * rate) * 100) / 100;
-             // Sync net back to ensure precision
-             netCashApplied = Math.round((grossApplied - withholdingAmount) * 100) / 100;
-          } 
-          else if (parts[2] === 'withholdingAmount') {
-             grossApplied = Math.round((netCashApplied + withholdingAmount) * 100) / 100;
-             const whtBase = withTax ? (grossApplied / 1.07) : grossApplied;
-             if (whtBase > 0) {
-                withholdingPercent = Math.round(((withholdingAmount / whtBase) * 100) * 10000) / 10000;
-             } else {
-                withholdingPercent = 0;
-             }
+          // Only update if something changed to prevent loops
+          if (currentAlloc.withholdingAmount !== whtAmount || currentAlloc.netCashApplied !== netCash) {
+              update(index, {
+                ...currentAlloc,
+                withholdingAmount: whtAmount,
+                netCashApplied: netCash,
+              });
           }
-
-          update(index, {
-            ...currentAlloc,
-            netCashApplied: Number(netCashApplied),
-            withholdingPercent: Number(Number(withholdingPercent).toFixed(4)),
-            withholdingAmount: Number(Number(withholdingAmount).toFixed(2)),
-            grossApplied: Number(Number(grossApplied).toFixed(2)),
-          });
         }
       }
     });
@@ -314,8 +259,7 @@ function ConfirmReceiptPageContent() {
             const receiptSnap = await transaction.get(receiptRef);
             
             if (!receiptSnap.exists()) throw new Error("ไม่พบใบเสร็จในระบบ");
-            
-            if (receiptSnap.data().status === 'CONFIRMED' || receiptSnap.data().receiptStatus === 'CONFIRMED' || receiptSnap.data().accountingEntryId) {
+            if (receiptSnap.data().status === 'CONFIRMED' || receiptSnap.data().accountingEntryId) {
                 throw new Error("รายการนี้ถูกยืนยันไปก่อนหน้านี้แล้ว");
             }
 
@@ -325,7 +269,6 @@ function ConfirmReceiptPageContent() {
 
             const arPaymentId = `ARPAY_${receipt.id}`;
             const arPaymentRef = doc(db, 'arPayments', arPaymentId);
-            
             const entryId = `RECEIPT_${receipt.id}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
 
@@ -349,12 +292,13 @@ function ConfirmReceiptPageContent() {
             transaction.set(entryRef, {
                 entryType: 'RECEIPT',
                 entryDate: data.paymentDate,
-                amount: data.netReceivedTotal, // ACTUAL CASH RECEIVED
+                amount: data.netReceivedTotal,
                 accountId: data.accountId,
                 paymentMethod: paymentMethod,
                 sourceDocType: 'RECEIPT',
                 sourceDocId: receipt.id,
                 sourceDocNo: receipt.docNo,
+                customerNameSnapshot: receipt.customerSnapshot?.name,
                 createdAt: serverTimestamp(),
             });
             
@@ -373,6 +317,13 @@ function ConfirmReceiptPageContent() {
                 updatedAt: serverTimestamp(),
             });
             
+            // Update individual Invoices and parent Billing Note
+            const parentReferenceIds = receipt.referencesDocIds || [];
+            for (const refId of parentReferenceIds) {
+                const docRef = doc(db, 'documents', refId);
+                transaction.update(docRef, { status: 'PAID', updatedAt: serverTimestamp() });
+            }
+
             for (const alloc of data.allocations) {
                 if (alloc.grossApplied > 0) {
                     const ob = obligations[alloc.invoiceId];
@@ -401,24 +352,15 @@ function ConfirmReceiptPageContent() {
                             updatedAt: serverTimestamp(),
                         });
 
-                        // SYNC: If document is fully paid, also close the linked job
                         if (newStatus === 'PAID' && ob.jobId) {
                             const jobRef = doc(db, 'jobs', ob.jobId);
-                            transaction.update(jobRef, {
-                                status: 'CLOSED',
-                                updatedAt: serverTimestamp(),
-                                lastActivityAt: serverTimestamp()
-                            });
-
-                            // LOG ACTIVITY: Final payment confirmed and job closed
-                            const activityRef = doc(collection(jobRef, 'activities'));
-                            transaction.set(activityRef, {
-                                text: `ฝ่ายบัญชียืนยันรับเงินตามใบเสร็จ ${receipt.docNo} (ชำระครบถ้วน) และปิดงานเรียบร้อยค่ะ`,
+                            transaction.update(jobRef, { status: 'CLOSED', updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
+                            transaction.set(doc(collection(jobRef, 'activities')), {
+                                text: `ฝ่ายบัญชียืนยันรับเงินตามใบเสร็จ ${receipt.docNo} และปิดงานเรียบร้อยค่ะ`,
                                 userName: profile.displayName,
                                 userId: profile.uid,
                                 createdAt: serverTimestamp()
                             });
-
                             jobsToArchive.push(ob.jobId);
                         }
                     }
@@ -427,17 +369,15 @@ function ConfirmReceiptPageContent() {
         });
         
         if (jobsToArchive.length > 0) {
-            const uniqueJobs = Array.from(new Set(jobsToArchive));
-            for (const jId of uniqueJobs) {
-                const functions = getFunctions(firebaseApp!, 'us-central1');
-                const closeJob = httpsCallable(functions, "closeJobAfterAccounting");
+            const functions = getFunctions(firebaseApp!, 'us-central1');
+            const closeJob = httpsCallable(functions, "closeJobAfterAccounting");
+            for (const jId of Array.from(new Set(jobsToArchive))) {
                 await closeJob({ jobId: jId, paymentStatus: 'PAID' }).catch(e => console.error("Archive error", e));
             }
         }
 
-        toast({ title: "ยืนยันการรับเงินสำเร็จ", description: jobsToArchive.length > 0 ? `ปิดงานซ่อมที่เกี่ยวข้อง ${jobsToArchive.length} รายการเรียบร้อยค่ะ` : "" });
+        toast({ title: "ยืนยันการรับเงินสำเร็จ", description: "ข้อมูลบัญชีและลูกหนี้ถูกปรับปรุงเรียบร้อยแล้วค่ะ" });
         router.push('/app/management/accounting/inbox');
-
     } catch (err: any) {
         toast({ variant: 'destructive', title: "ไม่สามารถยืนยันได้", description: err.message });
     } finally {
@@ -467,7 +407,7 @@ function ConfirmReceiptPageContent() {
                 </div>
                 
                 <Card>
-                    <CardHeader><CardTitle className="text-base">1. สรุปยอดรับเงิน</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-base">1. สรุปยอดเงินโอน (Actual Received)</CardTitle></CardHeader>
                     <CardContent className="grid md:grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -478,25 +418,14 @@ function ConfirmReceiptPageContent() {
                               <Popover>
                                 <PopoverTrigger asChild>
                                   <FormControl>
-                                    <Button
-                                      variant={"outline"}
-                                      className={cn(
-                                        "w-full pl-3 text-left font-normal",
-                                        !field.value && "text-muted-foreground"
-                                      )}
-                                    >
+                                    <Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>
                                       {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
                                       <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
                                     </Button>
                                   </FormControl>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto p-0" align="start">
-                                  <Calendar
-                                    mode="single"
-                                    selected={field.value ? parseISO(field.value) : undefined}
-                                    onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
-                                    initialFocus
-                                  />
+                                  <Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus />
                                 </PopoverContent>
                               </Popover>
                               <FormMessage />
@@ -529,15 +458,13 @@ function ConfirmReceiptPageContent() {
                 <Card>
                     <CardHeader className="flex flex-row justify-between items-center">
                         <CardTitle className="text-base">2. จัดสรรยอดเงินตามบิล</CardTitle>
-                        <Button type="button" variant="secondary" onClick={handleAutoAllocate}><Calculator className="mr-2 h-4 w-4"/> จัดสรรอัตโนมัติ</Button>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Alert variant="secondary" className="bg-blue-50 border-blue-200">
                             <Info className="h-4 w-4 text-blue-600" />
-                            <AlertTitle className="text-blue-800">คำแนะนำการคำนวณหัก ณ ที่จ่าย</AlertTitle>
+                            <AlertTitle className="text-blue-800">คำแนะนำการหัก ณ ที่จ่าย</AlertTitle>
                             <AlertDescription className="text-blue-700 text-xs">
-                                สำหรับบิลใบกำกับภาษี (VAT 7%) ระบบจะคำนวณภาษีหัก ณ ที่จ่ายจาก **ยอดก่อน VAT** ให้อัตโนมัติค่ะ 
-                                (ยอดเงินรับจริง = ยอดรวมบิล - ยอดหัก ณ ที่จ่าย)
+                                สำหรับบิลที่มียอด VAT 7% ระบบจะคำนวณภาษีหัก ณ ที่จ่ายจาก **ยอดก่อน VAT** ให้อัตโนมัติเมื่อระบุ % ค่ะ
                             </AlertDescription>
                         </Alert>
 
@@ -545,12 +472,12 @@ function ConfirmReceiptPageContent() {
                             <Table>
                                 <TableHeader>
                                     <TableRow className="bg-muted/50">
-                                        <TableHead className="min-w-[150px]">เลขที่ Invoice</TableHead>
+                                        <TableHead>เลขที่ Invoice</TableHead>
                                         <TableHead className="text-right">ยอดค้างบิล</TableHead>
-                                        <TableHead className="w-32 text-right">รับจริง (Net)</TableHead>
                                         <TableHead className="w-20 text-right">หัก (%)</TableHead>
                                         <TableHead className="w-32 text-right">ยอด WHT</TableHead>
-                                        <TableHead className="w-32 text-right">ตัดหนี้รวม (Gross)</TableHead>
+                                        <TableHead className="w-40 text-right">ตัดหนี้รวม (Gross)</TableHead>
+                                        <TableHead className="w-32 text-right">ยอดเงินโอน (Net)</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -559,23 +486,23 @@ function ConfirmReceiptPageContent() {
                                             <TableCell>
                                                 <div className="flex flex-col">
                                                     <span className="font-bold text-sm">{field.invoiceDocNo}</span>
-                                                    {field.withTax && <Badge variant="outline" className="w-fit text-[8px] h-3 px-1 border-blue-200 text-blue-600">VAT 7%</Badge>}
+                                                    {field.withTax && <Badge variant="outline" className="w-fit text-[8px] h-3 px-1 border-blue-200 text-blue-600 uppercase">Vat 7%</Badge>}
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-right text-xs font-mono">{formatCurrency(field.grossRemaining)}</TableCell>
-                                            <TableCell><FormField control={form.control} name={`allocations.${index}.netCashApplied`} render={({ field }) => (<Input type="number" className="text-right h-8 font-bold" {...field} />)} /></TableCell>
                                             <TableCell><FormField control={form.control} name={`allocations.${index}.withholdingPercent`} render={({ field }) => (<Input type="number" className="text-right h-8" {...field} placeholder="3"/>)} /></TableCell>
                                             <TableCell className="text-right text-xs text-destructive font-medium">-{formatCurrency(watchedAllocations[index]?.withholdingAmount || 0)}</TableCell>
-                                            <TableCell className="text-right font-bold text-primary">{formatCurrency(watchedAllocations[index]?.grossApplied || 0)}</TableCell>
+                                            <TableCell><FormField control={form.control} name={`allocations.${index}.grossApplied`} render={({ field }) => (<Input type="number" className="text-right h-8 font-bold" {...field} />)} /></TableCell>
+                                            <TableCell className="text-right font-bold text-primary">{formatCurrency(watchedAllocations[index]?.netCashApplied || 0)}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
                                 <TableFooter>
                                     <TableRow className="bg-muted/20">
                                         <TableCell colSpan={4} className="text-xs text-muted-foreground italic">
-                                            ยอดเงินที่ยังไม่ได้ระบุลงในบิล (Unallocated Cash):
+                                            ยอดเงินโอนที่ยังไม่ได้ระบุลงในบิล (Unallocated Cash):
                                         </TableCell>
-                                        <TableCell colSpan={2} className={cn("text-right font-black text-lg", Math.abs(totals.remainingToAllocate) > 0.05 ? 'text-destructive' : 'text-green-600')}>
+                                        <TableCell colSpan={2} className={cn("text-right font-black text-lg", Math.abs(totals.remainingToAllocate) > 0.06 ? 'text-destructive' : 'text-green-600')}>
                                             ฿{formatCurrency(totals.remainingToAllocate)}
                                         </TableCell>
                                     </TableRow>
@@ -590,14 +517,14 @@ function ConfirmReceiptPageContent() {
         <AlertDialog open={showFinalConfirm} onOpenChange={setShowFinalConfirm}>
             <AlertDialogContent>
                 <AlertDialogHeader>
-                    <AlertDialogTitle>ยืนยันข้อมูลการรับเงินและจัดสรรหนี้?</AlertDialogTitle>
+                    <AlertDialogTitle>ยืนยันการจัดสรรและรับเงิน?</AlertDialogTitle>
                     <AlertDialogDescription asChild>
                         <div className="space-y-3">
                             <p>เมื่อยืนยันแล้ว ระบบจะดำเนินการดังนี้:</p>
                             <ul className="list-disc pl-5 text-sm space-y-1">
-                                <li>บันทึกรายรับเข้าสมุดบัญชีจำนวน <span className="font-bold text-primary">{formatCurrency(pendingFormData?.netReceivedTotal || 0)} บาท</span></li>
-                                <li>ปรับยอดค้างชำระของลูกหนี้ (AR)</li>
-                                <li>เปลี่ยนสถานะใบงานซ่อมเป็น "ปิดงาน" (CLOSED) ทันที</li>
+                                <li>บันทึกรายรับเข้าบัญชี <span className="font-bold text-primary">{formatCurrency(pendingFormData?.netReceivedTotal || 0)} บาท</span></li>
+                                <li>ตัดยอดหนี้ลูกหนี้ (AR) และใบวางบิลที่เกี่ยวข้อง</li>
+                                <li>ปิดงานซ่อม (CLOSED) ทันทีหากชำระครบถ้วน</li>
                             </ul>
                             <p className="font-bold text-destructive">หมายเหตุ: รายการนี้ไม่สามารถแก้ไขได้อีกหลังจากยืนยันค่ะ</p>
                         </div>
@@ -606,7 +533,7 @@ function ConfirmReceiptPageContent() {
                 <AlertDialogFooter>
                     <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
                     <AlertDialogAction onClick={() => pendingFormData && executeSubmit(pendingFormData)} disabled={isLoading}>
-                        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>} ตกลง ยืนยันข้อมูล
+                        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>} ยืนยันข้อมูล
                     </AlertDialogAction>
                 </AlertDialogFooter>
             </AlertDialogContent>
