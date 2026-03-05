@@ -32,6 +32,60 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 const MAX_INTAKE_PHOTOS = 8;
+const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
+
+// Helper function to compress image step by step
+const compressImageIfNeeded = async (file: File): Promise<File> => {
+  if (file.size <= FILE_SIZE_THRESHOLD) return file;
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new window.Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        let quality = 0.9;
+        const attemptCompression = (q: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
+                  const compressedFile = new File([blob], file.name, {
+                    type: "image/jpeg",
+                    lastModified: Date.now(),
+                  });
+                  console.log(`Compressed ${file.name}: ${(file.size / 1024 / 1024).toFixed(2)}MB -> ${(blob.size / 1024 / 1024).toFixed(2)}MB at quality ${q.toFixed(1)}`);
+                  resolve(compressedFile);
+                } else {
+                  attemptCompression(q - 0.1);
+                }
+              } else {
+                resolve(file); // Fallback to original
+              }
+            },
+            "image/jpeg",
+            q
+          );
+        };
+        attemptCompression(quality);
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
+};
 
 // Updated Schema to enforce all fields based on department
 const intakeSchema = z.object({
@@ -99,6 +153,7 @@ export default function IntakePage() {
   const router = useRouter();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
@@ -151,7 +206,7 @@ export default function IntakePage() {
     return () => unsubscribe();
   }, [db]);
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
       if (photos.length + newFiles.length > MAX_INTAKE_PHOTOS) {
@@ -159,18 +214,24 @@ export default function IntakePage() {
         e.target.value = '';
         return;
       }
-      const validFiles = newFiles.filter(file => {
-          if (file.size > 5 * 1024 * 1024) {
-              toast({ variant: "destructive", title: `ไฟล์ ${file.name} มีขนาดใหญ่เกินไป`, description: "ขนาดสูงสุดคือ 5MB" });
-              return false;
-          }
-          return true;
-      });
 
-      setPhotos(prev => [...prev, ...validFiles]);
-      const newPreviews = validFiles.map(file => URL.createObjectURL(file));
-      setPhotoPreviews(prev => [...prev, ...newPreviews]);
-      e.target.value = '';
+      setIsCompressing(true);
+      try {
+        const processedFiles: File[] = [];
+        for (const file of newFiles) {
+          const processed = await compressImageIfNeeded(file);
+          processedFiles.push(processed);
+        }
+
+        setPhotos(prev => [...prev, ...processedFiles]);
+        const newPreviews = processedFiles.map(file => URL.createObjectURL(file));
+        setPhotoPreviews(prev => [...prev, ...newPreviews]);
+      } catch (err) {
+        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+      } finally {
+        setIsCompressing(false);
+        e.target.value = '';
+      }
     }
   };
 
@@ -320,7 +381,7 @@ export default function IntakePage() {
                                   "w-full justify-between font-normal text-left",
                                   !field.value && "text-muted-foreground"
                                 )}
-                                disabled={isViewer || isSubmitting}
+                                disabled={isViewer || isSubmitting || isCompressing}
                               >
                                 <span className="truncate">
                                     {selectedCustomer
@@ -386,7 +447,7 @@ export default function IntakePage() {
               <FormField name="department" control={form.control} render={({ field }) => (
                 <FormItem>
                   <FormLabel>แผนกที่รับผิดชอบ (Department) <span className="text-destructive">*</span></FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewer || isSubmitting}>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewer || isSubmitting || isCompressing}>
                     <FormControl><SelectTrigger><SelectValue placeholder="กรุณาเลือกแผนก..." /></SelectTrigger></FormControl>
                     <SelectContent>
                       {JOB_DEPARTMENTS.map(d => (
@@ -407,7 +468,7 @@ export default function IntakePage() {
                             <FormItem>
                               <FormLabel>ยี่ห้อรถ <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
-                                <Input placeholder="เช่น Toyota, Isuzu" {...field} disabled={isViewer || isSubmitting} />
+                                <Input placeholder="เช่น Toyota, Isuzu" {...field} disabled={isViewer || isSubmitting || isCompressing} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -416,7 +477,7 @@ export default function IntakePage() {
                             <FormItem>
                               <FormLabel>รุ่นรถ <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
-                                <Input placeholder="เช่น Revo, D-Max" {...field} disabled={isViewer || isSubmitting} />
+                                <Input placeholder="เช่น Revo, D-Max" {...field} disabled={isViewer || isSubmitting || isCompressing} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -426,7 +487,7 @@ export default function IntakePage() {
                           <FormItem>
                             <FormLabel>ทะเบียนรถ <span className="text-destructive">*</span></FormLabel>
                             <FormControl>
-                              <Input placeholder="เช่น 1กข 1234" {...field} disabled={isViewer || isSubmitting} />
+                              <Input placeholder="เช่น 1กข 1234" {...field} disabled={isViewer || isSubmitting || isCompressing} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -447,7 +508,7 @@ export default function IntakePage() {
                               <FormItem>
                                 <FormLabel>ยี่ห้อ <span className="text-destructive">*</span></FormLabel>
                                 <FormControl>
-                                  <Input placeholder="เช่น Denso, Bosch" {...field} disabled={isViewer || isSubmitting} />
+                                  <Input placeholder="เช่น Denso, Bosch" {...field} disabled={isViewer || isSubmitting || isCompressing} />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -460,7 +521,7 @@ export default function IntakePage() {
                               <FormItem>
                                 <FormLabel>เลขทะเบียนชิ้นส่วน <span className="text-destructive">*</span></FormLabel>
                                 <FormControl>
-                                  <Input placeholder="Registration Number" {...field} disabled={isViewer || isSubmitting} />
+                                  <Input placeholder="Registration Number" {...field} disabled={isViewer || isSubmitting || isCompressing} />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -474,7 +535,7 @@ export default function IntakePage() {
                             <FormItem>
                               <FormLabel>เลขอะไหล่ (Part Number) <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
-                                <Input placeholder="ระบุหมายเลขอะไหล่..." {...field} disabled={isViewer || isSubmitting} />
+                                <Input placeholder="ระบุหมายเลขอะไหล่..." {...field} disabled={isViewer || isSubmitting || isCompressing} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -487,7 +548,7 @@ export default function IntakePage() {
               <FormField name="description" control={form.control} render={({ field }) => (
                 <FormItem>
                   <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม (Description) <span className="text-destructive">*</span></FormLabel>
-                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย หรือสิ่งที่ลูกค้าต้องการให้ทำ..." rows={5} {...field} disabled={isViewer || isSubmitting} /></FormControl>
+                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย หรือสิ่งที่ลูกค้าต้องการให้ทำ..." rows={5} {...field} disabled={isViewer || isSubmitting || isCompressing} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -503,11 +564,11 @@ export default function IntakePage() {
                           type="button"
                           variant="outline" 
                           className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting}
+                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
                           onClick={() => cameraInputRef.current?.click()}
                         >
-                            <Camera className="h-8 w-8 text-primary" />
-                            <span className="text-xs font-bold uppercase tracking-wider">ถ่ายรูปจากกล้อง</span>
+                            {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <Camera className="h-8 w-8 text-primary" />}
+                            <span className="text-xs font-bold uppercase tracking-wider">{isCompressing ? "กำลังลดขนาดรูป..." : "ถ่ายรูปจากกล้อง"}</span>
                             <input 
                               type="file" 
                               ref={cameraInputRef}
@@ -522,11 +583,11 @@ export default function IntakePage() {
                           type="button" 
                           variant="outline" 
                           className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting}
+                          disabled={photos.length >= MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
                           onClick={() => galleryInputRef.current?.click()}
                         >
-                            <ImageIcon className="h-8 w-8 text-primary" />
-                            <span className="text-xs font-bold uppercase tracking-wider">เลือกจากอัลบั้ม</span>
+                            {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <ImageIcon className="h-8 w-8 text-primary" />}
+                            <span className="text-xs font-bold uppercase tracking-wider">{isCompressing ? "กำลังลดขนาดรูป..." : "เลือกจากอัลบั้ม"}</span>
                             <input 
                               type="file" 
                               ref={galleryInputRef}
@@ -543,7 +604,7 @@ export default function IntakePage() {
                         {photoPreviews.map((src, index) => (
                         <div key={index} className="relative group aspect-square">
                             <Image src={src} alt={`Preview ${index + 1}`} fill className="rounded-md border object-cover" />
-                            {(!isViewer && !isSubmitting) && (
+                            {(!isViewer && !isSubmitting && !isCompressing) && (
                             <Button type="button" variant="destructive" size="icon" className="absolute -top-2 -right-2 h-6 w-6 rounded-full shadow-md z-10" onClick={() => removePhoto(index)}>
                                 <X className="h-4 w-4" />
                             </Button>
@@ -556,11 +617,16 @@ export default function IntakePage() {
               </FormItem>
 
               <div className="pt-4">
-                <Button type="submit" className="w-full h-12 text-lg font-semibold" disabled={isSubmitting || isViewer}>
+                <Button type="submit" className="w-full h-12 text-lg font-semibold" disabled={isSubmitting || isViewer || isCompressing}>
                   {isSubmitting ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       กำลังบันทึกและอัปโหลด...
+                    </>
+                  ) : isCompressing ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      กำลังประมวลผลรูปภาพ...
                     </>
                   ) : isViewer ? "คุณไม่มีสิทธิ์สร้างใบงาน" : "สร้างใบงาน (Create Job)"}
                 </Button>

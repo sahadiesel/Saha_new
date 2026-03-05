@@ -153,6 +153,7 @@ function CustomersContent() {
       result = result.filter(customer =>
         customer.name.toLowerCase().includes(lowercasedFilter) ||
         customer.phone.includes(searchTerm) ||
+        (customer.taxName || "").toLowerCase().includes(lowercasedFilter) ||
         (customer.detail || "").toLowerCase().includes(lowercasedFilter)
       );
     }
@@ -308,7 +309,7 @@ function CustomersContent() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="ค้นหาชื่อ/เบอร์โทร..."
+                placeholder="ค้นหาชื่อ/เบอร์โทร/ชื่อภาษี..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
