@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -83,8 +82,11 @@ export default function PartsInventoryPage() {
     const unsubCats = onSnapshot(query(collection(db, "partCategories"), orderBy("name", "asc")), (snap) => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<PartCategory>)));
     });
-    const unsubVendors = onSnapshot(query(collection(db, "vendors"), where("isActive", "==", true), orderBy("shortName", "asc")), (snap) => {
-      setVendors(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Vendor>)));
+    // Fix: Client-side sort to avoid index requirement for where + orderBy
+    const unsubVendors = onSnapshot(query(collection(db, "vendors"), where("isActive", "==", true)), (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Vendor>));
+      data.sort((a, b) => (a.shortName || "").localeCompare(b.shortName || "", 'th'));
+      setVendors(data);
     });
     return () => { unsubParts(); unsubCats(); unsubVendors(); };
   }, [db]);

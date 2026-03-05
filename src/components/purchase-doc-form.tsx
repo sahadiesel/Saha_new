@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box, ImageIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -49,7 +48,7 @@ const lineItemSchema = z.object({
 });
 
 const purchaseFormSchema = z.object({
-  vendorId: z.string().min(1, "กรุณาเลือกร้านค้า"),
+  vendorId: z.string().min(1, "กรุณาเลือกล้านค้า"),
   docDate: z.string().min(1, "กรุณาเลือกวันที่"),
   invoiceNo: z.string().min(1, "กรุณากรอกเลขที่บิล"),
   items: z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการ"),
@@ -151,8 +150,11 @@ export function PurchaseDocForm() {
 
   useEffect(() => {
     if (!db) return;
+    // Fix: Client-side sort to avoid index requirement for where + orderBy
     const unsubVendors = onSnapshot(query(collection(db, "vendors"), where("isActive", "==", true)), (snap) => {
-      setVendors(snap.docs.map(d => ({ id: d.id, ...d.data() } as Vendor)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Vendor));
+      data.sort((a, b) => (a.shortName || "").localeCompare(b.shortName || "", 'th'));
+      setVendors(data);
       setIsLoadingData(false);
     });
     const unsubParts = onSnapshot(query(collection(db, "parts"), orderBy("name", "asc")), (snap) => {
