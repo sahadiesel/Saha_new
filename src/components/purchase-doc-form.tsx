@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box, ImageIcon } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box, ImageIcon, PackagePlus } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -37,9 +37,10 @@ import { createPurchaseDoc, getNextAvailablePurchaseDocNo } from "@/firebase/pur
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
 import type { PurchaseDoc, Vendor, AccountingAccount, Part } from "@/lib/types";
+import Link from "next/link";
 
 const lineItemSchema = z.object({
-  partId: z.string().optional(),
+  partId: z.string().min(1, "กรุณาเลือกอะไหล่จากระบบ"),
   code: z.string().optional(),
   description: z.string().min(1, "กรุณากรอกรายการ"),
   quantity: z.coerce.number().min(0.01, "จำนวนต้องมากกว่า 0"),
@@ -150,7 +151,6 @@ export function PurchaseDocForm() {
 
   useEffect(() => {
     if (!db) return;
-    // Fix: Client-side sort to avoid index requirement for where + orderBy
     const unsubVendors = onSnapshot(query(collection(db, "vendors"), where("isActive", "==", true)), (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Vendor));
       data.sort((a, b) => (a.shortName || "").localeCompare(b.shortName || "", 'th'));
@@ -403,7 +403,7 @@ export function PurchaseDocForm() {
                                     <PopoverTrigger asChild>
                                         <FormControl>
                                           <Button variant="outline" className="w-full justify-between" disabled={isSubmitting}>
-                                            <span className="truncate">{field.value ? vendors.find(v=>v.id===field.value)?.companyName : "เลือกร้านค้า..."}</span>
+                                            <span className="truncate">{field.value ? vendors.find(v=>v.id===field.value)?.companyName : "เลือกล้านค้า..."}</span>
                                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
                                           </Button>
                                         </FormControl>
@@ -480,30 +480,54 @@ export function PurchaseDocForm() {
           </div>
 
           <Card>
-              <CardHeader><CardTitle className="text-base">3. รายการสินค้า/อะไหล่</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between py-3">
+                <CardTitle className="text-base">3. รายการสินค้า/อะไหล่</CardTitle>
+                <Button asChild variant="outline" size="sm" className="h-8 border-dashed border-primary text-primary hover:bg-primary/5">
+                  <Link href="/app/office/parts/list">
+                    <PackagePlus className="mr-2 h-4 w-4" /> สร้างอะไหล่ใหม่
+                  </Link>
+                </Button>
+              </CardHeader>
               <CardContent>
+                  <Alert className="mb-4 bg-primary/5 border-primary/20">
+                    <Info className="h-4 w-4 text-primary" />
+                    <AlertTitle className="text-xs font-bold">ข้อมูลประกอบการสั่งซื้อ</AlertTitle>
+                    <AlertDescription className="text-[10px]">
+                      ต้องเลือกรายการจากคลังสินค้าเท่านั้น หากไม่มีกรุณากดปุ่ม <b>"สร้างอะไหล่ใหม่"</b> ด้านบนเพื่อเพิ่มข้อมูลก่อนค่ะ
+                    </AlertDescription>
+                  </Alert>
+
                   <div className="border rounded-md overflow-x-auto">
                       <Table>
-                          <TableHeader><TableRow><TableHead>รายการ (เลือกจากสต็อกหรือพิมพ์เอง)</TableHead><TableHead className="w-24">จำนวน</TableHead><TableHead className="w-32">ราคา/หน่วย</TableHead><TableHead className="w-32 text-right">รวม</TableHead><TableHead className="w-12"/></TableRow></TableHeader>
+                          <TableHeader><TableRow><TableHead>รายการ (ต้องเลือกจากระบบ)</TableHead><TableHead className="w-24">จำนวน</TableHead><TableHead className="w-32">ราคา/หน่วย</TableHead><TableHead className="w-32 text-right">รวม</TableHead><TableHead className="w-12"/></TableRow></TableHeader>
                           <TableBody>
                               {fields.map((field, index) => (
                                   <TableRow key={field.id}>
                                       <TableCell>
                                           <div className="flex gap-2">
                                               <Popover open={activePartSearchIdx === index} onOpenChange={(o)=>setActivePartSearchIdx(o ? index : null)}>
-                                                  <PopoverTrigger asChild><Button variant="outline" size="icon" className="shrink-0"><Search className="h-4 w-4"/></Button></PopoverTrigger>
+                                                  <PopoverTrigger asChild><Button variant="outline" size="icon" className="shrink-0" disabled={isSubmitting}><Search className="h-4 w-4"/></Button></PopoverTrigger>
                                                   <PopoverContent className="w-80 p-0" align="start">
                                                       <div className="p-2 border-b"><Input placeholder="ค้นหาอะไหล่..." value={partSearch} onChange={e=>setPartSearch(e.target.value)} /></div>
                                                       <ScrollArea className="h-64">
-                                                          {filteredParts.map(p => (
+                                                          {filteredParts.length > 0 ? filteredParts.map(p => (
                                                               <Button key={p.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleSelectPart(index, p)}>
                                                                   <div className="flex flex-col"><p className="font-bold text-sm">{p.code}</p><p className="text-xs">{p.name}</p></div>
                                                               </Button>
-                                                          ))}
+                                                          )) : <div className="p-4 text-center text-xs text-muted-foreground italic">ไม่พบอะไหล่ที่ค้นหา</div>}
                                                       </ScrollArea>
                                                   </PopoverContent>
                                               </Popover>
-                                              <FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} value={field.value ?? ''} disabled={isSubmitting} placeholder="ระบุรายการ..." />)}/>
+                                              <FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (
+                                                <Input 
+                                                  {...field} 
+                                                  value={field.value ?? ''} 
+                                                  disabled={isSubmitting} 
+                                                  readOnly 
+                                                  placeholder="คลิกแว่นขยายเพื่อเลือกอะไหล่..." 
+                                                  className="bg-muted/50 cursor-not-allowed text-xs" 
+                                                />
+                                              )}/>
                                           </div>
                                           {form.watch(`items.${index}.code`) && <p className="text-[10px] text-primary font-bold mt-1 px-10">รหัสสต็อก: {form.watch(`items.${index}.code`)}</p>}
                                       </TableCell>
@@ -516,7 +540,7 @@ export function PurchaseDocForm() {
                           </TableBody>
                       </Table>
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isSubmitting} onClick={()=>append({description:'', quantity:1, unitPrice:0, total:0})}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
+                  <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isSubmitting || fields.length >= 50} onClick={()=>append({description:'', quantity:1, unitPrice:0, total:0})}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
               </CardContent>
           </Card>
 
