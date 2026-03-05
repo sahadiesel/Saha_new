@@ -78,7 +78,19 @@ const OfficeJobManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void 
 
 const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
-    const isOpen = pathname.startsWith('/app/management/accounting');
+    
+    // Check if we are in any accounting sub-page or moved document pages
+    const isAccountingDocActive = 
+        pathname.startsWith('/app/office/documents/delivery-note') || 
+        pathname.startsWith('/app/office/documents/tax-invoice');
+        
+    const isOpen = pathname.startsWith('/app/management/accounting') || isAccountingDocActive;
+    
+    // Sub-group "Accounting Documents" logic
+    const isDocSubGroupActive = 
+        pathname.startsWith('/app/management/accounting/documents') || 
+        isAccountingDocActive;
+
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
@@ -94,14 +106,16 @@ const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void
                 <SubNavLink href="/app/management/accounting/receivables-payables" label="ลูกหนี้/เจ้าหนี้" onClick={onLinkClick} />
                 <SubNavLink href="/app/management/accounting/accounts" label="บัญชีเงินสด/ธนาคาร" onClick={onLinkClick} />
                 <SubNavLink href="/app/management/accounting/payroll-payouts" label="จ่ายเงินเดือน" onClick={onLinkClick} />
-                <Collapsible defaultOpen={pathname.startsWith('/app/management/accounting/documents')}>
+                <Collapsible defaultOpen={isDocSubGroupActive}>
                     <CollapsibleTrigger asChild>
-                        <Button variant={pathname.startsWith('/app/management/accounting/documents') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
+                        <Button variant={isDocSubGroupActive ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
                             เอกสารบัญชี
                             <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                         </Button>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="py-1 pl-4 space-y-1">
+                        <SubNavLink href="/app/office/documents/delivery-note" label="ใบส่งของชั่วคราว" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/documents/tax-invoice" label="ใบกำกับภาษี" onClick={onLinkClick} />
                         <SubNavLink href="/app/management/accounting/documents/receipt" label="ใบเสร็จรับเงิน" onClick={onLinkClick} />
                         <SubNavLink href="/app/management/accounting/documents/billing-note" label="ใบวางบิล" onClick={onLinkClick} />
                         <SubNavLink href="/app/management/accounting/documents/credit-note" label="ใบลดหนี้" onClick={onLinkClick} />
@@ -299,17 +313,15 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                             </CollapsibleContent>
                         </Collapsible>
 
-                        <Collapsible defaultOpen={pathname.startsWith('/app/office/documents') && !pathname.includes('/parts')}>
+                        <Collapsible defaultOpen={pathname.startsWith('/app/office/documents/quotation')}>
                             <CollapsibleTrigger asChild>
-                                <Button variant={(pathname.startsWith('/app/office/documents') && !pathname.includes('/parts')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                                    จัดการเอกสารขาย
+                                <Button variant={pathname.startsWith('/app/office/documents/quotation') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
+                                    จัดการใบเสนอราคา
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
                             </CollapsibleTrigger>
                             <CollapsibleContent className="py-1 pl-4 space-y-1">
                                 <SubNavLink href="/app/office/documents/quotation" label="ใบเสนอราคา" onClick={onLinkClick} />
-                                <SubNavLink href="/app/office/documents/delivery-note" label="ใบส่งของชั่วคราว" onClick={onLinkClick} />
-                                <SubNavLink href="/app/office/documents/tax-invoice" label="ใบกำกับภาษี" onClick={onLinkClick} />
                                 <SubNavLink href="/app/office/documents/quotation/templates" label="Template ใบเสนอราคา" onClick={onLinkClick} />
                             </CollapsibleContent>
                         </Collapsible>
