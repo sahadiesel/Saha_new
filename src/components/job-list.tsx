@@ -165,7 +165,17 @@ export function JobList({
           (j.customerSnapshot?.name || "").toLowerCase().includes(term) ||
           (j.customerSnapshot?.phone || "").includes(term) ||
           (j.description || "").toLowerCase().includes(term) ||
-          (j.id && j.id.toLowerCase().includes(term))
+          (j.id && j.id.toLowerCase().includes(term)) ||
+          // Vehicle Search
+          (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
+          (j.carServiceDetails?.brand || "").toLowerCase().includes(term) ||
+          (j.carServiceDetails?.model || "").toLowerCase().includes(term) ||
+          (j.commonrailDetails?.brand || "").toLowerCase().includes(term) ||
+          (j.commonrailDetails?.partNumber || "").toLowerCase().includes(term) ||
+          (j.commonrailDetails?.registrationNumber || "").toLowerCase().includes(term) ||
+          (j.mechanicDetails?.brand || "").toLowerCase().includes(term) ||
+          (j.mechanicDetails?.partNumber || "").toLowerCase().includes(term) ||
+          (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(term)
         );
       }
       setJobs(jobsData);
