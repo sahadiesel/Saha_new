@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -18,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, Package, MapPin, ImageIcon, Info } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -120,16 +119,35 @@ export default function PartsInventoryPage() {
     }
   };
 
+  const handleRemovePhoto = () => {
+    if (photoPreview && photo) {
+      URL.revokeObjectURL(photoPreview);
+    }
+    setPhoto(null);
+    setPhotoPreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const onSubmit = async (values: PartFormData) => {
     if (!db || !profile || !storage) return;
     setIsSubmitting(true);
 
     try {
-      let finalImageUrl = editingPart?.imageUrl || "";
+      let finalImageUrl = "";
+      
+      // If there's a new photo, upload it
       if (photo) {
         const photoRef = ref(storage, `parts/${Date.now()}-${photo.name}`);
         await uploadBytes(photoRef, photo);
         finalImageUrl = await getDownloadURL(photoRef);
+      } else if (photoPreview) {
+        // If no new photo but there is a preview, keep the old image
+        finalImageUrl = editingPart?.imageUrl || "";
+      } else {
+        // If photoPreview is null, user clicked remove photo
+        finalImageUrl = "";
       }
 
       const category = categories.find(c => c.id === values.categoryId);
@@ -314,7 +332,19 @@ export default function PartsInventoryPage() {
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
                     <div className="relative w-40 h-40 border rounded-md overflow-hidden bg-background">
                       {photoPreview ? (
-                        <Image src={photoPreview} alt="Preview" fill className="object-cover" />
+                        <>
+                          <Image src={photoPreview} alt="Preview" fill className="object-cover" />
+                          <Button 
+                            type="button" 
+                            variant="destructive" 
+                            size="icon" 
+                            className="absolute top-1 right-1 h-6 w-6 rounded-full shadow-md z-10"
+                            onClick={handleRemovePhoto}
+                            disabled={isSubmitting}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </>
                       ) : (
                         <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>
                       )}
