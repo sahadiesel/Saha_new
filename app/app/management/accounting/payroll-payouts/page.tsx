@@ -15,7 +15,7 @@ import {
   onSnapshot,
   serverTimestamp,
 } from "firebase/firestore";
-import { useFirebase } from "@/firebase";
+import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, subMonths, format } from "date-fns";
@@ -32,8 +32,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { PayslipNew, AccountingAccount } from "@/lib/types";
+import type { PayslipNew, AccountingAccount, UserProfile } from "@/lib/types";
 import type { WithId } from "@/firebase/firestore/use-collection";
 import { newPayslipStatusLabel } from "@/lib/ui-labels";
 import { safeFormat } from "@/lib/date-utils";
@@ -66,6 +67,10 @@ function PayDialog({
   onConfirm: (data: PaymentFormData) => Promise<void>;
   isSubmitting: boolean;
 }) {
+  const { db } = useFirebase();
+  const userRef = useMemo(() => (db ? doc(db, "users", payslip.userId) : null), [db, payslip.userId]);
+  const { data: userProfile, isLoading: isLoadingProfile } = useDoc<UserProfile>(userRef);
+
   const form = useForm<PaymentFormData>({
     resolver: zodResolver(paymentSchema),
     defaultValues: {
@@ -74,6 +79,11 @@ function PayDialog({
       referenceNo: "",
     },
   });
+
+  const bankInfo = userProfile?.personal?.bank;
+  const bankDisplay = bankInfo?.bankName && bankInfo?.accountNo 
+    ? `${bankInfo.bankName} - ${bankInfo.accountNo}` 
+    : "ไม่ได้ระบุข้อมูลบัญชีในโปรไฟล์";
 
   return (
     <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
@@ -89,10 +99,18 @@ function PayDialog({
             <div className="p-4 border rounded-md font-bold text-center text-xl bg-primary/5 border-primary/20">
               ยอดจ่ายสุทธิ: {formatCurrency(payslip.snapshot?.netPay ?? 0)} บาท
             </div>
-            <FormField control={form.control} name="paidDate" render={({ field }) => (<FormItem><FormLabel>วันที่จ่ายเงิน</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
+            
+            <FormField control={form.control} name="paidDate" render={({ field }) => (
+              <FormItem>
+                <FormLabel>วันที่จ่ายเงิน</FormLabel>
+                <FormControl><Input type="date" {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+
             <FormField control={form.control} name="accountId" render={({ field }) => (
               <FormItem>
-                <FormLabel>จากบัญชี</FormLabel>
+                <FormLabel>จากบัญชี (ต้นทาง)</FormLabel>
                 <Select onValueChange={field.onChange} value={field.value}>
                   <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่ใช้โอนเงิน..."/></SelectTrigger></FormControl>
                   <SelectContent>{accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent>
@@ -100,7 +118,25 @@ function PayDialog({
                 <FormMessage />
               </FormItem>
             )} />
-            <FormField control={form.control} name="referenceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่อ้างอิง (ถ้ามี)</FormLabel><FormControl><Input {...field} /></FormControl></FormItem>)} />
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">เข้าบัญชี (ข้อมูลพนักงาน)</Label>
+              <div className="p-3 bg-muted/50 rounded-md border text-sm font-medium">
+                {isLoadingProfile ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    กำลังโหลดข้อมูลโปรไฟล์...
+                  </div>
+                ) : bankDisplay}
+              </div>
+            </div>
+
+            <FormField control={form.control} name="referenceNo" render={({ field }) => (
+              <FormItem>
+                <FormLabel>เลขที่อ้างอิง (ถ้ามี)</FormLabel>
+                <FormControl><Input {...field} /></FormControl>
+              </FormItem>
+            )} />
           </form>
         </Form>
         <DialogFooter>
