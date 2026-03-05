@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
@@ -48,6 +49,7 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { restoreJobFromArchive } from "@/firebase/jobs-archive";
 
 const MAX_TOTAL_PHOTOS = 12;
+const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -71,6 +73,58 @@ const getSafeTime = (val: any): number => {
     if (val instanceof Date) return val.getTime();
     if (typeof val === 'number') return val;
     return 0;
+};
+
+// Helper function to compress image step by step
+const compressImageIfNeeded = async (file: File): Promise<File> => {
+  if (file.size <= FILE_SIZE_THRESHOLD) return file;
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new window.Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        let quality = 0.9;
+        const attemptCompression = (q: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
+                  const compressedFile = new File([blob], file.name, {
+                    type: "image/jpeg",
+                    lastModified: Date.now(),
+                  });
+                  resolve(compressedFile);
+                } else {
+                  attemptCompression(q - 0.1);
+                }
+              } else {
+                resolve(file); // Fallback to original
+              }
+            },
+            "image/jpeg",
+            q
+          );
+        };
+        attemptCompression(quality);
+      };
+      img.onerror = () => resolve(file);
+    };
+    reader.onerror = () => resolve(file);
+  });
 };
 
 function JobDetailsPageContent() {
@@ -100,6 +154,7 @@ function JobDetailsPageContent() {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [isAddingPhotos, setIsAddingPhotos] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
   const [transferDepartment, setTransferDepartment] = useState<JobDepartment | ''>('');
@@ -173,6 +228,9 @@ function JobDetailsPageContent() {
   
   const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
   const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
+
+  // Rule: Only Admin/Office/Management can edit intake photos. Technical workers cannot.
+  const canEditIntakePhotos = isMgmtOrOffice && isStaff && !isViewOnly;
 
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
@@ -396,18 +454,22 @@ function JobDetailsPageContent() {
     }
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
-      files.forEach(file => {
-          if (file.size > 5 * 1024 * 1024) {
-              toast({ variant: "destructive", title: `ไฟล์ ${file.name} ใหญ่เกินไปค่ะ`, description: "จำกัดไม่เกิน 5MB" });
-              return;
-          }
-          setNewPhotos(prev => [...prev, file]);
-          setPhotoPreviews(prev => [...prev, URL.createObjectURL(file)]);
-      });
-      e.target.value = '';
+      setIsCompressing(true);
+      try {
+        for (const file of files) {
+          const processed = await compressImageIfNeeded(file);
+          setNewPhotos(prev => [...prev, processed]);
+          setPhotoPreviews(prev => [...prev, URL.createObjectURL(processed)]);
+        }
+      } catch (err) {
+        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+      } finally {
+        setIsCompressing(false);
+        e.target.value = '';
+      }
     }
   };
 
@@ -421,12 +483,15 @@ function JobDetailsPageContent() {
       toast({ variant: "destructive", title: `อัปโหลดรูปภาพรวมกันได้ไม่เกิน ${MAX_TOTAL_PHOTOS} รูปค่ะ` });
       e.target.value = ''; return;
     }
+    
     setIsAddingPhotos(true);
+    setIsCompressing(true);
     try {
         const photoURLs: string[] = [];
-        for (const photo of files) {
-            const photoRef = ref(storage!, `jobs/${jobId}/photos/${Date.now()}-${photo.name}`);
-            await uploadBytes(photoRef, photo);
+        for (const file of files) {
+            const processed = await compressImageIfNeeded(file);
+            const photoRef = ref(storage!, `jobs/${jobId}/photos/${Date.now()}-${processed.name}`);
+            await uploadBytes(photoRef, processed);
             photoURLs.push(await getDownloadURL(photoRef));
         }
         const batch = writeBatch(db);
@@ -445,7 +510,11 @@ function JobDetailsPageContent() {
         } else {
             toast({variant: "destructive", title: "อัปโหลดล้มเหลว", description: error.message});
         }
-    } finally { setIsAddingPhotos(false); e.target.value = ''; }
+    } finally { 
+      setIsAddingPhotos(false); 
+      setIsCompressing(false);
+      e.target.value = ''; 
+    }
   }
 
   const handleDeletePhoto = async (url: string) => {
@@ -521,7 +590,7 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { department: job.mainDepartment, status: 'IN_PROGRESS', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `แผนกย่อย (${deptLabel(job.department)}) ดำเนินการเสร็จสิ้น ส่งงานกลับแผนกหลัก (${deptLabel(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    batch.set(doc(collection(jobRef, "activities")), { text: `แผนกย่อย (${deptLabel(job.department)}) ดำเนินการเสร็จสิ้น ส่งงานกลับแผนกหลัก (${deptLabel(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => toast({ title: "ส่งงานกลับแผนกหลักเรียบร้อยแล้วค่ะ" }))
     .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
     .finally(() => setIsSubmittingNote(false));
@@ -775,11 +844,20 @@ function JobDetailsPageContent() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>รูปประกอบงาน (ตอนรับงาน)</CardTitle>
-              {canUpdateActivity && !isViewOnly && (
+              {canEditIntakePhotos && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" disabled={isAddingPhotos || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS}>
-                      {isAddingPhotos ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เพิ่มภาพถ่าย
+                    <Button variant="outline" size="sm" disabled={isAddingPhotos || isCompressing || (job?.photos?.length || 0) >= MAX_TOTAL_PHOTOS}>
+                      {isAddingPhotos || isCompressing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {isCompressing ? "กำลังลดขนาดรูป..." : "กำลังอัปโหลด..."}
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="mr-2 h-4 w-4" /> เพิ่มภาพถ่าย
+                        </>
+                      )}
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
@@ -817,12 +895,21 @@ function JobDetailsPageContent() {
                     ))}</div>
                   )}
                    <div className="flex flex-wrap gap-2">
-                      <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
+                      <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || isCompressing || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
                       
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isViewOnly}>
-                            <Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม
+                          <Button variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isCompressing || isViewOnly}>
+                            {isCompressing ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                กำลังลดขนาดรูป...
+                              </>
+                            ) : (
+                              <>
+                                <Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม
+                              </>
+                            )}
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
