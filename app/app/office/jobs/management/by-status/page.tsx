@@ -24,32 +24,34 @@ function ByStatusContent() {
   const userDept = profile?.department;
   const userRole = profile?.role;
 
-  // Define allowed tabs based on business rules from Joe
+  // Define allowed tabs based on department (Strict Logic)
   const allowedTabs: TabValue[] = useMemo(() => {
     if (authLoading || !profile) return [];
     
-    // Admin and Management see everything
-    if (userRole === 'ADMIN' || userRole === 'MANAGER' || userDept === 'MANAGEMENT') {
+    // Admin and System Management see everything
+    if (userRole === 'ADMIN' || userDept === 'MANAGEMENT') {
       return ["quotation", "waiting-approve", "pending-parts", "done", "pickup"];
     }
 
+    // Department-based restrictions (Managers in these depts are also restricted)
     switch (userDept) {
       case 'OFFICE':
         return ["quotation", "waiting-approve", "pickup"];
       case 'PURCHASING':
-        // พนักงานจัดซื้อเข้าได้แค่ "กำลังจัดอะไหล่"
+        // พนักงานจัดซื้อเข้าได้แค่ "กำลังจัดอะไหล่" เท่านั้น
         return ["pending-parts"];
       case 'ACCOUNTING_HR':
         // บัญชีเข้าได้แค่ "งานเสร็จรอทำบิล" และ "รอลูกค้ารับสินค้า"
         return ["done", "pickup"];
       default:
+        // Other departments might not have access to these management tabs
         return [];
     }
   }, [userDept, userRole, profile, authLoading]);
 
   const activeTab = (searchParams.get("status") as TabValue) || allowedTabs[0] || "quotation";
 
-  // Security Redirect: If user is on a tab they are not allowed to see, redirect them to the first allowed tab
+  // Security Redirect: If user is on a tab they are not allowed to see, redirect them to their primary allowed tab
   useEffect(() => {
     if (!authLoading && allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
       const params = new URLSearchParams(searchParams.toString());
