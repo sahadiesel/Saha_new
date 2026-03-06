@@ -871,6 +871,14 @@ export interface PartCategory {
   updatedAt: Timestamp;
 }
 
+export interface PartLocation {
+  id: string;
+  name: string;
+  zone: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export interface Part {
   id: string;
   code: string;
