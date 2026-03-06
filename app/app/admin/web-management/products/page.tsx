@@ -312,7 +312,7 @@ export default function WebManagementProductsPage() {
                             <FormControl><Input type="number" {...field} placeholder="0" /></FormControl>
                         </FormItem>
                     )} />
-                    <FormField control={form.control} name="bulkPrice" render={({ field }) => (
+                    <FormField control={manageForm.control} name="bulkPrice" render={({ field }) => (
                         <FormItem>
                             <FormLabel className="text-[10px] uppercase">ราคาต่อชิ้นที่ลด</FormLabel>
                             <FormControl><Input type="number" step="0.01" {...field} placeholder="0" /></FormControl>
