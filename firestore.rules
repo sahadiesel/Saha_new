@@ -201,6 +201,16 @@ service cloud.firestore {
       allow write: if isPurchasingAllowed();
     }
 
+    match /partLocations/{id} {
+      allow read: if signedIn();
+      allow write: if isPurchasingAllowed();
+    }
+
+    match /partCategories/{id} {
+      allow read: if signedIn();
+      allow write: if isPurchasingAllowed();
+    }
+
     match /attendance/{id} { allow read, write: if signedIn(); }
     match /kioskTokens/{id} {
       allow read, create, update: if true;
@@ -240,11 +250,6 @@ service cloud.firestore {
     match /quotationTemplates/{id} {
       allow read: if signedIn();
       allow write: if isOfficeOrMgmt() && request.resource.data.items.size() <= 50;
-    }
-
-    match /partCategories/{id} {
-      allow read: if signedIn();
-      allow write: if isPurchasingAllowed();
     }
   }
 }

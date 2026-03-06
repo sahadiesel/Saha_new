@@ -30,6 +30,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 const locationSchema = z.object({
   name: z.string().min(1, "กรุณากรอกชื่อตำแหน่ง (เช่น ชั้นวาง A)"),
@@ -59,35 +61,57 @@ export default function PartLocationsPage() {
     defaultValues: { name: "", zone: "" },
   });
 
-  const onSubmit = async (values: LocationFormData) => {
-    if (!db) return;
+  const onSubmit = (values: LocationFormData) => {
+    if (!db || !profile) return;
     setIsSubmitting(true);
-    try {
-      await addDoc(collection(db, "partLocations"), {
-        ...values,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+    
+    const colRef = collection(db, "partLocations");
+    const data = {
+      ...values,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    // Use non-blocking pattern
+    addDoc(colRef, data)
+      .then(() => {
+        toast({ title: "เพิ่มตำแหน่งสำเร็จ" });
+        form.reset();
+        setIsDialogOpen(false);
+      })
+      .catch(async (serverError) => {
+        const permissionError = new FirestorePermissionError({
+          path: colRef.path,
+          operation: 'create',
+          requestResourceData: data,
+        } satisfies SecurityRuleContext);
+        errorEmitter.emit('permission-error', permissionError);
+      })
+      .finally(() => {
+        setIsSubmitting(false);
       });
-      toast({ title: "เพิ่มตำแหน่งสำเร็จ" });
-      form.reset();
-      setIsDialogOpen(false);
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: error.message });
-    } finally {
-      setIsSubmitting(false);
-    }
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = () => {
     if (!db || !locationToDelete) return;
-    try {
-      await deleteDoc(doc(db, "partLocations", locationToDelete.id));
-      toast({ title: "ลบตำแหน่งสำเร็จ" });
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: error.message });
-    } finally {
-      setLocationToDelete(null);
-    }
+    
+    const docRef = doc(db, "partLocations", locationToDelete.id);
+    
+    // Use non-blocking pattern
+    deleteDoc(docRef)
+      .then(() => {
+        toast({ title: "ลบตำแหน่งสำเร็จ" });
+      })
+      .catch(async (serverError) => {
+        const permissionError = new FirestorePermissionError({
+          path: docRef.path,
+          operation: 'delete',
+        } satisfies SecurityRuleContext);
+        errorEmitter.emit('permission-error', permissionError);
+      })
+      .finally(() => {
+        setLocationToDelete(null);
+      });
   };
 
   const filteredLocations = useMemo(() => {
@@ -105,7 +129,7 @@ export default function PartLocationsPage() {
       <PageHeader title="จัดการชั้นวางสินค้า" description="กำหนดพิกัดตำแหน่งการจัดเก็บอะไหล่ในคลังเพื่อให้ค้นหาได้ง่ายขึ้น">
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
+            <Button disabled={isSubmitting}>
               <PlusCircle className="mr-2 h-4 w-4" />
               เพิ่มตำแหน่งใหม่
             </Button>
@@ -123,7 +147,7 @@ export default function PartLocationsPage() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>ชื่อตำแหน่ง (เช่น ชั้นวาง A, ตู้เหล็ก)</FormLabel>
-                      <FormControl><Input placeholder="ระบุชื่อพิกัดหลัก..." {...field} /></FormControl>
+                      <FormControl><Input placeholder="ระบุชื่อพิกัดหลัก..." {...field} disabled={isSubmitting} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -134,7 +158,7 @@ export default function PartLocationsPage() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>โซน/พิกัดย่อย (เช่น โซน 1 แถว 2 ชั้น 3)</FormLabel>
-                      <FormControl><Input placeholder="ระบุตำแหน่งย่อย..." {...field} /></FormControl>
+                      <FormControl><Input placeholder="ระบุตำแหน่งย่อย..." {...field} disabled={isSubmitting} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -195,6 +219,7 @@ export default function PartLocationsPage() {
                           size="icon" 
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => setLocationToDelete(loc)}
+                          disabled={isSubmitting}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
