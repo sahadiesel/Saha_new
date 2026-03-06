@@ -356,12 +356,34 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                     <>
                         <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อสินค้า" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/withdraw" label="รายการเบิกสินค้า" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/documents/quotation" label="ใบเสนอราคา" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/vendors" label="จัดการรายชื่อร้านค้า" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/categories" label="จัดการหมวดหมู่อะไหล่" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/locations" label="จัดการชั้นวางสินค้า" onClick={onLinkClick} />
+                        
+                        <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')}>
+                            <CollapsibleTrigger asChild>
+                                <Button variant={(pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
+                                    จัดการเอกสาร
+                                    <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
+                                </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="py-1 pl-4 space-y-1">
+                                <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อสินค้า" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/parts/withdraw" label="รายการเบิกสินค้า" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/documents/quotation" label="ใบเสนอราคา" onClick={onLinkClick} />
+                            </CollapsibleContent>
+                        </Collapsible>
+
+                        <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/categories') || pathname.startsWith('/app/office/parts/locations') || pathname.startsWith('/app/office/parts/vendors')}>
+                            <CollapsibleTrigger asChild>
+                                <Button variant={(pathname.startsWith('/app/office/parts/categories') || pathname.startsWith('/app/office/parts/locations') || pathname.startsWith('/app/office/parts/vendors')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
+                                    ตั้งค่า (งานอะไหล่)
+                                    <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
+                                </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="py-1 pl-4 space-y-1">
+                                <SubNavLink href="/app/office/parts/vendors" label="จัดการรายชื่อร้านค้า" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/parts/categories" label="หมวดหมู่อะไหล่" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/parts/locations" label="จัดการชั้นวางสินค้า" onClick={onLinkClick} />
+                            </CollapsibleContent>
+                        </Collapsible>
                     </>
                 )}
                 {department === 'ACCOUNTING_HR' && (
