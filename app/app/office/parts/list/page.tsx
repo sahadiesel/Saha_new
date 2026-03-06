@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode } from "lucide-react";
+import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Image from "next/image";
@@ -63,7 +63,7 @@ export default function PartsInventoryPage() {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const scannerControlsRef = useRef<any>(null);
 
   const locationsQuery = useMemo(() => 
     db ? query(collection(db, "partLocations"), orderBy("name", "asc")) : null
@@ -88,6 +88,9 @@ export default function PartsInventoryPage() {
     if (!db) return;
     const unsubParts = onSnapshot(query(collection(db, "parts"), orderBy("createdAt", "desc")), (snap) => {
       setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
+      setLoading(false);
+    }, (error) => {
+      console.error("Error loading parts:", error);
       setLoading(false);
     });
     const unsubCats = onSnapshot(query(collection(db, "partCategories"), orderBy("name", "asc")), (snap) => {
@@ -122,17 +125,18 @@ export default function PartsInventoryPage() {
       setHasCameraPermission(true);
       
       const reader = new BrowserMultiFormatReader();
-      codeReaderRef.current = reader;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        reader.decodeFromVideoElement(videoRef.current, (result, error) => {
+        // Start decoding and store controls returned by zxing/browser
+        const controls = await reader.decodeFromVideoElement(videoRef.current, (result, error) => {
           if (result) {
             form.setValue("code", result.getText());
             toast({ title: "สแกนสำเร็จ", description: `รหัสที่พบ: ${result.getText()}` });
             stopScanner();
           }
         });
+        scannerControlsRef.current = controls;
       }
     } catch (error) {
       console.error('Error accessing camera:', error);
@@ -146,12 +150,16 @@ export default function PartsInventoryPage() {
   };
 
   const stopScanner = () => {
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset();
+    // Correct way to stop ZXing browser reader is via the stop() method on controls
+    if (scannerControlsRef.current) {
+      scannerControlsRef.current.stop();
+      scannerControlsRef.current = null;
     }
+    
     if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
     }
     setIsScannerOpen(false);
   };
