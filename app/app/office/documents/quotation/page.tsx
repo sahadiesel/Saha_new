@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -10,11 +11,9 @@ import { useAuth } from "@/context/auth-context";
 export default function OfficeQuotationPage() {
     const { profile } = useAuth();
     
-    // Check if user has write permission (Office, Admin, Manager)
-    const canManage = profile?.role === 'ADMIN' || 
-                      profile?.role === 'MANAGER' || 
-                      profile?.department === 'OFFICE' || 
-                      profile?.department === 'MANAGEMENT';
+    // Strict management check: Purchasing department is view-only even if role is Manager
+    const canManage = (profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT') && 
+                      profile?.department !== 'PURCHASING';
 
     return (
         <div className="space-y-6">

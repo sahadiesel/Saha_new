@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -88,8 +89,9 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
-  // Specific check for Quotation access
-  const canManageQuotations = isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+  // Management access check
+  const canManageDocs = (isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT') && 
+                        profile?.department !== 'PURCHASING';
 
   const uniqueStatuses = useMemo(() => {
     const base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
@@ -288,8 +290,6 @@ export function DocumentList({
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
                     
-                    const canEditCurrent = docItem.docType === 'QUOTATION' ? canManageQuotations : true;
-                    
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office')
                       ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}`
                       : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
@@ -307,7 +307,7 @@ export function DocumentList({
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>
                             
-                            {editPath && canEditCurrent && (
+                            {editPath && canManageDocs && (
                                 <DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}> 
                                     <Edit className="mr-2 h-4 w-4"/> แก้ไข
                                 </DropdownMenuItem>
@@ -317,7 +317,7 @@ export function DocumentList({
                               <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>
                             )}
 
-                            {canEditCurrent && (
+                            {canManageDocs && (
                                 <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}> 
                                     <XCircle className="mr-2 h-4 w-4"/> ยกเลิก
                                 </DropdownMenuItem>
