@@ -892,6 +892,7 @@ export interface Part {
   stockQty: number;
   location?: string;
   imageUrl?: string;
+  showOnWeb?: boolean; // NEW: Flag to show on public site
   createdAt: Timestamp;
   updatedAt: Timestamp;
   createdByUid: string;

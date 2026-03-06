@@ -60,21 +60,9 @@ export function PublicHeader() {
             <Link href="/">หน้าแรก</Link>
           </Button>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="text-white hover:bg-white/10 hover:text-white font-medium gap-1">
-                สินค้าและบริการ <ChevronDown className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-48 bg-slate-800 border-white/10 text-white">
-              <DropdownMenuItem className="focus:bg-primary/20 focus:text-white cursor-pointer py-2">
-                <Package className="mr-2 h-4 w-4" /> สินค้า
-              </DropdownMenuItem>
-              <DropdownMenuItem className="focus:bg-primary/20 focus:text-white cursor-pointer py-2">
-                <Settings className="mr-2 h-4 w-4" /> งานบริการ
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
+            <Link href="/products">สินค้าและอะไหล่</Link>
+          </Button>
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
             <Link href="#contact">ติดต่อเรา</Link>
@@ -124,31 +112,21 @@ export function PublicHeader() {
                   </Link>
                 </Button>
 
-                <Accordion type="single" collapsible className="w-full">
-                  <AccordionItem value="services" className="border-none">
-                    <AccordionTrigger className="px-4 h-12 hover:no-underline hover:bg-white/10 rounded-md text-white font-normal">
-                      <div className="flex items-center">
-                        <Settings className="mr-3 h-5 w-5 text-primary" />
-                        สินค้าและบริการ
-                      </div>
-                    </AccordionTrigger>
-                    <AccordionContent className="bg-white/5 rounded-md mt-1 pb-2 px-2">
-                      <Button variant="ghost" className="w-full justify-start pl-12 h-10 text-slate-300" onClick={closeMobileMenu}>
-                        <Package className="mr-2 h-4 w-4" /> สินค้า
-                      </Button>
-                      <Button variant="ghost" className="w-full justify-start pl-12 h-10 text-slate-300" onClick={closeMobileMenu}>
-                        <Settings className="mr-2 h-4 w-4" /> งานบริการ
-                      </Button>
-                    </AccordionContent>
-                  </AccordionItem>
+                <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
+                  <Link href="/products">
+                    <Package className="mr-3 h-5 w-5 text-primary" />
+                    สินค้าและอะไหล่
+                  </Link>
+                </Button>
 
-                  <Button variant="ghost" asChild className="w-full justify-start text-white hover:bg-white/10 h-12 mt-2" onClick={closeMobileMenu}>
-                    <Link href="#contact">
-                      <Mail className="mr-3 h-5 w-5 text-primary" />
-                      ติดต่อเรา
-                    </Link>
-                  </Button>
+                <Button variant="ghost" asChild className="w-full justify-start text-white hover:bg-white/10 h-12 mt-2" onClick={closeMobileMenu}>
+                  <Link href="#contact">
+                    <Mail className="mr-3 h-5 w-5 text-primary" />
+                    ติดต่อเรา
+                  </Link>
+                </Button>
 
+                <Accordion type="single" collapsible className="w-full mt-4">
                   <AccordionItem value="login" className="border-none mt-2">
                     <AccordionTrigger className="px-4 h-12 hover:no-underline hover:bg-white/10 rounded-md text-white font-normal">
                       <div className="flex items-center">

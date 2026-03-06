@@ -197,7 +197,7 @@ service cloud.firestore {
     }
 
     match /parts/{partId} {
-      allow read: if signedIn();
+      allow read: if signedIn() || resource.data.showOnWeb == true;
       allow create, update: if isPurchasingAllowed();
       allow delete: if isMgmt();
     }
@@ -209,7 +209,7 @@ service cloud.firestore {
     }
 
     match /partCategories/{id} {
-      allow read: if signedIn();
+      allow read: if signedIn() || true; // Public read categories for web catalog
       allow create, update: if isPurchasingAllowed();
       allow delete: if isMgmt();
     }
