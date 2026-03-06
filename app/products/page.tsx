@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, onSnapshot, orderBy, type FirestoreError } from "firebase/firestore";
+import { collection, query, where, onSnapshot, type FirestoreError } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { PublicHeader } from "@/components/public-header";
 import { PublicFooter } from "@/components/public-footer";
@@ -27,38 +27,37 @@ export default function PublicProductsPage() {
   const [activeCategory, setActiveCategory] = useState("ALL");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
 
-  // CRITICAL FIX: Memoize queries to prevent SDK Internal Assertion Errors
-  const qCats = useMemo(() => {
-    if (!db) return null;
-    return query(collection(db, "partCategories"), orderBy("name", "asc"));
-  }, [db]);
-
-  const qParts = useMemo(() => {
-    if (!db) return null;
-    return query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
-  }, [db]);
-
+  // 1. Fetch Categories (Static list, JS Sort)
   useEffect(() => {
-    if (!qCats) return;
-    const unsubCats = onSnapshot(qCats, (snap) => {
-      setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() } as PartCategory)));
+    if (!db) return;
+    const q = query(collection(db, "partCategories"));
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as PartCategory));
+      data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      setCategories(data);
     });
-    return () => unsubCats();
-  }, [qCats]);
+    return () => unsub();
+  }, [db]);
 
+  // 2. Fetch Web Parts (Filtered, JS Sort to avoid index requirement)
   useEffect(() => {
-    if (!qParts) return;
+    if (!db) return;
     
     setIndexErrorUrl(null);
     setLoading(true);
 
-    const unsubParts = onSnapshot(qParts, {
+    const q = query(collection(db, "parts"), where("showOnWeb", "==", true));
+
+    const unsubscribe = onSnapshot(q, {
       next: (snap) => {
-        setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Part)));
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Part));
+        // Sort by name client-side
+        data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+        setParts(data);
         setLoading(false);
       },
       error: (err: FirestoreError) => {
-        console.error("Public Parts fetch error:", err);
+        console.error("Public Parts Error:", err);
         if (err.message?.includes('requires an index')) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
@@ -67,8 +66,8 @@ export default function PublicProductsPage() {
       }
     });
 
-    return () => unsubParts();
-  }, [qParts]);
+    return () => unsubscribe();
+  }, [db]);
 
   const filteredParts = useMemo(() => {
     let result = [...parts];

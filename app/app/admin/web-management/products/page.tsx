@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, serverTimestamp, where, getDocs, limit, type FirestoreError } from "firebase/firestore";
+import { collection, query, doc, updateDoc, serverTimestamp, getDocs, type FirestoreError, where } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,7 @@ import type { WithId } from "@/firebase";
 import Image from "next/image";
 import Link from "next/link";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import { onSnapshot } from "firebase/firestore";
 
 const manageWebSchema = z.object({
   webPrice: z.coerce.number().min(0, "ห้ามติดลบ"),
@@ -43,6 +44,7 @@ export default function WebManagementProductsPage() {
   const [webParts, setWebParts] = useState<WithId<Part>[]>([]);
   const [allParts, setAllParts] = useState<WithId<Part>[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingStock, setLoadingStock] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [partSearch, setPartSearch] = useState("");
@@ -56,30 +58,27 @@ export default function WebManagementProductsPage() {
     defaultValues: { webPrice: 0, webPromoNote: "", bulkPriceQty: 0, bulkPrice: 0 }
   });
 
-  // CRITICAL FIX: Memoize queries to prevent "INTERNAL ASSERTION FAILED" and infinite loops
-  const qWeb = useMemo(() => {
-    if (!db) return null;
-    return query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
-  }, [db]);
-
-  const qAll = useMemo(() => {
-    if (!db) return null;
-    return query(collection(db, "parts"), orderBy("name", "asc"), limit(500));
-  }, [db]);
-
+  // 1. Fetch Web Parts (Real-time) - Simplified query to avoid index crash
   useEffect(() => {
-    if (!qWeb) return;
+    if (!db) return;
     
-    setIndexErrorUrl(null);
     setLoading(true);
+    setIndexErrorUrl(null);
 
-    const unsubWeb = onSnapshot(qWeb, {
+    // FIX: Remove orderBy on Firestore side to avoid missing index errors during prototype
+    // We will sort client-side instead.
+    const q = query(collection(db, "parts"), where("showOnWeb", "==", true));
+
+    const unsubscribe = onSnapshot(q, {
       next: (snap) => {
-        setWebParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>));
+        // Client-side sort
+        data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+        setWebParts(data);
         setLoading(false);
       },
       error: (err: FirestoreError) => {
-        console.error("Web Parts fetch error:", err);
+        console.error("Web Parts Error:", err);
         if (err.message?.includes('requires an index')) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
@@ -88,16 +87,30 @@ export default function WebManagementProductsPage() {
       }
     });
 
-    return () => unsubWeb();
-  }, [qWeb]);
+    return () => unsubscribe();
+  }, [db]);
+
+  // 2. Fetch All Parts (One-time when dialog opens)
+  const fetchAllParts = async () => {
+    if (!db || allParts.length > 0) return;
+    setLoadingStock(true);
+    try {
+      const snap = await getDocs(query(collection(db, "parts")));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>));
+      data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      setAllParts(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingStock(false);
+    }
+  };
 
   useEffect(() => {
-    if (!qAll) return;
-    const unsubAll = onSnapshot(qAll, (snap) => {
-      setAllParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
-    });
-    return () => unsubAll();
-  }, [qAll]);
+    if (isAddDialogOpen) {
+      fetchAllParts();
+    }
+  }, [isAddDialogOpen]);
 
   const handleToggleWeb = async (partId: string, show: boolean) => {
     if (!db) return;
@@ -291,7 +304,9 @@ export default function WebManagementProductsPage() {
             </div>
             <ScrollArea className="h-[400px] border rounded-md">
               <div className="p-2 space-y-1">
-                {availableToAdd.length > 0 ? availableToAdd.map(p => (
+                {loadingStock ? (
+                  <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>
+                ) : availableToAdd.length > 0 ? availableToAdd.map(p => (
                   <Button key={p.id} variant="ghost" className="w-full justify-between h-auto py-2 px-3 border-b last:border-0 rounded-none hover:bg-primary/5" onClick={() => handleToggleWeb(p.id, true)}>
                     <div className="flex items-center gap-3">
                       <div className="relative w-10 h-10 rounded border bg-muted overflow-hidden flex-shrink-0">
