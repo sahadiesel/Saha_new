@@ -36,11 +36,32 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="apple-touch-icon" href="/icon-192x192.png"></link>
         <script dangerouslySetInnerHTML={{ __html: `
           window.addEventListener('error', (event) => {
+            // 1. Fix for Chunk Load Errors
             if (event.message && (event.message.includes('ChunkLoadError') || event.message.includes('Loading chunk'))) {
               console.warn('ChunkLoadError detected, reloading page...');
               window.location.reload();
             }
+            
+            // 2. Fix for Browser Extension Errors (e.g. MetaMask, AdBlock)
+            // These are not app bugs, so we suppress them from the Next.js error overlay.
+            if (
+              event.filename && (
+                event.filename.includes('chrome-extension://') || 
+                event.filename.includes('moz-extension://')
+              ) ||
+              (event.message && event.message.includes('MetaMask'))
+            ) {
+              event.stopImmediatePropagation();
+            }
           }, true);
+
+          // Suppress unhandled rejections from extensions
+          window.addEventListener('unhandledrejection', (event) => {
+            if (event.reason && event.reason.stack && event.reason.stack.includes('chrome-extension://')) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+            }
+          });
         ` }} />
       </head>
       <body>
