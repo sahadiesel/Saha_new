@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, serverTimestamp, where, getDocs, limit } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, serverTimestamp, where, getDocs, limit, type FirestoreError } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -19,7 +19,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Loader2, Search, Package, Globe, PlusCircle, Settings, Trash2, Box, Info, Sparkles, Gift, LayoutGrid } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Loader2, Search, Package, Globe, PlusCircle, Settings, Trash2, Box, Info, Sparkles, Gift, LayoutGrid, ExternalLink, AlertCircle } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Part, PartCategory } from "@/lib/types";
@@ -46,6 +47,7 @@ export default function WebManagementProductsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [partSearch, setPartSearch] = useState("");
+  const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   
   const [managingPart, setManagingPart] = useState<WithId<Part> | null>(null);
   const [isManaging, setIsManaging] = useState(false);
@@ -58,14 +60,26 @@ export default function WebManagementProductsPage() {
   useEffect(() => {
     if (!db) return;
     
+    setIndexErrorUrl(null);
+
     // 1. Listen to parts currently on web
     const qWeb = query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
-    const unsubWeb = onSnapshot(qWeb, (snap) => {
-      setWebParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
-      setLoading(false);
+    const unsubWeb = onSnapshot(qWeb, {
+      next: (snap) => {
+        setWebParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
+        setLoading(false);
+      },
+      error: (err: FirestoreError) => {
+        console.error("Web Parts fetch error:", err);
+        if (err.message?.includes('requires an index')) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        setLoading(false);
+      }
     });
 
-    // 2. Load all parts for the "Add" selection (broad query, can be optimized with search)
+    // 2. Load all parts for the "Add" selection
     const qAll = query(collection(db, "parts"), orderBy("name", "asc"), limit(500));
     const unsubAll = onSnapshot(qAll, (snap) => {
       setAllParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
@@ -133,6 +147,22 @@ export default function WebManagementProductsPage() {
           <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มสินค้าขึ้นหน้าเว็บ
         </Button>
       </PageHeader>
+
+      {indexErrorUrl && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>ต้องสร้างดัชนี (Index) สำหรับคิวรีนี้</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <span>ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงรายการสินค้าหน้าเว็บ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index</span>
+            <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
+              <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="mr-2 h-4 w-4" />
+                สร้าง Index (Firebase Console)
+              </a>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>

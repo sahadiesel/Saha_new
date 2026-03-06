@@ -1,8 +1,7 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, type FirestoreError } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { PublicHeader } from "@/components/public-header";
 import { PublicFooter } from "@/components/public-footer";
@@ -11,8 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Box, ShoppingCart, Search, Info, Gift, Sparkles, Tag } from "lucide-react";
+import { Loader2, Box, ShoppingCart, Search, Info, Gift, Sparkles, Tag, AlertCircle, ExternalLink } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { Part, PartCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -25,20 +25,33 @@ export default function PublicProductsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeCategory, setActiveCategory] = useState("ALL");
+  const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!db) return;
     
+    setIndexErrorUrl(null);
+
     // Fetch categories
     const unsubCats = onSnapshot(query(collection(db, "partCategories"), orderBy("name", "asc")), (snap) => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() } as PartCategory)));
     });
 
-    // Fetch only parts flagged for web display
-    const qParts = query(collection(db, "parts"), where("showOnWeb", "==", true));
-    const unsubParts = onSnapshot(qParts, (snap) => {
-      setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Part)));
-      setLoading(false);
+    // Fetch only parts flagged for web display - Ordering by name to ensure consistent UI
+    const qParts = query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
+    const unsubParts = onSnapshot(qParts, {
+      next: (snap) => {
+        setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Part)));
+        setLoading(false);
+      },
+      error: (err: FirestoreError) => {
+        console.error("Public Parts fetch error:", err);
+        if (err.message?.includes('requires an index')) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        setLoading(false);
+      }
     });
 
     return () => { unsubCats(); unsubParts(); };
@@ -77,6 +90,22 @@ export default function PublicProductsPage() {
               />
             </div>
           </div>
+
+          {indexErrorUrl && (
+            <Alert variant="destructive" className="mb-10">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>ต้องสร้างดัชนี (Index) เพื่อแสดงข้อมูล</AlertTitle>
+              <AlertDescription className="flex flex-col gap-2">
+                <span>ระบบต้องการดัชนีเพื่อจัดเรียงสินค้า กรุณาแจ้งผู้ดูแลระบบเพื่อกดปุ่มด้านล่างเพื่อสร้าง Index</span>
+                <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
+                  <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    สร้าง Index (Firebase Console)
+                  </a>
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
 
           <Tabs defaultValue="ALL" className="space-y-8" onValueChange={setActiveCategory}>
             <div className="overflow-x-auto pb-2">
