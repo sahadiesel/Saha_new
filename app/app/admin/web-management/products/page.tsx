@@ -19,6 +19,7 @@ import type { Part, PartCategory } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import Image from "next/image";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export default function WebManagementProductsPage() {
   const { db } = useFirebase();
@@ -100,7 +101,7 @@ export default function WebManagementProductsPage() {
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
-                  <TableHead className="w-16">รูป</TableHead>
+                  <TableHead className="w-12 text-center">รูป</TableHead>
                   <TableHead>สินค้า (สต๊อก)</TableHead>
                   <TableHead>หมวดหมู่</TableHead>
                   <TableHead className="text-right">ราคาขาย</TableHead>
