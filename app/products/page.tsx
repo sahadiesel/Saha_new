@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Box, ShoppingCart, Search, Info, Gift, Sparkles, Tag, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, Box, Search, Info, Gift, Sparkles, Tag, AlertCircle, ExternalLink } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { Part, PartCategory } from "@/lib/types";
@@ -27,18 +27,31 @@ export default function PublicProductsPage() {
   const [activeCategory, setActiveCategory] = useState("ALL");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!db) return;
-    
-    setIndexErrorUrl(null);
+  // CRITICAL FIX: Memoize queries to prevent SDK Internal Assertion Errors
+  const qCats = useMemo(() => {
+    if (!db) return null;
+    return query(collection(db, "partCategories"), orderBy("name", "asc"));
+  }, [db]);
 
-    // Fetch categories
-    const unsubCats = onSnapshot(query(collection(db, "partCategories"), orderBy("name", "asc")), (snap) => {
+  const qParts = useMemo(() => {
+    if (!db) return null;
+    return query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
+  }, [db]);
+
+  useEffect(() => {
+    if (!qCats) return;
+    const unsubCats = onSnapshot(qCats, (snap) => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() } as PartCategory)));
     });
+    return () => unsubCats();
+  }, [qCats]);
 
-    // Fetch only parts flagged for web display - Ordering by name to ensure consistent UI
-    const qParts = query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
+  useEffect(() => {
+    if (!qParts) return;
+    
+    setIndexErrorUrl(null);
+    setLoading(true);
+
     const unsubParts = onSnapshot(qParts, {
       next: (snap) => {
         setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Part)));
@@ -54,8 +67,8 @@ export default function PublicProductsPage() {
       }
     });
 
-    return () => { unsubCats(); unsubParts(); };
-  }, [db]);
+    return () => unsubParts();
+  }, [qParts]);
 
   const filteredParts = useMemo(() => {
     let result = [...parts];
@@ -95,9 +108,9 @@ export default function PublicProductsPage() {
             <Alert variant="destructive" className="mb-10">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>ต้องสร้างดัชนี (Index) เพื่อแสดงข้อมูล</AlertTitle>
-              <AlertDescription className="flex flex-col gap-2">
+              <AlertDescription className="flex flex-col gap-2 mt-2">
                 <span>ระบบต้องการดัชนีเพื่อจัดเรียงสินค้า กรุณาแจ้งผู้ดูแลระบบเพื่อกดปุ่มด้านล่างเพื่อสร้าง Index</span>
-                <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
+                <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive hover:bg-muted">
                   <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="mr-2 h-4 w-4" />
                     สร้าง Index (Firebase Console)

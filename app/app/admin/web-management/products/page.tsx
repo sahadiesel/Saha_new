@@ -21,9 +21,8 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Search, Package, Globe, PlusCircle, Settings, Trash2, Box, Info, Sparkles, Gift, LayoutGrid, ExternalLink, AlertCircle } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { Part, PartCategory } from "@/lib/types";
+import type { Part } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import Image from "next/image";
 import Link from "next/link";
@@ -57,13 +56,23 @@ export default function WebManagementProductsPage() {
     defaultValues: { webPrice: 0, webPromoNote: "", bulkPriceQty: 0, bulkPrice: 0 }
   });
 
+  // CRITICAL FIX: Memoize queries to prevent "INTERNAL ASSERTION FAILED" and infinite loops
+  const qWeb = useMemo(() => {
+    if (!db) return null;
+    return query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
+  }, [db]);
+
+  const qAll = useMemo(() => {
+    if (!db) return null;
+    return query(collection(db, "parts"), orderBy("name", "asc"), limit(500));
+  }, [db]);
+
   useEffect(() => {
-    if (!db) return;
+    if (!qWeb) return;
     
     setIndexErrorUrl(null);
+    setLoading(true);
 
-    // 1. Listen to parts currently on web
-    const qWeb = query(collection(db, "parts"), where("showOnWeb", "==", true), orderBy("name", "asc"));
     const unsubWeb = onSnapshot(qWeb, {
       next: (snap) => {
         setWebParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
@@ -79,14 +88,16 @@ export default function WebManagementProductsPage() {
       }
     });
 
-    // 2. Load all parts for the "Add" selection
-    const qAll = query(collection(db, "parts"), orderBy("name", "asc"), limit(500));
+    return () => unsubWeb();
+  }, [qWeb]);
+
+  useEffect(() => {
+    if (!qAll) return;
     const unsubAll = onSnapshot(qAll, (snap) => {
       setAllParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>)));
     });
-
-    return () => { unsubWeb(); unsubAll(); };
-  }, [db]);
+    return () => unsubAll();
+  }, [qAll]);
 
   const handleToggleWeb = async (partId: string, show: boolean) => {
     if (!db) return;
@@ -149,12 +160,12 @@ export default function WebManagementProductsPage() {
       </PageHeader>
 
       {indexErrorUrl && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>ต้องสร้างดัชนี (Index) สำหรับคิวรีนี้</AlertTitle>
-          <AlertDescription className="flex flex-col gap-2">
+          <AlertDescription className="flex flex-col gap-2 mt-2">
             <span>ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงรายการสินค้าหน้าเว็บ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index</span>
-            <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
+            <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive hover:bg-muted">
               <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer">
                 <ExternalLink className="mr-2 h-4 w-4" />
                 สร้าง Index (Firebase Console)
