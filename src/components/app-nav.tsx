@@ -315,15 +315,17 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                             </CollapsibleContent>
                         </Collapsible>
 
-                        <Collapsible defaultOpen={pathname.startsWith('/app/office/documents/quotation')}>
+                        <Collapsible defaultOpen={pathname.startsWith('/app/office/documents')}>
                             <CollapsibleTrigger asChild>
-                                <Button variant={pathname.startsWith('/app/office/documents/quotation') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                                    จัดการใบเสนอราคา
+                                <Button variant={pathname.startsWith('/app/office/documents') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
+                                    จัดการเอกสาร
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
                             </CollapsibleTrigger>
                             <CollapsibleContent className="py-1 pl-4 space-y-1">
                                 <SubNavLink href="/app/office/documents/quotation" label="ใบเสนอราคา" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/documents/delivery-note" label="ใบส่งของชั่วคราว" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/documents/tax-invoice" label="ใบกำกับภาษี" onClick={onLinkClick} />
                                 <SubNavLink href="/app/office/documents/quotation/templates" label="Template ใบเสนอราคา" onClick={onLinkClick} />
                             </CollapsibleContent>
                         </Collapsible>
