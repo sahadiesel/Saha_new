@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -233,7 +234,7 @@ export default function PartsInventoryPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="รายการอะไหล่/ค้นหา" description="จัดการฐานข้อมูลอะไหล่ สต็อก และราคาทั้งหมด">
+      <PageHeader title="รายการและสต๊อคสินค้า" description="จัดการฐานข้อมูลอะไหล่ สต็อก และราคาทั้งหมด">
         {canManage && (
           <Button onClick={() => { setEditingPart(null); setIsDialogOpen(true); }}>
             <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มอะไหล่ใหม่

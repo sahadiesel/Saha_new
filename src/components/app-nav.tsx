@@ -1,3 +1,4 @@
+
 "use client"
 
 import Link from "next/link"
@@ -332,11 +333,12 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 {department === 'PURCHASING' && (
                     <>
                         <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/withdraw" label="เบิกอะไหล่" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อ" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/list" label="รายการอะไหล่/ค้นหา" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/categories" label="จัดการหมวดหมู่อะไหล่" icon={Tags} onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อสินค้า" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/withdraw" label="รายการเบิกสินค้า" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/vendors" label="จัดการรายชื่อร้านค้า" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/categories" label="จัดการหมวดหมู่อะไหล่" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/locations" label="จัดการชั้นวางสินค้า" onClick={onLinkClick} />
                     </>
                 )}
                 {department === 'ACCOUNTING_HR' && (

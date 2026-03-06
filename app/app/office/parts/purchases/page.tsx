@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -112,7 +113,7 @@ export default function PurchaseDocsListPage() {
 
   return (
     <TooltipProvider>
-      <PageHeader title="รายการซื้อ" description="สร้างและจัดการเอกสารการจัดซื้อ">
+      <PageHeader title="รายการซื้อสินค้า" description="สร้างและจัดการเอกสารการจัดซื้อ">
         <Button asChild>
           <Link href="/app/office/parts/purchases/new">
             <PlusCircle className="mr-2 h-4 w-4" />
