@@ -16,12 +16,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History } from "lucide-react";
-import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
+import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2 } from "lucide-react";
+import { jobStatusLabel, deptLabel, docTypeLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
-import type { Job } from "@/lib/types";
+import type { Job, Document as DocumentType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 
 export default function AdminUsersPage() {
   const { db, app: firebaseApp } = useFirebase();
@@ -35,6 +36,11 @@ export default function AdminUsersPage() {
   const [isSearchingJobs, setIsSearchingJobs] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Link Doc States
+  const [linkDocNo, setLinkDocNo] = useState("");
+  const [isSearchingDoc, setIsSearchingDoc] = useState(false);
+  const [foundDoc, setFoundDoc] = useState<DocumentType | null>(null);
 
   // Migration & Cleanup States
   const [isMigrating, setIsMigrating] = useState(false);
@@ -51,7 +57,6 @@ export default function AdminUsersPage() {
     setFoundJobs([]);
     try {
       const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
-      // Increase limit to 1000 and sort by newest first to ensure we find problematic cases
       const q = query(collection(db, colName), orderBy("createdAt", "desc"), limit(1000));
       const snap = await getDocs(q);
       
@@ -69,7 +74,6 @@ export default function AdminUsersPage() {
       setFoundJobs(filtered);
       if (filtered.length === 0) toast({ title: "ไม่พบข้อมูลงานซ่อมที่ระบุ", description: searchInArchive ? "ลองค้นหาใน 'งานที่กำลังทำ' ดูนะคะ" : "ลองติ๊ก 'ค้นหาในประวัติ' ดูนะคะ" });
     } catch (e: any) {
-      // Fallback for missing index error
       if (e.message?.includes('requires an index')) {
           const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
           const qSimple = query(collection(db, colName), limit(1000));
@@ -90,6 +94,25 @@ export default function AdminUsersPage() {
       }
     } finally {
       setIsSearchingJobs(false);
+    }
+  };
+
+  const handleSearchDocument = async () => {
+    if (!db || !linkDocNo.trim()) return;
+    setIsSearchingDoc(true);
+    setFoundDoc(null);
+    try {
+      const q = query(collection(db, "documents"), where("docNo", "==", linkDocNo.trim()), limit(1));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        toast({ variant: "destructive", title: "ไม่พบเอกสาร", description: "กรุณาตรวจสอบเลขที่บิลอีกครั้งค่ะ" });
+      } else {
+        setFoundDoc({ id: snap.docs[0].id, ...snap.docs[0].data() } as DocumentType);
+      }
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: e.message });
+    } finally {
+      setIsSearchingDoc(false);
     }
   };
 
@@ -118,9 +141,57 @@ export default function AdminUsersPage() {
       await batch.commit();
       toast({ title: "ปรับปรุงข้อมูลสำเร็จ" });
       setEditingJob(null);
-      handleSearchJobs(); // Refresh list
+      setFoundDoc(null);
+      setLinkDocNo("");
+      handleSearchJobs();
     } catch (e: any) {
       toast({ variant: 'destructive', title: "บันทึกไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleLinkDocument = async () => {
+    if (!db || !editingJob || !foundDoc) return;
+    
+    const updates = {
+      salesDocId: foundDoc.id,
+      salesDocNo: foundDoc.docNo,
+      salesDocType: foundDoc.docType
+    };
+
+    // Also update document to point back to job
+    try {
+      setIsSaving(true);
+      const batch = writeBatch(db);
+      const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
+      const jobRef = doc(db, colName, editingJob.id);
+      
+      batch.update(jobRef, {
+        ...updates,
+        updatedAt: serverTimestamp(),
+        lastActivityAt: serverTimestamp()
+      });
+
+      const docRef = doc(db, "documents", foundDoc.id);
+      batch.update(docRef, { jobId: editingJob.id, updatedAt: serverTimestamp() });
+
+      const activityRef = doc(collection(jobRef, "activities"));
+      batch.set(activityRef, {
+        text: `[Admin Manual Link] เชื่อมโยงบิลเลขที่ ${foundDoc.docNo} เข้ากับจ๊อบสำเร็จ`,
+        userName: profile?.displayName,
+        userId: profile?.uid,
+        createdAt: serverTimestamp()
+      });
+
+      await batch.commit();
+      toast({ title: "เชื่อมโยงเอกสารสำเร็จ" });
+      setEditingJob(null);
+      setFoundDoc(null);
+      setLinkDocNo("");
+      handleSearchJobs();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ล้มเหลว", description: e.message });
     } finally {
       setIsSaving(false);
     }
@@ -252,7 +323,7 @@ export default function AdminUsersPage() {
                         </TableCell>
                         <TableCell><Badge variant="outline">{jobStatusLabel(job.status)}</Badge></TableCell>
                         <TableCell className="text-right">
-                          <Button variant="outline" size="sm" onClick={() => setEditingJob(job)}>
+                          <Button variant="outline" size="sm" onClick={() => { setEditingJob(job); setFoundDoc(null); setLinkDocNo(""); }}>
                             <Wrench className="h-3 w-3 mr-1" /> แก้ไขข้อมูล
                           </Button>
                         </TableCell>
@@ -268,16 +339,17 @@ export default function AdminUsersPage() {
 
       {/* Manual Job Editor Dialog */}
       <Dialog open={!!editingJob} onOpenChange={(o) => !o && setEditingJob(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-0">
             <DialogTitle>เครื่องมือแก้ไขจ๊อบ: {editingJob?.customerSnapshot?.name}</DialogTitle>
             <DialogDescription>
               Admin กำลังแก้ไขข้อมูลดิบของจ๊อบเลขที่ {editingJob?.id}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-6 py-4">
+          
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
             <div className="space-y-2">
-              <Label>บังคับเปลี่ยนสถานะจ๊อบ (Force Status)</Label>
+              <Label className="font-bold">บังคับเปลี่ยนสถานะจ๊อบ (Force Status)</Label>
               <Select 
                 defaultValue={editingJob?.status} 
                 onValueChange={(val) => handleUpdateJobManual(editingJob!.id, { status: val }, `แก้ไขสถานะเป็น ${jobStatusLabel(val)}`)}
@@ -296,12 +368,16 @@ export default function AdminUsersPage() {
 
             <Separator />
 
-            <div className="space-y-3">
-              <Label className="text-destructive font-bold flex items-center gap-2">
-                <Link2Off className="h-4 w-4" /> 
-                จัดการลิงก์เอกสาร (Bill Unlinking)
+            {/* Link Management Section */}
+            <div className="space-y-4">
+              <Label className="text-primary font-bold flex items-center gap-2">
+                <LinkIcon className="h-4 w-4" /> 
+                จัดการลิงก์เอกสาร (Bill Management)
               </Label>
-              <div className="p-3 border border-destructive/20 bg-destructive/5 rounded-md space-y-3">
+
+              {/* Unlink Section */}
+              <div className="p-3 border border-destructive/20 bg-destructive/5 rounded-md space-y-2">
+                <p className="text-xs font-bold text-destructive flex items-center gap-1"><Link2Off className="h-3 w-3"/> ล้างลิงก์เดิม</p>
                 <div className="flex justify-between items-center">
                   <span className="text-xs">เลขบิลปัจจุบัน: <b>{editingJob?.salesDocNo || "ไม่มี"}</b></span>
                   <Button 
@@ -315,14 +391,52 @@ export default function AdminUsersPage() {
                       salesDocType: deleteField()
                     }, "ล้างลิงก์เอกสารที่ผูกอยู่")}
                   >
-                    ล้างลิงก์บิลนี้ทิ้ง
+                    ล้างลิงก์ทิ้ง
                   </Button>
                 </div>
-                <p className="text-[9px] text-muted-foreground">เมื่อล้างลิงก์แล้ว จ๊อบจะสามารถ "ออกบิลใหม่" ได้ทันที (หากอยู่ในสถานะที่เหมาะสม)</p>
+                <p className="text-[9px] text-muted-foreground">เมื่อล้างลิงก์แล้ว จ๊อบจะสามารถ "ออกบิลใหม่" ได้ทันที</p>
+              </div>
+
+              {/* Relink / Link Existing Section */}
+              <div className="p-3 border border-primary/20 bg-primary/5 rounded-md space-y-3">
+                <p className="text-xs font-bold text-primary flex items-center gap-1"><PlusCircle className="h-3 w-3"/> สร้างลิงก์ใหม่ (Link Existing Doc)</p>
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="ใส่เลขบิลที่ต้องการผูก (เช่น DN...)" 
+                    className="h-8 text-xs font-mono"
+                    value={linkDocNo}
+                    onChange={e => setLinkDocNo(e.target.value)}
+                  />
+                  <Button size="sm" className="h-8 px-2" onClick={handleSearchDocument} disabled={isSearchingDoc || !linkDocNo.trim()}>
+                    {isSearchingDoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                  </Button>
+                </div>
+
+                {foundDoc && (
+                  <div className="mt-2 p-2 bg-background border rounded-md animate-in slide-in-from-top-1">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="space-y-0.5">
+                        <Badge variant="outline" className="text-[8px] h-3 px-1">{docTypeLabel(foundDoc.docType)}</Badge>
+                        <p className="text-xs font-bold font-mono">{foundDoc.docNo}</p>
+                        <p className="text-[10px] text-muted-foreground">{foundDoc.customerSnapshot?.name}</p>
+                        <p className="text-[10px] font-bold text-primary">฿{foundDoc.grandTotal.toLocaleString()}</p>
+                      </div>
+                      <Button size="sm" className="h-7 text-[10px] bg-green-600 hover:bg-green-700" onClick={handleLinkDocument} disabled={isSaving}>
+                        {isSaving ? <Loader2 className="h-3 w-3 animate-spin"/> : <CheckCircle2 className="mr-1 h-3 w-3"/>}
+                        ผูกบิลนี้
+                      </Button>
+                    </div>
+                    {foundDoc.jobId && (
+                      <p className="text-[9px] text-destructive italic font-bold">* บิลนี้เคยผูกอยู่กับจ๊อบอื่น (ID: {foundDoc.jobId.substring(0,8)})</p>
+                    )}
+                  </div>
+                )}
+                <p className="text-[9px] text-muted-foreground">ใช้สำหรับกรณีออกบิลมือหรือแยกบิลแล้วต้องการนำมาผูกคืนกับใบงานค่ะ</p>
               </div>
             </div>
           </div>
-          <DialogFooter>
+          
+          <DialogFooter className="p-4 border-t bg-muted/10">
             <Button variant="ghost" onClick={() => setEditingJob(null)}>ปิดหน้าต่าง</Button>
           </DialogFooter>
         </DialogContent>
@@ -377,5 +491,3 @@ export default function AdminUsersPage() {
     </div>
   );
 }
-
-const Separator = () => <div className="h-px bg-muted w-full my-2" />;
