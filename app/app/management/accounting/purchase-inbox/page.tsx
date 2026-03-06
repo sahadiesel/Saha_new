@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
@@ -188,39 +187,6 @@ function PurchaseInboxPageContent() {
     return filtered;
   }, [claims, activeTab, searchTerm]);
 
-  // Unified Inventory Update Logic
-  const updateInventoryFromDoc = async (transaction: any, purchaseDoc: PurchaseDoc) => {
-    for (const item of purchaseDoc.items) {
-        if (!item.partId) continue;
-        const partRef = doc(db!, 'parts', item.partId);
-        const partSnap = await transaction.get(partRef);
-        
-        if (partSnap.exists()) {
-            const partData = partSnap.data() as Part;
-            const currentQty = partData.stockQty || 0;
-            const currentAvgCost = partData.costPrice || 0;
-            const receivedQty = item.quantity || 0;
-            const purchasePrice = item.unitPrice || 0;
-
-            const newTotalQty = currentQty + receivedQty;
-            let newAvgCost = currentAvgCost;
-
-            if (newTotalQty > 0) {
-                // Formula: ((Old Qty * Old Avg Cost) + (New Qty * New Price)) / Total Qty
-                newAvgCost = ((currentQty * currentAvgCost) + (receivedQty * purchasePrice)) / newTotalQty;
-            } else if (receivedQty > 0) {
-                newAvgCost = purchasePrice;
-            }
-
-            transaction.update(partRef, {
-                stockQty: newTotalQty,
-                costPrice: Math.round(newAvgCost * 100) / 100, // Round to 2 decimals
-                updatedAt: serverTimestamp()
-            });
-        }
-    }
-  };
-
   const handleApproveCash = async (formData: z.infer<typeof cashApprovalSchema>) => {
     if (!db || !profile || !approvingClaim) return;
     
@@ -232,7 +198,6 @@ function PurchaseInboxPageContent() {
             const purchaseDocRef = doc(db, 'purchaseDocs', approvingClaim.purchaseDocId);
             const purchaseDocSnap = await transaction.get(purchaseDocRef);
             if (!purchaseDocSnap.exists()) throw new Error(`ไม่พบเอกสารจัดซื้อเลขที่ ${approvingClaim.purchaseDocNo}`);
-            const purchaseDocData = purchaseDocSnap.data() as PurchaseDoc;
             
             const claimRef = doc(db, 'purchaseClaims', approvingClaim.id);
             const entryId = `PURCHASE_${approvingClaim.purchaseDocId}`;
@@ -274,12 +239,9 @@ function PurchaseInboxPageContent() {
                 accountingEntryId: entryId,
                 updatedAt: serverTimestamp()
             });
-
-            // UPDATE STOCK & AVERAGE COST
-            await updateInventoryFromDoc(transaction, purchaseDocData);
         });
         
-        toast({ title: "อนุมัติและบันทึกสต็อกสำเร็จ" });
+        toast({ title: "อนุมัติและลงบัญชีสำเร็จ" });
         setApprovingClaim(null);
     } catch (e: any) {
         toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message });
@@ -338,12 +300,9 @@ function PurchaseInboxPageContent() {
                 apObligationId: apId,
                 updatedAt: serverTimestamp()
             });
-
-            // UPDATE STOCK & AVERAGE COST
-            await updateInventoryFromDoc(transaction, purchaseDocData);
         });
         
-        toast({ title: "อนุมัติรายการและอัปเดตสต็อกสำเร็จ" });
+        toast({ title: "อนุมัติรายการสำเร็จ" });
         setApprovingClaim(null);
      } catch (e: any) {
         toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message });
@@ -390,7 +349,7 @@ function PurchaseInboxPageContent() {
 
   return (
     <>
-      <PageHeader title="รอตรวจสอบรายการซื้อ" description="ตรวจสอบความถูกต้องและอนุมัติเพื่ออัปเดตสต็อกและต้นทุนถัวเฉลี่ย" />
+      <PageHeader title="รอตรวจสอบรายการซื้อ" description="ตรวจสอบความถูกต้องและอนุมัติยอดเพื่อลงบัญชีรายวัน" />
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ClaimStatus)}>
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
           <TabsList>
@@ -435,7 +394,7 @@ function PurchaseInboxPageContent() {
                                         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4"/></Button></DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
                                             <DropdownMenuItem onSelect={() => setApprovingClaim(claim)} className="text-green-600 focus:text-green-600 font-semibold">
-                                                <CheckCircle className="mr-2 h-4 w-4"/>ยืนยันและรับเข้าสต็อก
+                                                <CheckCircle className="mr-2 h-4 w-4"/>ยืนยันลงบัญชี
                                             </DropdownMenuItem>
                                             <DropdownMenuItem onSelect={() => setRejectingClaim(claim)} className="text-destructive focus:text-destructive">
                                                 <XCircle className="mr-2 h-4 w-4"/>ตีกลับแก้ไข
@@ -456,10 +415,10 @@ function PurchaseInboxPageContent() {
       {approvingClaim?.paymentMode === 'CREDIT' && (
           <AlertDialog open={true} onOpenChange={(open) => !open && setApprovingClaim(null)}>
               <AlertDialogContent>
-                  <AlertDialogHeader><AlertDialogTitle>ยืนยันรายการซื้อ (เครดิต)</AlertDialogTitle><AlertDialogDescription>ต้องการอนุมัติรายการนี้เพื่ออัปเดตสต็อก/ต้นทุน และสร้างเป็นเจ้าหนี้การค้า (AP) หรือไม่?</AlertDialogDescription></AlertDialogHeader>
+                  <AlertDialogHeader><AlertDialogTitle>ยืนยันรายการซื้อ (เครดิต)</AlertDialogTitle><AlertDialogDescription>ต้องการอนุมัติรายการนี้เพื่อบันทึกเป็นเจ้าหนี้การค้า (AP) หรือไม่?</AlertDialogDescription></AlertDialogHeader>
                   <AlertDialogFooter>
                       <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleApproveCredit}>ยืนยันและรับเข้าสต็อก</AlertDialogAction>
+                      <AlertDialogAction onClick={handleApproveCredit}>ยืนยันรายการ</AlertDialogAction>
                   </AlertDialogFooter>
               </AlertDialogContent>
           </AlertDialog>
