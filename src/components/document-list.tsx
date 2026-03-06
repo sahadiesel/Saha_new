@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -89,6 +88,9 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
+  // Specific check for Quotation access
+  const canManageQuotations = isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
+
   const uniqueStatuses = useMemo(() => {
     const base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
     if (docType === 'DELIVERY_NOTE') return base.filter(s => s !== "APPROVED");
@@ -129,7 +131,7 @@ export function DocumentList({
       filtered = filtered.filter(doc =>
         doc.docNo.toLowerCase().includes(q) ||
         (doc.customerSnapshot.name || "").toLowerCase().includes(q) ||
-        (doc.customerSnapshot.phone || "").includes(q)
+        (doc.customerSnapshot.phone || "").toLowerCase().includes(q)
       );
     }
     return filtered;
@@ -146,7 +148,6 @@ export function DocumentList({
     const jobSnap = await getDoc(jobRef);
     if (jobSnap.exists()) {
       const jobData = jobSnap.data();
-      // Only unlink if the job is actually pointing to this document
       if (jobData.salesDocId === docObj.id) {
         batch.update(jobRef, {
           status: 'DONE',
@@ -286,6 +287,9 @@ export function DocumentList({
                   {paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
+                    
+                    const canEditCurrent = docItem.docType === 'QUOTATION' ? canManageQuotations : true;
+                    
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office')
                       ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}`
                       : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
@@ -302,12 +306,28 @@ export function DocumentList({
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>
-                            {editPath && <DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}> <Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>}
+                            
+                            {editPath && canEditCurrent && (
+                                <DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}> 
+                                    <Edit className="mr-2 h-4 w-4"/> แก้ไข
+                                </DropdownMenuItem>
+                            )}
+
                             {isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (
                               <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>
                             )}
-                            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}> <XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>
-                            {isUserAdmin && <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"> <Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>}
+
+                            {canEditCurrent && (
+                                <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}> 
+                                    <XCircle className="mr-2 h-4 w-4"/> ยกเลิก
+                                </DropdownMenuItem>
+                            )}
+
+                            {isUserAdmin && (
+                                <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"> 
+                                    <Trash2 className="mr-2 h-4 w-4" /> ลบ
+                                </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
