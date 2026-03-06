@@ -36,7 +36,8 @@ function ByStatusContent() {
     // Department-based restrictions (Managers in these depts are also restricted)
     switch (userDept) {
       case 'OFFICE':
-        return ["quotation", "waiting-approve", "pickup"];
+        // Updated: Added "done" (งานเสร็จรอทำบิล) for Office department
+        return ["quotation", "waiting-approve", "done", "pickup"];
       case 'PURCHASING':
         // พนักงานจัดซื้อเข้าได้แค่ "กำลังจัดอะไหล่" เท่านั้น
         return ["pending-parts"];
