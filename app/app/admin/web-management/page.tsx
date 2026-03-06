@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -48,7 +49,7 @@ const landingPageSchema = z.object({
 
 type LandingPageFormData = z.infer<typeof landingPageSchema>;
 
-export default function WebManagementPage() {
+export default function WebManagementHomePage() {
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -144,36 +145,29 @@ export default function WebManagementPage() {
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="flex justify-between items-center">
-        <Button variant="outline" onClick={() => router.push('/app')}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          ย้อนกลับหน้าหลัก
-        </Button>
-        <div className="flex gap-2">
-          {!isEditing ? (
-            <Button onClick={() => setIsEditing(true)}>
-              <Edit className="mr-2 h-4 w-4" />
-              แก้ไขเนื้อหา
-            </Button>
-          ) : (
-            <Button variant="ghost" onClick={handleCancel}>
-              <X className="mr-2 h-4 w-4" />
-              ยกเลิก
-            </Button>
-          )}
-        </div>
-      </div>
-
       <PageHeader title="จัดการหน้าแรก (Home)" description="แก้ไขข้อความที่ปรากฏบนหน้าแรกและส่วนท้ายของเว็บไซต์" />
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 max-w-4xl">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Globe className="h-5 w-5 text-primary" />
-                ส่วนหัวเว็บไซต์ (Hero Section)
-              </CardTitle>
+              <div className="flex justify-between items-center">
+                <CardTitle className="flex items-center gap-2">
+                  <Globe className="h-5 w-5 text-primary" />
+                  ส่วนหัวเว็บไซต์ (Hero Section)
+                </CardTitle>
+                {!isEditing ? (
+                  <Button type="button" size="sm" onClick={() => setIsEditing(true)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    แก้ไขเนื้อหา
+                  </Button>
+                ) : (
+                  <Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
+                    <X className="mr-2 h-4 w-4" />
+                    ยกเลิก
+                  </Button>
+                )}
+              </div>
               <CardDescription>เนื้อหาที่จะปรากฏส่วนบนสุดของเว็บไซต์</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

@@ -148,9 +148,29 @@ const HRSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     );
 };
 
+const WebManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
+    const pathname = usePathname();
+    const isOpen = pathname.startsWith('/app/admin/web-management');
+    return (
+        <Collapsible defaultOpen={isOpen}>
+            <CollapsibleTrigger asChild>
+                <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
+                    จัดการเว็บไซต์
+                    <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
+                </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="py-1 pl-4 space-y-1">
+                <SubNavLink href="/app/admin/web-management" label="จัดการหน้าแรก" onClick={onLinkClick} />
+                <SubNavLink href="/app/admin/web-management/products" label="จัดการหน้าสินค้า" onClick={onLinkClick} />
+                <SubNavLink href="/app/admin/web-management/services" label="จัดการหน้างานบริการ" onClick={onLinkClick} />
+            </CollapsibleContent>
+        </Collapsible>
+    );
+};
+
 const AdminSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
-    const isOpen = pathname.startsWith('/app/admin');
+    const isOpen = pathname.startsWith('/app/admin') && !pathname.startsWith('/app/admin/web-management');
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
@@ -161,7 +181,6 @@ const AdminSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
             </CollapsibleTrigger>
             <CollapsibleContent className="py-1 pl-4 space-y-1">
                 <SubNavLink href="/app/admin/users" label="จัดการผู้ใช้ / Maintenance" onClick={onLinkClick} />
-                <SubNavLink href="/app/admin/web-management" label="จัดการเว็บไซต์ (Web)" icon={Globe} onClick={onLinkClick} />
             </CollapsibleContent>
         </Collapsible>
     );
@@ -294,6 +313,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                            <ManagementAccountingSubMenu onLinkClick={onLinkClick} />
                         )}
                         <HRSubMenu onLinkClick={onLinkClick} />
+                        <WebManagementSubMenu onLinkClick={onLinkClick} />
                         <SettingsSubMenu onLinkClick={onLinkClick} />
                         {isSystemAdmin && <AdminSubMenu onLinkClick={onLinkClick} />}
                     </>
@@ -397,11 +417,6 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                                 </Collapsible>
                             </>
                         )}
-                    </>
-                )}
-                {department === 'WEB_MANAGEMENT' && (
-                    <>
-                        <SubNavLink href="/app/admin/web-management" label="จัดการหน้าแรก (Home)" icon={Settings} onClick={onLinkClick} />
                     </>
                 )}
             </CollapsibleContent>
