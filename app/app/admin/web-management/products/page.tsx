@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -18,6 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import { Loader2, Search, Package, Globe, PlusCircle, Settings, Trash2, Box, Info, Sparkles, Gift, LayoutGrid } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -311,7 +312,7 @@ export default function WebManagementProductsPage() {
                             <FormControl><Input type="number" {...field} placeholder="0" /></FormControl>
                         </FormItem>
                     )} />
-                    <FormField control={manageForm.control} name="bulkPrice" render={({ field }) => (
+                    <FormField control={form.control} name="bulkPrice" render={({ field }) => (
                         <FormItem>
                             <FormLabel className="text-[10px] uppercase">ราคาต่อชิ้นที่ลด</FormLabel>
                             <FormControl><Input type="number" step="0.01" {...field} placeholder="0" /></FormControl>
