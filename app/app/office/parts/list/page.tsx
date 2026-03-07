@@ -663,11 +663,11 @@ export default function PartsInventoryPage() {
                         )}
                       </div>
                       {(watchedCode || editingPart?.code) && (
-                        <div className="mt-4 flex flex-col items-center p-4 border rounded-lg bg-white shadow-sm overflow-hidden">
+                        <div className="mt-2 flex flex-col items-center p-2 border rounded-lg bg-white shadow-sm overflow-hidden">
                           <img 
-                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=8&textsize=8`} 
+                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=10&textsize=7`} 
                             alt="Barcode"
-                            className="w-full h-auto block"
+                            className="w-full h-14 block"
                           />
                         </div>
                       )}
