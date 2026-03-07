@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { BrowserMultiFormatReader } from '@zxing/browser';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
@@ -29,17 +29,15 @@ import {
 } from "@/components/ui/dialog";
 import { 
   Loader2, PlusCircle, Trash2, Save, ArrowLeft, Search, 
-  ScanBarcode, AlertCircle, Info, Package, User, FileText, Camera, ImageIcon, X
+  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Customer, Job, Part, Document as DocumentType } from "@/lib/types";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 
 const withdrawalItemSchema = z.object({
   partId: z.string().min(1, "กรุณาเลือกอะไหล่"),
@@ -86,7 +84,6 @@ export default function PartWithdrawalForm() {
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [activePartSearchIdx, setActivePartSearchIdx] = useState<number | null>(null);
 
-  // Scanner states
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControlsRef = useRef<any>(null);
@@ -110,7 +107,6 @@ export default function PartWithdrawalForm() {
   const watchedRefType = form.watch("refType");
   const watchedCustomerId = form.watch("customerId");
 
-  // Fetch data
   useEffect(() => {
     if (!db) return;
     
@@ -203,7 +199,6 @@ export default function PartWithdrawalForm() {
 
           const actRef = doc(collection(db, "stockActivities"));
           transaction.set(actRef, sanitizeForFirestore({
-            id: actRef.id,
             partId: item.partId,
             partCode: item.code,
             partName: item.name,
@@ -377,7 +372,7 @@ export default function PartWithdrawalForm() {
                   </TableBody>
                 </Table>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => append({ partId: "", quantity: 1 })}><PlusCircle className="mr-2 h-4 w-4" /> เพิ่มรายการ</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => append({ partId: "", quantity: 1, name: "", code: "", stockQty: 0 })} disabled={isSubmitting || fields.length >= 50}><PlusCircle className="mr-2 h-4 w-4" /> เพิ่มรายการ</Button>
             </CardContent>
           </Card>
 

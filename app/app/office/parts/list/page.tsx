@@ -37,8 +37,6 @@ import Image from "next/image";
 import type { Part, PartCategory, PartLocation, StockActivity } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
-import { errorEmitter } from '@/firebase/error-emitter';
-import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
 const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
@@ -355,9 +353,23 @@ export default function PartsInventoryPage() {
         const diff = values.type === "ADJUST_ADD" ? values.diffQty : -values.diffQty;
         const newQty = currentQty + diff;
         if (newQty < 0) throw new Error("สต็อกคงเหลือห้ามติดลบ");
+        
         transaction.update(partRef, { stockQty: newQty, updatedAt: serverTimestamp() });
+        
         const activityRef = doc(collection(db, "stockActivities"));
-        transaction.set(actRef, sanitizeForFirestore({ id: activityRef.id, partId: editingPart.id, partCode: editingPart.code, partName: editingPart.name, type: values.type, diffQty: values.diffQty, beforeQty: currentQty, afterQty: newQty, notes: values.notes, createdByUid: profile.uid, createdByName: profile.displayName, createdAt: serverTimestamp() }));
+        transaction.set(activityRef, sanitizeForFirestore({
+          partId: editingPart.id,
+          partCode: editingPart.code,
+          partName: editingPart.name,
+          type: values.type,
+          diffQty: values.diffQty,
+          beforeQty: currentQty,
+          afterQty: newQty,
+          notes: values.notes,
+          createdByUid: profile.uid,
+          createdByName: profile.displayName,
+          createdAt: serverTimestamp(),
+        }));
       });
       toast({ title: "ปรับปรุงสต็อกสำเร็จ" });
       setIsAdjustingStock(false);
