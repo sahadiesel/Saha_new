@@ -665,9 +665,9 @@ export default function PartsInventoryPage() {
                       </div>
                       {(watchedCode || editingPart?.code) && (
                         <div className="mt-4 flex flex-col items-center p-3 border rounded-lg bg-white shadow-sm overflow-hidden">
-                          <div className="relative w-full h-24 flex justify-center bg-white">
+                          <div className="relative w-full h-20 flex justify-center bg-white">
                             <Image 
-                              src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=5&rotate=N&includetext&barheight=15`} 
+                              src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=10&rotate=N&includetext&barheight=10`} 
                               alt="Barcode Code 128" 
                               fill 
                               className="object-contain" 
