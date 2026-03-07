@@ -82,8 +82,8 @@ export default function LandingPage() {
       <PublicHeader />
 
       <main className="flex-1">
-        {/* Hero Section */}
-        <section className="relative h-[85vh] w-full flex items-center justify-center overflow-hidden">
+        {/* Hero Section - Added pt-20 to avoid overlap with fixed header */}
+        <section className="relative min-h-[90vh] w-full flex items-center justify-center overflow-hidden pt-20 md:pt-24">
           <Image
             src={bgImage.imageUrl}
             alt={bgImage.description}
@@ -94,7 +94,7 @@ export default function LandingPage() {
           />
           <div className="absolute inset-0 bg-gradient-to-b from-slate-900/60 via-transparent to-slate-900" />
           
-          <div className="container relative z-10 mx-auto px-4 text-center max-w-4xl">
+          <div className="container relative z-10 mx-auto px-4 text-center max-w-4xl py-12">
             <h1 className="font-headline text-5xl md:text-7xl font-bold mb-6 tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
               {content.heroTitle}
             </h1>
@@ -168,7 +168,7 @@ export default function LandingPage() {
                 </div>
                 <div className="relative aspect-video rounded-2xl overflow-hidden shadow-2xl group border border-white/5">
                   <Image 
-                    src="https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwzfHxtZWNoYW5pYyUyMHdvcmt8ZW58MHx8fHwxNzQwOTIyOTQxfDA&ixlib=rb-4.1.0&q=80&w=800" 
+                    src="https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHjaHjaHxtZWNoYW5pYyUyMHdvcmt8ZW58MHx8fHwxNzQwOTIyOTQxfDA&ixlib=rb-4.1.0&q=80&w=800" 
                     alt="Service View 2" 
                     fill 
                     className="object-cover transition-transform duration-700 group-hover:scale-110"
