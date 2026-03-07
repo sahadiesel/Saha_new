@@ -11,14 +11,13 @@ export function PublicFooter({ content }: PublicFooterProps) {
   // Use provided content or fallbacks
   const aboutTitle = content?.footerAboutTitle || "เกี่ยวกับเรา";
   const aboutDesc = content?.footerAboutDesc || "Sahadiesel Service Center ผู้เชี่ยวชาญด้านการซ่อมบำรุงรถยนต์และระบบปั๊มหัวฉีดคอมมอนเรล";
-  const contactTitle = content?.footerContactTitle || "ติดต่อเรา";
   const phone = content?.footerPhone || "02-XXX-XXXX";
   const address = content?.footerAddress || "เขตภาษีเจริญ กรุงเทพมหานคร";
   const website = content?.footerWebsite || "www.sahadiesel.com";
   const facebookUrl = content?.footerFacebookUrl || "#";
 
   return (
-    <footer className="bg-slate-950 text-slate-400 py-12 border-t border-white/5" id="contact">
+    <footer className="bg-slate-950 text-slate-400 py-12 border-t border-white/5">
       <div className="container mx-auto px-4">
         <div className="grid md:grid-cols-3 gap-12">
           <div className="space-y-4">
@@ -29,7 +28,7 @@ export function PublicFooter({ content }: PublicFooterProps) {
           </div>
           
           <div className="space-y-4">
-            <h3 className="text-white font-bold text-lg border-l-2 border-primary pl-3">{contactTitle}</h3>
+            <h3 className="text-white font-bold text-lg border-l-2 border-primary pl-3">ช่องทางหลัก</h3>
             <div className="space-y-3 text-sm">
               <div className="flex items-center gap-3">
                 <div className="bg-primary/10 p-1.5 rounded-full"><Phone className="h-4 w-4 text-primary" /></div>
