@@ -789,7 +789,7 @@ function JobDetailsPageContent() {
   return (
     <>
       <Button variant="outline" size="sm" className="mb-4" onClick={() => router.back()}><ArrowLeft className="mr-2 h-4 w-4" /> ย้อนกลับ</Button>
-      <PageHeader title={`Job: ${job.customerSnapshot.name}`} description={`ID: ${job.id.substring(0,8)}...`} />
+      <PageHeader title={`Job: ${job.customerSnapshot.name}`} description={`ID: ${job.id}`} />
       
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
@@ -1162,16 +1162,12 @@ function JobDetailsPageContent() {
               ยืนยันการกู้คืนงานจากประวัติ?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะย้ายงานซ่อมชิ้นนี้จากประวัติกลับมาเป็นงานที่กำลังดำเนินการ (Active)
+              ต้องการย้ายงานซ่อมนี้จากประวัติกลับมาเป็นงานที่กำลังดำเนินการหรือไม่?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isRestoring}>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleRestoreJob} 
-              disabled={isRestoring}
-              className="bg-amber-600 hover:bg-amber-700"
-            >
+            <AlertDialogAction onClick={handleRestoreJob} disabled={isRestoring} className="bg-amber-600 hover:bg-amber-700">
               {isRestoring ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
               ยืนยันกู้คืน
             </AlertDialogAction>
@@ -1181,21 +1177,8 @@ function JobDetailsPageContent() {
 
       <AlertDialog open={isBillingSelectionOpen} onOpenChange={setIsBillingSelectionOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>เลือกประเภทเอกสารที่ต้องการออก</AlertDialogTitle>
-            <AlertDialogDescription>
-              กรุณาเลือกประเภทเอกสารเพื่อดำเนินการออกบิล
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
-            <Button variant="secondary" onClick={() => { router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
-              <FileText className="mr-2 h-4 w-4" /> ใบส่งของชั่วคราว
-            </Button>
-            <Button onClick={() => { router.push(`/app/office/documents/tax-invoice/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">
-              <Receipt className="mr-2 h-4 w-4" /> ใบกำกับภาษี
-            </Button>
-          </AlertDialogFooter>
+          <AlertDialogHeader><AlertDialogTitle>เลือกประเภทเอกสาร</AlertDialogTitle><AlertDialogDescription>เลือกประเภทเอกสารที่ต้องการออกสำหรับงานซ่อมของ <b>{job?.customerSnapshot.name}</b></AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter className="flex flex-col sm:flex-row gap-2"><Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button><Button variant="secondary" onClick={() => { if (job) router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">ใบส่งของชั่วคราว</Button><Button onClick={() => { if (job) router.push(`/app/office/documents/tax-invoice/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">ใบกำกับภาษี</Button></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

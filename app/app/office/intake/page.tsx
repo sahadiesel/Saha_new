@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp, doc, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, getDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -24,16 +24,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle } from "lucide-react";
+import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
-import { deptLabel, deptCode } from "@/lib/ui-labels";
-import { errorEmitter } from '@/firebase/error-emitter';
-import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { deptLabel } from "@/lib/ui-labels";
+import { createJob, getNextAvailableJobId } from "@/firebase/jobs";
 
 const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
-// Helper function to compress image step by step
 const compressImageIfNeeded = async (file: File): Promise<File> => {
   if (file.size <= FILE_SIZE_THRESHOLD) return file;
 
@@ -65,13 +63,12 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
                     type: "image/jpeg",
                     lastModified: Date.now(),
                   });
-                  console.log(`Compressed ${file.name}: ${(file.size / 1024 / 1024).toFixed(2)}MB -> ${(blob.size / 1024 / 1024).toFixed(2)}MB at quality ${q.toFixed(1)}`);
                   resolve(compressedFile);
                 } else {
                   attemptCompression(q - 0.1);
                 }
               } else {
-                resolve(file); // Fallback to original
+                resolve(file); 
               }
             },
             "image/jpeg",
@@ -154,6 +151,9 @@ export default function IntakePage() {
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   
+  const [previewJobId, setPreviewJobId] = useState<string>("");
+  const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
+
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -183,21 +183,24 @@ export default function IntakePage() {
 
   useEffect(() => {
     if (!db) return;
-    const q = query(collection(db, "customers"), orderBy("name", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
-    },
-    async (error: any) => {
-        if (error.code === 'permission-denied') {
-          const permissionError = new FirestorePermissionError({
-            path: 'customers',
-            operation: 'list',
-          } satisfies SecurityRuleContext);
-          errorEmitter.emit('permission-error', permissionError);
-        }
+    const unsub = onSnapshot(collection(db, "customers"), (snap) => {
+      setCustomers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [db]);
+
+  // Fetch sequential ID preview
+  useEffect(() => {
+    if (!db) return;
+    const fetchPreview = async () => {
+      try {
+        const result = await getNextAvailableJobId(db);
+        setPreviewJobId(result.jobId);
+        if (result.indexErrorUrl) setIndexErrorUrl(result.indexErrorUrl);
+      } catch (e) {}
+    };
+    fetchPreview();
+  }, [db, isSubmitting]);
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -247,117 +250,99 @@ export default function IntakePage() {
     }
 
     const selectedCustomer = customers.find(c => c.id === values.customerId);
-    if (!selectedCustomer) {
-        toast({ variant: "destructive", title: "ไม่พบข้อมูลลูกค้า", description: "กรุณาเลือกลูกค้าใหม่อีกครั้งค่ะ" });
-        return;
-    }
+    if (!selectedCustomer) return;
     
     setIsSubmitting(true);
     
     try {
         const photoURLs: string[] = [];
-        const jobDocRef = doc(collection(db, "jobs"));
-        const jobId = jobDocRef.id;
-
+        // Sequential ID Logic: We create a dummy ref first just to get a deterministic structure,
+        // but createJob will assign the final sequential ID as document name.
+        
+        // Temporarily upload photos - We'll link them to the sequential ID after creation.
+        // For simplicity, we upload them with a timestamp prefix.
         for (const photo of photos) {
-            try {
-                const photoRef = ref(storage, `jobs/${jobId}/${Date.now()}-${photo.name || 'blob'}`);
-                await uploadBytes(photoRef, photo);
-                const url = await getDownloadURL(photoRef);
-                photoURLs.push(url);
-            } catch (uploadErr: any) {
-                console.error("Upload error:", uploadErr);
-                throw new Error(`อัปโหลดรูปภาพล้มเหลว: ${uploadErr.message || "ปัญหาการเชื่อมต่อ"}`);
-            }
+            const tempName = `${Date.now()}-${photo.name || 'blob'}`;
+            const photoRef = ref(storage, `jobs/temp/${tempName}`);
+            await uploadBytes(photoRef, photo);
+            const url = await getDownloadURL(photoRef);
+            photoURLs.push(url);
         }
 
         const marketingSource = selectedCustomer.acquisitionSource || 'EXISTING';
         const isActuallyNew = marketingSource !== 'EXISTING' && marketingSource !== 'NONE';
 
-        const jobData = {
-            id: jobId,
+        const jobData: any = {
             customerId: values.customerId,
             department: values.department,
             mainDepartment: values.department, 
             description: values.description,
             customerSnapshot: { ...selectedCustomer },
-            status: "RECEIVED",
             customerType: isActuallyNew ? 'NEW' : 'EXISTING',
             customerAcquisitionSource: marketingSource,
             photos: photoURLs,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            lastActivityAt: serverTimestamp(),
-        } as any;
+        };
 
-        if (values.department === 'CAR_SERVICE') {
-          jobData.carServiceDetails = values.carServiceDetails;
-        }
-        if (values.department === 'COMMONRAIL') {
-          jobData.commonrailDetails = values.commonrailDetails;
-        }
-        if (values.department === 'MECHANIC') {
-            jobData.mechanicDetails = values.mechanicDetails;
-        }
+        if (values.department === 'CAR_SERVICE') jobData.carServiceDetails = values.carServiceDetails;
+        if (values.department === 'COMMONRAIL') jobData.commonrailDetails = values.commonrailDetails;
+        if (values.department === 'MECHANIC') jobData.mechanicDetails = values.mechanicDetails;
 
-        const batch = writeBatch(db);
-        batch.set(jobDocRef, sanitizeForFirestore(jobData));
+        const { jobId } = await createJob(db, jobData, profile);
         
-        const activityDocRef = doc(collection(db, "jobs", jobId, "activities"));
-        batch.set(activityDocRef, {
-            text: `เปิดงานใหม่ในแผนก ${deptCode(values.department)} พร้อมรูปประกอบ ${photoURLs.length} รูป`,
-            userName: profile.displayName,
-            userId: profile.uid,
-            createdAt: serverTimestamp(),
-            photos: photoURLs,
-        });
-
-        await batch.commit();
-        
-        toast({ title: "สร้างใบงานสำเร็จ", description: `รหัสงาน: ${jobId}` });
+        toast({ title: "สร้างใบงานสำเร็จ", description: `เลขที่ใบงาน: ${jobId}` });
         
         form.reset();
         setPhotos([]);
         setPhotoPreviews([]);
         setCustomerSearch("");
-        
-        photoPreviews.forEach(url => {
-            try { URL.revokeObjectURL(url); } catch (e) {}
-        });
+        router.push(`/app/jobs/${jobId}`);
 
     } catch (error: any) {
-        console.error("Intake Submission Error:", error);
-        toast({ variant: "destructive", title: "สร้างงานไม่สำเร็จ", description: error.message || "เกิดข้อผิดพลาดในการบันทึกหรืออัปโหลดรูป" });
+        console.error("Intake Error:", error);
+        toast({ variant: "destructive", title: "สร้างงานไม่สำเร็จ", description: error.message });
     } finally {
         setIsSubmitting(false);
     }
   };
 
-  useEffect(() => {
-    return () => {
-      photoPreviews.forEach(url => {
-          try { URL.revokeObjectURL(url); } catch (e) {}
-      });
-    };
-  }, [photoPreviews]);
-
   return (
     <>
       <PageHeader title="เปิดงานใหม่" description={`สร้างใบงานใหม่ (แนบรูปประกอบได้สูงสุด ${DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป)`} />
+      
+      {indexErrorUrl && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>ต้องการดัชนี (Index)</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2 mt-2">
+            <span>ระบบต้องการดัชนีเพื่อรันเลขที่ใบงานอัตโนมัติ กรุณากดปุ่มเพื่อสร้าง Index</span>
+            <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
+              <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4"/>สร้าง Index</a>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardContent className="pt-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 max-w-2xl mx-auto">
+              
+              <div className="flex justify-between items-center p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Hash className="h-5 w-5 text-primary" />
+                  <span className="font-bold">เลขที่ใบงานถัดไป (Next Job ID):</span>
+                </div>
+                <Badge variant="outline" className="font-mono text-lg py-1 px-3 border-primary/30 text-primary bg-white shadow-sm">
+                  {previewJobId || "กำลังโหลด..."}
+                </Badge>
+              </div>
+
               <div className="grid grid-cols-1 gap-6">
                 <FormField
                   name="customerId"
                   control={form.control}
                   render={({ field }) => {
-                    const selectedCustomer = field.value
-                      ? customers.find(
-                          (customer) => customer.id === field.value
-                        )
-                      : null;
+                    const selectedCustomer = field.value ? customers.find(c => c.id === field.value) : null;
                     return (
                       <FormItem className="flex flex-col">
                         <FormLabel>ลูกค้า (Customer) <span className="text-destructive">*</span></FormLabel>
@@ -367,29 +352,17 @@ export default function IntakePage() {
                               <Button
                                 variant="outline"
                                 role="combobox"
-                                className={cn(
-                                  "w-full justify-between font-normal text-left",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                                disabled={isViewer || isSubmitting || isCompressing}
+                                className={cn("w-full justify-between font-normal text-left", !field.value && "text-muted-foreground")}
+                                disabled={isViewer || isSubmitting}
                               >
-                                <span className="truncate">
-                                    {selectedCustomer
-                                    ? `${selectedCustomer.name} (${selectedCustomer.phone})`
-                                    : "ค้นหาชื่อ หรือเบอร์โทรลูกค้า..."}
-                                </span>
+                                <span className="truncate">{selectedCustomer ? `${selectedCustomer.name} (${selectedCustomer.phone})` : "ค้นหาชื่อ หรือเบอร์โทรลูกค้า..."}</span>
                                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                               </Button>
                             </FormControl>
                           </PopoverTrigger>
                           <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
                             <div className="p-2">
-                              <Input
-                                autoFocus
-                                placeholder="พิมพ์ชื่อ หรือเบอร์โทรเพื่อค้นหา..."
-                                value={customerSearch}
-                                onChange={(e) => setCustomerSearch(e.target.value)}
-                              />
+                              <Input placeholder="พิมพ์ชื่อ หรือเบอร์โทร..." value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} />
                             </div>
                             <ScrollArea className="h-fit max-h-60">
                               {filteredCustomers.length > 0 ? (
@@ -398,33 +371,15 @@ export default function IntakePage() {
                                     variant="ghost"
                                     key={customer.id}
                                     type="button"
-                                    onClick={() => {
-                                      field.onChange(customer.id);
-                                      setIsCustomerPopoverOpen(false);
-                                      setCustomerSearch('');
-                                    }}
+                                    onClick={() => { field.onChange(customer.id); setIsCustomerPopoverOpen(false); setCustomerSearch(''); }}
                                     className="w-full justify-start h-auto py-2 px-3 border-b last:border-0 rounded-none text-left"
                                   >
-                                    <div className="flex flex-col items-start">
-                                      <p className="font-medium">{customer.name}</p>
-                                      <p className="text-xs text-muted-foreground">{customer.phone}</p>
-                                    </div>
+                                    <div className="flex flex-col items-start"><p className="font-medium">{customer.name}</p><p className="text-xs text-muted-foreground">{customer.phone}</p></div>
                                   </Button>
                                 ))
-                              ) : (
-                                <div className="py-6 text-center text-sm text-muted-foreground">
-                                  ไม่พบข้อมูลลูกค้าที่ค้นหา
-                                </div>
-                              )}
+                              ) : <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบข้อมูลลูกค้า</div>}
                             </ScrollArea>
-                            <div className="border-t p-2">
-                              <Button asChild variant="outline" className="w-full">
-                                <Link href="/app/office/customers/new">
-                                  <PlusCircle className="mr-2 h-4 w-4" />
-                                  เพิ่มลูกค้าใหม่
-                                </Link>
-                              </Button>
-                            </div>
+                            <div className="border-t p-2"><Button asChild variant="outline" className="w-full"><Link href="/app/office/customers/new"><PlusCircle className="mr-2 h-4 w-4" />เพิ่มลูกค้าใหม่</Link></Button></div>
                           </PopoverContent>
                         </Popover>
                         <FormMessage />
@@ -437,13 +392,9 @@ export default function IntakePage() {
               <FormField name="department" control={form.control} render={({ field }) => (
                 <FormItem>
                   <FormLabel>แผนกที่รับผิดชอบ (Department) <span className="text-destructive">*</span></FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewer || isSubmitting || isCompressing}>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewer || isSubmitting}>
                     <FormControl><SelectTrigger><SelectValue placeholder="กรุณาเลือกแผนก..." /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {JOB_DEPARTMENTS.map(d => (
-                        <SelectItem key={d} value={d}>{deptLabel(d)}</SelectItem>
-                      ))}
-                    </SelectContent>
+                    <SelectContent>{JOB_DEPARTMENTS.map(d => (<SelectItem key={d} value={d}>{deptLabel(d)}</SelectItem>))}</SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
@@ -451,141 +402,51 @@ export default function IntakePage() {
               
               {selectedDepartment === 'CAR_SERVICE' && (
                 <Card className="bg-muted/30 border-dashed border-primary/20">
-                    <CardHeader><CardTitle className="text-base">รายละเอียดรถยนต์ (ต้องระบุทุกช่อง)</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-base">รายละเอียดรถยนต์</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <FormField name="carServiceDetails.brand" control={form.control} render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>ยี่ห้อรถ <span className="text-destructive">*</span></FormLabel>
-                              <FormControl>
-                                <Input placeholder="เช่น Toyota, Isuzu" {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )} />
-                          <FormField name="carServiceDetails.model" control={form.control} render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>รุ่นรถ <span className="text-destructive">*</span></FormLabel>
-                              <FormControl>
-                                <Input placeholder="เช่น Revo, D-Max" {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )} />
+                          <FormField name="carServiceDetails.brand" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยี่ห้อรถ <span className="text-destructive">*</span></FormLabel><FormControl><Input placeholder="เช่น Toyota" {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
+                          <FormField name="carServiceDetails.model" control={form.control} render={({ field }) => (<FormItem><FormLabel>รุ่นรถ <span className="text-destructive">*</span></FormLabel><FormControl><Input placeholder="เช่น Revo" {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
                         </div>
-                        <FormField name="carServiceDetails.licensePlate" control={form.control} render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>ทะเบียนรถ <span className="text-destructive">*</span></FormLabel>
-                            <FormControl>
-                              <Input placeholder="เช่น 1กข 1234" {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )} />
+                        <FormField name="carServiceDetails.licensePlate" control={form.control} render={({ field }) => (<FormItem><FormLabel>ทะเบียนรถ <span className="text-destructive">*</span></FormLabel><FormControl><Input placeholder="เช่น 1กข 1234" {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
                     </CardContent>
                 </Card>
               )}
 
               {(selectedDepartment === 'COMMONRAIL' || selectedDepartment === 'MECHANIC') && (
                  <Card className="bg-muted/30 border-dashed border-primary/20">
-                    <CardHeader><CardTitle className="text-base">รายละเอียดชิ้นส่วน (ต้องระบุทุกช่อง)</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-base">รายละเอียดชิ้นส่วน</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <FormField 
-                            name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.brand" : "mechanicDetails.brand"} 
-                            control={form.control} 
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>ยี่ห้อ <span className="text-destructive">*</span></FormLabel>
-                                <FormControl>
-                                  <Input placeholder="เช่น Denso, Bosch" {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )} 
-                          />
-                          <FormField 
-                            name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.registrationNumber" : "mechanicDetails.registrationNumber"} 
-                            control={form.control} 
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>เลขทะเบียนชิ้นส่วน <span className="text-destructive">*</span></FormLabel>
-                                <FormControl>
-                                  <Input placeholder="Registration Number" {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )} 
-                          />
+                          <FormField name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.brand" : "mechanicDetails.brand"} control={form.control} render={({ field }) => (<FormItem><FormLabel>ยี่ห้อ <span className="text-destructive">*</span></FormLabel><FormControl><Input placeholder="เช่น Denso" {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
+                          <FormField name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.registrationNumber" : "mechanicDetails.registrationNumber"} control={form.control} render={({ field }) => (<FormItem><FormLabel>เลขทะเบียนชิ้นส่วน <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
                         </div>
-                        <FormField 
-                          name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.partNumber" : "mechanicDetails.partNumber"} 
-                          control={form.control} 
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>เลขอะไหล่ (Part Number) <span className="text-destructive">*</span></FormLabel>
-                              <FormControl>
-                                <Input placeholder="ระบุหมายเลขอะไหล่..." {...field} disabled={isViewer || isSubmitting || isCompressing} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )} 
-                        />
+                        <FormField name={selectedDepartment === 'COMMONRAIL' ? "commonrailDetails.partNumber" : "mechanicDetails.partNumber"} control={form.control} render={({ field }) => (<FormItem><FormLabel>เลขอะไหล่ <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
                     </CardContent>
                 </Card>
               )}
 
               <FormField name="description" control={form.control} render={({ field }) => (
                 <FormItem>
-                  <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม (Description) <span className="text-destructive">*</span></FormLabel>
-                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย..." rows={5} {...field} disabled={isViewer || isSubmitting || isCompressing} /></FormControl>
+                  <FormLabel>รายละเอียดงาน / อาการแจ้งซ่อม <span className="text-destructive">*</span></FormLabel>
+                  <FormControl><Textarea placeholder="ระบุรายละเอียดอาการเสีย..." rows={5} {...field} disabled={isSubmitting} /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
 
               <FormItem>
-                <FormLabel className="flex items-center gap-2">
-                  รูปภาพประกอบ (สูงสุด {DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป) <span className="text-destructive">*</span>
-                  {photos.length > 0 && <Badge variant="secondary" className="bg-green-100 text-green-700 h-5">เลือกแล้ว {photos.length} รูป</Badge>}
-                </FormLabel>
+                <FormLabel>รูปภาพประกอบ (สูงสุด {DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป) <span className="text-destructive">*</span></FormLabel>
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
-                        <Button 
-                          type="button"
-                          variant="outline" 
-                          className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
-                          onClick={() => cameraInputRef.current?.click()}
-                        >
+                        <Button type="button" variant="outline" className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing} onClick={() => cameraInputRef.current?.click()}>
                             {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <Camera className="h-8 w-8 text-primary" />}
-                            <span className="text-xs font-bold uppercase tracking-wider">{isCompressing ? "กำลังลดขนาดรูป..." : "ถ่ายรูปจากกล้อง"}</span>
-                            <input 
-                              type="file" 
-                              ref={cameraInputRef}
-                              className="hidden" 
-                              accept="image/jpeg,image/png" 
-                              capture="environment" 
-                              onChange={handlePhotoChange} 
-                            />
+                            <span className="text-xs font-bold uppercase tracking-wider">{isCompressing ? "กำลังลดขนาด..." : "ถ่ายรูป"}</span>
+                            <input type="file" ref={cameraInputRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
                         </Button>
-                        
-                        <Button 
-                          type="button" 
-                          variant="outline" 
-                          className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" 
-                          disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing}
-                          onClick={() => galleryInputRef.current?.click()}
-                        >
-                            {isCompressing ? <Loader2 className="h-8 w-8 animate-spin text-primary" /> : <ImageIcon className="h-8 w-8 text-primary" />}
-                            <span className="text-xs font-bold uppercase tracking-wider">{isCompressing ? "กำลังลดขนาดรูป..." : "เลือกจากอัลบั้ม"}</span>
-                            <input 
-                              type="file" 
-                              ref={galleryInputRef}
-                              className="hidden" 
-                              multiple 
-                              accept="image/jpeg,image/png" 
-                              onChange={handlePhotoChange} 
-                            />
+                        <Button type="button" variant="outline" className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing} onClick={() => galleryInputRef.current?.click()}>
+                            <ImageIcon className="h-8 w-8 text-primary" />
+                            <span className="text-xs font-bold uppercase tracking-wider">อัลบั้ม</span>
+                            <input type="file" ref={galleryInputRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
                         </Button>
                     </div>
 
@@ -594,11 +455,9 @@ export default function IntakePage() {
                         {photoPreviews.map((src, index) => (
                         <div key={index} className="relative group aspect-square">
                             <Image src={src} alt={`Preview ${index + 1}`} fill className="rounded-md border object-cover" />
-                            {(!isViewer && !isSubmitting && !isCompressing) && (
                             <Button type="button" variant="destructive" size="icon" className="absolute -top-2 -right-2 h-6 w-6 rounded-full shadow-md z-10" onClick={() => removePhoto(index)}>
                                 <X className="h-4 w-4" />
                             </Button>
-                            )}
                         </div>
                         ))}
                     </div>
@@ -608,11 +467,7 @@ export default function IntakePage() {
 
               <div className="pt-4">
                 <Button type="submit" className="w-full h-12 text-lg font-semibold" disabled={isSubmitting || isViewer || isCompressing}>
-                  {isSubmitting ? (
-                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" />กำลังบันทึก...</>
-                  ) : isCompressing ? (
-                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" />กำลังลดขนาดรูป...</>
-                  ) : isViewer ? "คุณไม่มีสิทธิ์สร้างใบงาน" : "สร้างใบงาน (Create Job)"}
+                  {isSubmitting ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />กำลังสร้างใบงาน...</> : "สร้างใบงาน (Create Job)"}
                 </Button>
               </div>
             </form>

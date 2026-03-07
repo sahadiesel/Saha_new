@@ -83,7 +83,7 @@ function JobCard({ job }: { job: Job }) {
         <CardDescription className="text-xs">
           {deptLabel(job.department)}
           <br />
-          อัปเดต: {safeFormat(job.lastActivityAt, APP_DATE_FORMAT)}
+          ID: {job.id}
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 pb-4 flex-grow">
@@ -113,7 +113,7 @@ function CompactJobCard({ job }: { job: Job }) {
                     )}
                     <div className="flex-grow overflow-hidden">
                         <p className="font-semibold text-sm truncate">{job.customerSnapshot.name}</p>
-                        <p className="text-[10px] text-muted-foreground truncate">{job.description}</p>
+                        <p className="text-[10px] font-mono text-muted-foreground">{job.id}</p>
                         <div className="flex justify-between items-center mt-2">
                             <Badge className={cn("text-[9px] px-1 h-4 border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
                             <Button asChild size="icon" variant="ghost" className="h-6 w-6 rounded-full">
@@ -185,7 +185,7 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
             <Table>
             <TableHeader>
                 <TableRow>
-                <TableHead className="pl-6">ลูกค้า (Customer)</TableHead>
+                <TableHead className="pl-6">รหัสงาน / ลูกค้า</TableHead>
                 <TableHead className="hidden md:table-cell">แผนก</TableHead>
                 <TableHead className="hidden lg:table-cell">รายละเอียด</TableHead>
                 <TableHead>สถานะ</TableHead>
@@ -197,6 +197,7 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
                 {jobs.map(job => (
                 <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
                     <TableCell className="pl-6 py-4">
+                    <div className="font-mono text-xs font-bold text-primary mb-1">{job.id}</div>
                     <div className="font-semibold">{job.customerSnapshot.name}</div>
                     <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
                     </TableCell>
@@ -262,6 +263,7 @@ export default function ManagementJobsPage() {
                 (j.customerSnapshot?.name || "").toLowerCase().includes(q) ||
                 (j.customerSnapshot?.phone || "").includes(q) ||
                 (j.description || "").toLowerCase().includes(q) ||
+                (j.id && j.id.toLowerCase().includes(q)) ||
                 (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(q) ||
                 (j.carSnapshot?.licensePlate || "").toLowerCase().includes(q)
             );
