@@ -665,11 +665,10 @@ export default function PartsInventoryPage() {
                       {(watchedCode || editingPart?.code) && (
                         <div className="mt-4 flex flex-col items-center p-4 border rounded-lg bg-white shadow-sm overflow-hidden">
                           <img 
-                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=12`} 
+                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=8&textsize=8`} 
                             alt="Barcode"
-                            className="w-full h-auto max-w-[300px] block"
+                            className="w-full h-auto block"
                           />
-                          <p className="text-[10px] text-muted-foreground mt-2 font-mono uppercase tracking-widest">{watchedCode || editingPart?.code}</p>
                         </div>
                       )}
                       <FormMessage />
@@ -761,7 +760,7 @@ export default function PartsInventoryPage() {
             <DialogTitle>ปรับปรุงจำนวนสต็อกสินค้า</DialogTitle>
             <DialogDescription>สำหรับสินค้า: {editingPart?.name} ({editingPart?.code})</DialogDescription>
           </DialogHeader>
-          <div className="p-4 bg-muted/30 rounded-lg border flex justify-between items-center mb-4">
+          <div className="p-4 bg-muted/30 rounded-lg border flex justify-betweenอายเท็ม mb-4">
             <span className="text-sm font-medium">สต็อกปัจจุบัน:</span>
             <span className="text-lg font-bold">{editingPart?.stockQty}</span>
           </div>
