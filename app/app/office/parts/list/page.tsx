@@ -100,6 +100,7 @@ const partSchema = z.object({
   categoryId: z.string().min(1, "กรุณาเลือกหมวดหมู่"),
   sellingPrice: z.coerce.number().min(0, "ห้ามติดลบ"),
   stockQty: z.coerce.number().min(0, "ห้ามติดลบ"),
+  costPrice: z.coerce.number().min(0, "ห้ามติดลบ").default(0),
   location: z.string().optional().default(""),
 });
 
@@ -164,6 +165,7 @@ export default function PartsInventoryPage() {
       categoryId: "",
       sellingPrice: 0,
       stockQty: 0,
+      costPrice: 0,
       location: "",
     },
   });
@@ -202,11 +204,12 @@ export default function PartsInventoryPage() {
         categoryId: editingPart.categoryId,
         sellingPrice: editingPart.sellingPrice,
         stockQty: editingPart.stockQty,
+        costPrice: editingPart.costPrice || 0,
         location: editingPart.location || "",
       });
       setPhotoPreview(editingPart.imageUrl || null);
     } else {
-      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, location: "" });
+      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, costPrice: 0, location: "" });
       setPhotoPreview(null);
       setPhoto(null);
     }
@@ -349,6 +352,7 @@ export default function PartsInventoryPage() {
         categoryId: values.categoryId,
         categoryNameSnapshot: category?.name || "",
         sellingPrice: values.sellingPrice,
+        costPrice: values.costPrice,
         location: values.location || "",
         imageUrl: finalImageUrl,
         updatedAt: serverTimestamp(),
@@ -377,7 +381,6 @@ export default function PartsInventoryPage() {
           ...sanitizeForFirestore(partData), 
           code: values.code, 
           stockQty: values.stockQty,
-          costPrice: 0,
           createdAt: serverTimestamp() 
         };
         addDoc(partsColRef, finalData)
@@ -522,7 +525,7 @@ export default function PartsInventoryPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={8} className="h-24 text-center"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
                 ) : filteredParts.length > 0 ? (
                   filteredParts.map(part => (
                     <TableRow key={part.id}>
@@ -663,7 +666,7 @@ export default function PartsInventoryPage() {
                         )}
                       </div>
                       {(watchedCode || editingPart?.code) && (
-                        <div className="mt-2 flex flex-col items-center p-2 border rounded-lg bg-white shadow-sm overflow-hidden">
+                        <div className="mt-2 flex flex-col items-center p-2 border rounded-lg bg-white shadow-sm overflow-hidden h-14">
                           <img 
                             src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=10&textsize=7`} 
                             alt="Barcode"
@@ -703,7 +706,6 @@ export default function PartsInventoryPage() {
                         <FormControl><Input type="number" {...field} disabled={isSubmitting || !!editingPart} className={cn(!!editingPart && "bg-muted cursor-not-allowed")} /></FormControl>
                         {!!editingPart && (
                           <div className="space-y-2 mt-1">
-                            <p className="text-[10px] text-amber-600">แก้ไขผ่านเมนูจัดซื้อหรือเบิกของ</p>
                             <Button 
                               type="button" 
                               variant="outline" 
@@ -733,6 +735,15 @@ export default function PartsInventoryPage() {
                     )} />
                   </div>
 
+                  <FormField name="costPrice" control={form.control} render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ราคาทุนเฉลี่ย (Average Cost)</FormLabel>
+                      <FormControl><Input type="number" step="0.01" {...field} value={field.value || ''} disabled={isSubmitting} /></FormControl>
+                      <FormDescription className="text-[10px]">ใส่ทุนเริ่มต้นสำหรับสินค้าที่มีอยู่เดิมค่ะ</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
                   <Alert className="bg-blue-50 border-blue-200">
                     <Info className="h-4 w-4 text-blue-600" />
                     <AlertDescription className="text-[10px] text-blue-700">
@@ -760,7 +771,7 @@ export default function PartsInventoryPage() {
             <DialogTitle>ปรับปรุงจำนวนสต็อกสินค้า</DialogTitle>
             <DialogDescription>สำหรับสินค้า: {editingPart?.name} ({editingPart?.code})</DialogDescription>
           </DialogHeader>
-          <div className="p-4 bg-muted/30 rounded-lg border flex justify-betweenอายเท็ม mb-4">
+          <div className="p-4 bg-muted/30 rounded-lg border flex justify-between items-center mb-4">
             <span className="text-sm font-medium">สต็อกปัจจุบัน:</span>
             <span className="text-lg font-bold">{editingPart?.stockQty}</span>
           </div>
