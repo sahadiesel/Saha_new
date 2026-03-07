@@ -1,10 +1,9 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
-import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc } from "firebase/firestore";
+import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
@@ -232,10 +231,18 @@ function AccountingInboxPageContent() {
 
     try {
       await runTransaction(db, async (transaction) => {
+        // --- STEP 1: READS ---
         const docRef = doc(db, 'documents', confirmingDoc.id);
         const docSnap = await transaction.get(docRef);
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         
+        let jobSnap = null;
+        if (jobId) {
+            const jobRef = doc(db, 'jobs', jobId);
+            jobSnap = await transaction.get(jobRef);
+        }
+
+        // --- STEP 2: VALIDATION ---
         if (confirmingDoc.docType === 'TAX_INVOICE' && docSnap.data().status === 'APPROVED') {
           throw new Error("ใบกำกับภาษีนี้ตรวจสอบแล้ว รอออกใบเสร็จค่ะ");
         }
@@ -249,6 +256,7 @@ function AccountingInboxPageContent() {
             return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
         });
 
+        // --- STEP 3: WRITES ---
         if (isDeliveryNote) {
             const entryId = `AUTO_CASH_${confirmingDoc.id}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
@@ -280,25 +288,21 @@ function AccountingInboxPageContent() {
                 updatedAt: serverTimestamp()
             });
 
-            if (jobId) {
+            if (jobId && jobSnap && jobSnap.exists()) {
                 const jobRef = doc(db, 'jobs', jobId);
-                // FIX: Check if job exists before updating in transaction
-                const jobSnap = await transaction.get(jobRef);
-                if (jobSnap.exists()) {
-                    transaction.update(jobRef, {
-                        status: 'CLOSED',
-                        updatedAt: serverTimestamp(),
-                        lastActivityAt: serverTimestamp()
-                    });
+                transaction.update(jobRef, {
+                    status: 'CLOSED',
+                    updatedAt: serverTimestamp(),
+                    lastActivityAt: serverTimestamp()
+                });
 
-                    const activityRef = doc(collection(jobRef, 'activities'));
-                    transaction.set(activityRef, {
-                        text: `ฝ่ายบัญชียืนยันรับเงินสด/โอน เลขที่บิล: ${confirmingDoc.docNo} และปิดงานเรียบร้อยค่ะ`,
-                        userName: profile.displayName,
-                        userId: profile.uid,
-                        createdAt: serverTimestamp()
-                    });
-                }
+                const activityRef = doc(collection(jobRef, 'activities'));
+                transaction.set(activityRef, {
+                    text: `ฝ่ายบัญชียืนยันรับเงินสด/โอน เลขที่บิล: ${confirmingDoc.docNo} และปิดงานเรียบร้อยค่ะ`,
+                    userName: profile.displayName,
+                    userId: profile.uid,
+                    createdAt: serverTimestamp()
+                });
             }
         } else {
             const arId = `AR_${confirmingDoc.id}`;
@@ -330,18 +334,15 @@ function AccountingInboxPageContent() {
                 dueDate: confirmingDoc.dueDate || null,
             }));
 
-            if (jobId) {
+            if (jobId && jobSnap && jobSnap.exists()) {
                 const jobRef = doc(db, 'jobs', jobId);
-                const jobSnap = await transaction.get(jobRef);
-                if (jobSnap.exists()) {
-                    const activityRef = doc(collection(jobRef, 'activities'));
-                    transaction.set(activityRef, {
-                        text: `ฝ่ายบัญชีตรวจสอบใบกำกับภาษีเลขที่: ${confirmingDoc.docNo} ถูกต้องแล้ว (รอการออกใบเสร็จ)`,
-                        userName: profile.displayName,
-                        userId: profile.uid,
-                        createdAt: serverTimestamp()
-                    });
-                }
+                const activityRef = doc(collection(jobRef, 'activities'));
+                transaction.set(activityRef, {
+                    text: `ฝ่ายบัญชีตรวจสอบใบกำกับภาษีเลขที่: ${confirmingDoc.docNo} ถูกต้องแล้ว (รอการออกใบเสร็จ)`,
+                    userName: profile.displayName,
+                    userId: profile.uid,
+                    createdAt: serverTimestamp()
+                });
             }
         }
       });
@@ -414,6 +415,17 @@ function AccountingInboxPageContent() {
 
     try {
       await runTransaction(db, async (transaction) => {
+        // --- STEP 1: READS (Critical for Transactions & Security Rules) ---
+        const docSnap = await transaction.get(docRef);
+        if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
+
+        let jobSnap = null;
+        if (docObj.jobId) {
+            const jobRef = doc(db, 'jobs', docObj.jobId);
+            jobSnap = await transaction.get(jobRef);
+        }
+
+        // --- STEP 2: WRITES ---
         transaction.set(arRef, sanitizeForFirestore({
           id: arId,
           type: 'AR', 
@@ -430,6 +442,7 @@ function AccountingInboxPageContent() {
           jobId: docObj.jobId || null,
           dueDate: docObj.dueDate || null,
         }));
+
         transaction.update(docRef, {
           status: isDeliveryNote ? 'UNPAID' : 'APPROVED', 
           arStatus: 'UNPAID',
@@ -438,25 +451,22 @@ function AccountingInboxPageContent() {
           updatedAt: serverTimestamp()
         });
 
-        if (docObj.jobId) {
+        if (docObj.jobId && jobSnap && jobSnap.exists()) {
             const jobRef = doc(db, 'jobs', docObj.jobId);
-            const jobSnap = await transaction.get(jobRef);
-            if (jobSnap.exists()) {
-                const activityRef = doc(collection(jobRef, 'activities'));
-                transaction.set(activityRef, {
-                    text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
-                    userName: profile.displayName,
-                    userId: profile.uid,
-                    createdAt: serverTimestamp()
-                });
+            const activityRef = doc(collection(jobRef, 'activities'));
+            transaction.set(activityRef, {
+                text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
+                userName: profile.displayName,
+                userId: profile.uid,
+                createdAt: serverTimestamp()
+            });
 
-                if (isDeliveryNote) {
-                    transaction.update(jobRef, {
-                        status: 'CLOSED',
-                        updatedAt: serverTimestamp(),
-                        lastActivityAt: serverTimestamp()
-                    });
-                }
+            if (isDeliveryNote) {
+                transaction.update(jobRef, {
+                    status: 'CLOSED',
+                    updatedAt: serverTimestamp(),
+                    lastActivityAt: serverTimestamp()
+                });
             }
         }
       });
