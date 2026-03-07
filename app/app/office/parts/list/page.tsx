@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -666,7 +665,7 @@ export default function PartsInventoryPage() {
                       {(watchedCode || editingPart?.code) && (
                         <div className="mt-4 flex flex-col items-center p-4 border rounded-lg bg-white shadow-sm overflow-hidden">
                           <img 
-                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=25`} 
+                            src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=12`} 
                             alt="Barcode"
                             className="w-full h-auto max-w-[300px] block"
                           />
