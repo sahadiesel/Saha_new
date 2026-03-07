@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw } from "lucide-react";
+import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -942,6 +942,19 @@ function JobDetailsPageContent() {
                       {!isSubTask && !isViewOnly && (
                           <Button variant="outline" className="border-amber-500 text-amber-600 hover:bg-amber-50" onClick={() => setIsSubTransferDialogOpen(true)}>
                               <Forward className="mr-2 h-4 w-4" /> ส่งงานต่อ
+                          </Button>
+                      )}
+
+                      {job.status === 'PENDING_PARTS' && (
+                          <Button 
+                            asChild
+                            variant="outline"
+                            className="border-blue-600 text-blue-600 hover:bg-blue-50 font-bold"
+                          >
+                              <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
+                                <ClipboardList className="mr-2 h-4 w-4" /> 
+                                เบิกอะไหล่
+                              </Link>
                           </Button>
                       )}
 
