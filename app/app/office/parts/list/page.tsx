@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -147,6 +147,8 @@ export default function PartsInventoryPage() {
     },
   });
 
+  const watchedCode = form.watch("code");
+
   useEffect(() => {
     if (!db) return;
     const unsubParts = onSnapshot(query(collection(db, "parts"), orderBy("createdAt", "desc")), (snap) => {
@@ -267,17 +269,21 @@ export default function PartsInventoryPage() {
 
       const category = categories.find(c => c.id === values.categoryId);
 
-      const partData = {
-        ...values,
+      const partData: any = {
+        name: values.name,
+        categoryId: values.categoryId,
         categoryNameSnapshot: category?.name || "",
+        sellingPrice: values.sellingPrice,
+        location: values.location || "",
         imageUrl: finalImageUrl,
         updatedAt: serverTimestamp(),
         createdByUid: profile.uid,
         createdByName: profile.displayName,
-        costPrice: editingPart?.costPrice || 0,
       };
 
       if (editingPart) {
+        // Requirements: code and stockQty must remain consistent during edit
+        // We do not update them to ensure integrity
         const partRef = doc(db, "parts", editingPart.id);
         updateDoc(partRef, sanitizeForFirestore(partData))
           .then(() => {
@@ -294,7 +300,13 @@ export default function PartsInventoryPage() {
           .finally(() => setIsSubmitting(false));
       } else {
         const partsColRef = collection(db, "parts");
-        const finalData = { ...sanitizeForFirestore(partData), createdAt: serverTimestamp() };
+        const finalData = { 
+          ...sanitizeForFirestore(partData), 
+          code: values.code, 
+          stockQty: values.stockQty,
+          costPrice: 0,
+          createdAt: serverTimestamp() 
+        };
         addDoc(partsColRef, finalData)
           .then(() => {
             toast({ title: "เพิ่มอะไหล่ใหม่สำเร็จ" });
@@ -436,7 +448,7 @@ export default function PartsInventoryPage() {
             <DialogDescription>กรอกข้อมูลรายละเอียดของอะไหล่ให้ครบถ้วนเพื่อความแม่นยำของสต็อกสินค้า</DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 p-6">
+            <form onSubmit={form.handleSubmit(data => onSubmit(data))} className="space-y-6 p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
@@ -498,11 +510,27 @@ export default function PartsInventoryPage() {
                     <FormItem>
                       <FormLabel>รหัสสินค้า / Barcode <span className="text-destructive">*</span></FormLabel>
                       <div className="flex gap-2">
-                        <FormControl><Input placeholder="ยิงบาร์โค้ด หรือพิมพ์รหัส..." {...field} disabled={isSubmitting} /></FormControl>
-                        <Button type="button" variant="secondary" size="icon" onClick={startScanner} disabled={isSubmitting} title="สแกนบาร์โค้ด">
-                          <ScanBarcode className="h-5 w-5" />
-                        </Button>
+                        <FormControl><Input placeholder="ยิงบาร์โค้ด หรือพิมพ์รหัส..." {...field} disabled={isSubmitting || !!editingPart} className={cn(!!editingPart && "bg-muted cursor-not-allowed font-mono")} /></FormControl>
+                        {!editingPart && (
+                          <Button type="button" variant="secondary" size="icon" onClick={startScanner} disabled={isSubmitting} title="สแกนบาร์โค้ด">
+                            <ScanBarcode className="h-5 w-5" />
+                          </Button>
+                        )}
                       </div>
+                      {watchedCode && (
+                        <div className="mt-4 flex flex-col items-center p-3 border rounded-lg bg-white shadow-sm overflow-hidden">
+                          <div className="relative w-full h-16 flex justify-center bg-white">
+                            <Image 
+                              src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode)}&scale=2&rotate=N&includetext`} 
+                              alt="Barcode Code 128" 
+                              fill 
+                              className="object-contain" 
+                              unoptimized
+                            />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1 font-mono uppercase tracking-widest">{watchedCode}</p>
+                        </div>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )} />
@@ -529,7 +557,13 @@ export default function PartsInventoryPage() {
                   <FormField name="sellingPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel className="text-primary font-bold">ราคาขาย (บาท) <span className="text-destructive">*</span></FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
 
                   <div className="grid grid-cols-2 gap-4">
-                    <FormField name="stockQty" control={form.control} render={({ field }) => (<FormItem><FormLabel>สต็อกเริ่มต้น</FormLabel><FormControl><Input type="number" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
+                    <FormField name="stockQty" control={form.control} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{editingPart ? "สต็อกปัจจุบัน" : "สต็อกเริ่มต้น"}</FormLabel>
+                        <FormControl><Input type="number" {...field} disabled={isSubmitting || !!editingPart} className={cn(!!editingPart && "bg-muted cursor-not-allowed")} /></FormControl>
+                        {!!editingPart && <FormDescription className="text-[10px] text-amber-600">แก้ไขผ่านเมนูจัดซื้อหรือเบิกของ</FormDescription>}
+                      </FormItem>
+                    )} />
                     <FormField name="location" control={form.control} render={({ field }) => (
                       <FormItem>
                         <FormLabel>ชั้นจัดเก็บ (Location)</FormLabel>
