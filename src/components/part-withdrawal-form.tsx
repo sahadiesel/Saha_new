@@ -14,6 +14,7 @@ import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { BrowserMultiFormatReader } from '@zxing/browser';
+import { useSearchParams } from "next/navigation";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -30,7 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { 
   Loader2, PlusCircle, Trash2, Save, ArrowLeft, Search, 
-  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X
+  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -71,6 +72,8 @@ export default function PartWithdrawalForm() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryJobId = searchParams.get('jobId');
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
@@ -131,6 +134,18 @@ export default function PartWithdrawalForm() {
 
     return () => { unsubCustomers(); unsubJobs(); unsubDocs(); unsubParts(); };
   }, [db]);
+
+  // ระบบเลือกใบงานอัตโนมัติจาก URL
+  useEffect(() => {
+    if (queryJobId && activeJobs.length > 0 && customers.length > 0) {
+      const targetJob = activeJobs.find(j => j.id === queryJobId);
+      if (targetJob) {
+        form.setValue('refType', 'JOB');
+        form.setValue('customerId', targetJob.customerId);
+        form.setValue('refId', targetJob.id);
+      }
+    }
+  }, [queryJobId, activeJobs, customers, form]);
 
   // ตรรกะกรองลูกค้าตามประเภทการเบิก
   const availableCustomers = useMemo(() => {
@@ -275,7 +290,6 @@ export default function PartWithdrawalForm() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Step 1: Reference Type */}
             <Card>
               <CardHeader><CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-primary"/> 1. อ้างอิงรายการ</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -295,7 +309,6 @@ export default function PartWithdrawalForm() {
               </CardContent>
             </Card>
 
-            {/* Step 2: Customer Selection (Conditional) */}
             <Card>
               <CardHeader><CardTitle className="text-base flex items-center gap-2"><User className="h-4 w-4 text-primary"/> 2. เลือกลูกค้า</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -405,7 +418,6 @@ export default function PartWithdrawalForm() {
         </form>
       </Form>
 
-      {/* Scanner Dialog */}
       <Dialog open={isScannerOpen} onOpenChange={(o) => !o && stopScanner()}>
         <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-black">
           <div className="relative aspect-square">

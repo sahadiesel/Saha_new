@@ -38,7 +38,8 @@ import {
   RotateCcw,
   Check,
   Ban,
-  PackageCheck
+  PackageCheck,
+  ClipboardList
 } from "lucide-react";
 import {
   AlertDialog,
@@ -281,7 +282,16 @@ export function JobList({
                 <div className="w-full flex flex-col gap-2">
                   {canAssignWork && job.status === 'RECEIVED' && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
                   {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (<div className="grid grid-cols-2 gap-2"><Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button><Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไปรอทำบิล')} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button></div>)}
-                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (<Button className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]" onClick={() => handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม')} disabled={!!isProcessing}><PackageCheck className="mr-2 h-4 w-4" />อะไหล่มาครบแล้ว</Button>)}
+                  
+                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
+                    <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]">
+                      <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
+                        <ClipboardList className="mr-2 h-4 w-4" />
+                        เบิกอะไหล่
+                      </Link>
+                    </Button>
+                  )}
+
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (<Button asChild className="w-full h-9 font-bold" variant="default"><Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link></Button>)}
                   {['DONE', 'WAITING_CUSTOMER_PICKUP', 'CLOSED'].includes(job.status) && (
