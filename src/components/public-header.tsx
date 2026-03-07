@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -65,7 +64,7 @@ export function PublicHeader() {
           </Button>
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
-            <Link href="#contact">ติดต่อเรา</Link>
+            <Link href="/#contact">ติดต่อเรา</Link>
           </Button>
 
           <DropdownMenu>
@@ -120,7 +119,7 @@ export function PublicHeader() {
                 </Button>
 
                 <Button variant="ghost" asChild className="w-full justify-start text-white hover:bg-white/10 h-12 mt-2" onClick={closeMobileMenu}>
-                  <Link href="#contact">
+                  <Link href="/#contact">
                     <Mail className="mr-3 h-5 w-5 text-primary" />
                     ติดต่อเรา
                   </Link>
