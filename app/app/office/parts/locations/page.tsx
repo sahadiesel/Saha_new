@@ -36,8 +36,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 // Schema for a single location item
 const locationItemSchema = z.object({
-  name: z.string().min(1, "กรุณากรอกชื่อตำแหน่ง"),
-  zone: z.string().min(1, "กรุณาระบุโซน"),
+  name: z.string().optional().default(""),
+  zone: z.string().optional().default(""),
+}).refine(data => {
+    // If either name or zone is filled, the other must be filled too (for specific rows)
+    // But we allow empty rows to be skipped during submission
+    return (data.name === "" && data.zone === "") || (data.name !== "" && data.zone !== "");
+}, {
+    message: "กรุณากรอกทั้งชื่อตำแหน่งและโซน",
+    path: ["name"]
 });
 
 // Schema for bulk adding
@@ -48,7 +55,10 @@ const bulkLocationSchema = z.object({
 type BulkLocationFormData = z.infer<typeof bulkLocationSchema>;
 
 // Schema for single editing
-const editLocationSchema = locationItemSchema;
+const editLocationSchema = z.object({
+    name: z.string().min(1, "กรุณากรอกชื่อตำแหน่ง"),
+    zone: z.string().min(1, "กรุณาระบุโซน"),
+});
 type EditLocationFormData = z.infer<typeof editLocationSchema>;
 
 export default function PartLocationsPage() {
@@ -69,11 +79,11 @@ export default function PartLocationsPage() {
 
   const { data: locations, isLoading } = useCollection<PartLocation>(locationsQuery);
 
-  // Bulk Form
+  // Bulk Form - Initialized with 20 empty rows
   const bulkForm = useForm<BulkLocationFormData>({
     resolver: zodResolver(bulkLocationSchema),
     defaultValues: {
-      locations: [{ name: "", zone: "" }],
+      locations: Array.from({ length: 20 }, () => ({ name: "", zone: "" })),
     },
   });
 
@@ -99,24 +109,34 @@ export default function PartLocationsPage() {
 
   const onBulkSubmit = async (values: BulkLocationFormData) => {
     if (!db || !profile) return;
+    
+    // Filter out completely empty rows
+    const validLocations = values.locations.filter(loc => loc.name?.trim() !== "" || loc.zone?.trim() !== "");
+    
+    if (validLocations.length === 0) {
+        toast({ variant: "destructive", title: "ข้อมูลว่างเปล่า", description: "กรุณากรอกข้อมูลอย่างน้อย 1 แถวค่ะ" });
+        return;
+    }
+
     setIsSubmitting(true);
     
     try {
       const batch = writeBatch(db);
       const colRef = collection(db, "partLocations");
 
-      values.locations.forEach((loc) => {
+      validLocations.forEach((loc) => {
         const newDocRef = doc(colRef);
         batch.set(newDocRef, {
-          ...loc,
+          name: loc.name?.trim(),
+          zone: loc.zone?.trim(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       });
 
       await batch.commit();
-      toast({ title: `เพิ่มตำแหน่งใหม่ ${values.locations.length} รายการสำเร็จ` });
-      bulkForm.reset({ locations: [{ name: "", zone: "" }] });
+      toast({ title: `เพิ่มตำแหน่งใหม่ ${validLocations.length} รายการสำเร็จ` });
+      bulkForm.reset({ locations: Array.from({ length: 20 }, () => ({ name: "", zone: "" })) });
       setIsBulkDialogOpen(false);
     } catch (error: any) {
       toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: error.message });
@@ -196,13 +216,13 @@ export default function PartLocationsPage() {
             <DialogTrigger asChild>
               <Button disabled={isSubmitting} variant="default" className="bg-green-700 hover:bg-green-800">
                 <PlusCircle className="mr-2 h-4 w-4" />
-                เพิ่มหลายรายการ (Bulk Add)
+                เพิ่มหลายรายการ (Bulk Add 20+)
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0">
               <DialogHeader className="p-6 pb-0">
                 <DialogTitle>เพิ่มตำแหน่งชั้นวางทีละหลายรายการ</DialogTitle>
-                <DialogDescription>เพิ่มหลายตำแหน่งในครั้งเดียวเพื่อความรวดเร็ว</DialogDescription>
+                <DialogDescription>เพิ่มหลายตำแหน่งในครั้งเดียวเพื่อความรวดเร็ว ระบบเตรียมไว้ให้ 20 แถวค่ะ</DialogDescription>
               </DialogHeader>
               <Form {...bulkForm}>
                 <form onSubmit={bulkForm.handleSubmit(onBulkSubmit)} className="flex flex-col flex-1 overflow-hidden">
@@ -210,13 +230,13 @@ export default function PartLocationsPage() {
                     <div className="space-y-4">
                       {fields.map((field, index) => (
                         <div key={field.id} className="flex gap-3 items-start animate-in fade-in slide-in-from-top-1 duration-200">
-                          <div className="pt-2 text-xs font-bold text-muted-foreground w-6">#{index + 1}</div>
+                          <div className="pt-2 text-[10px] font-bold text-muted-foreground w-6">#{index + 1}</div>
                           <FormField
                             control={bulkForm.control}
                             name={`locations.${index}.name`}
                             render={({ field }) => (
                               <FormItem className="flex-1">
-                                <FormControl><Input placeholder="ชื่อตำแหน่ง (เช่น A1)" {...field} disabled={isSubmitting} /></FormControl>
+                                <FormControl><Input placeholder="ชื่อตำแหน่ง (เช่น A1)" {...field} disabled={isSubmitting} className="h-9 text-sm" /></FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -226,7 +246,7 @@ export default function PartLocationsPage() {
                             name={`locations.${index}.zone`}
                             render={({ field }) => (
                               <FormItem className="flex-1">
-                                <FormControl><Input placeholder="โซน/พิกัดย่อย" {...field} disabled={isSubmitting} /></FormControl>
+                                <FormControl><Input placeholder="โซน/พิกัดย่อย" {...field} disabled={isSubmitting} className="h-9 text-sm" /></FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}
@@ -235,9 +255,9 @@ export default function PartLocationsPage() {
                             type="button" 
                             variant="ghost" 
                             size="icon" 
-                            className="text-destructive mt-0.5" 
+                            className="text-destructive mt-0.5 h-8 w-8" 
                             onClick={() => remove(index)}
-                            disabled={fields.length === 1 || isSubmitting}
+                            disabled={isSubmitting}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -248,18 +268,18 @@ export default function PartLocationsPage() {
                       type="button" 
                       variant="outline" 
                       size="sm" 
-                      className="mt-4 border-dashed w-full"
+                      className="mt-6 border-dashed w-full"
                       onClick={() => append({ name: "", zone: "" })}
                       disabled={isSubmitting}
                     >
-                      <Plus className="mr-2 h-4 w-4" /> เพิ่มแถวใหม่
+                      <Plus className="mr-2 h-4 w-4" /> เพิ่มแถวใหม่ (ถ้าต้องการมากกว่า 20)
                     </Button>
                   </ScrollArea>
                   <DialogFooter className="p-6 pt-4 border-t bg-muted/10">
                     <Button variant="outline" type="button" onClick={() => setIsBulkDialogOpen(false)} disabled={isSubmitting}>ยกเลิก</Button>
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                      บันทึกทั้งหมด ({fields.length} รายการ)
+                      บันทึกข้อมูลทั้งหมด
                     </Button>
                   </DialogFooter>
                 </form>
