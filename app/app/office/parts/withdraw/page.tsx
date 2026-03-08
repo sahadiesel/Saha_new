@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -9,10 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, PlusCircle, ClipboardList, History, Search, Eye } from "lucide-react";
+import { Loader2, PlusCircle, ClipboardList, History, Search, Eye, Edit } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import type { Document } from "@/lib/types";
+import { docStatusLabel } from "@/lib/ui-labels";
 
 export default function OfficePartsWithdrawPage() {
   const { db } = useFirebase();
@@ -85,7 +87,7 @@ export default function OfficePartsWithdrawPage() {
                   <TableHead className="w-24">วันที่</TableHead>
                   <TableHead>อ้างอิงใบงาน</TableHead>
                   <TableHead>ลูกค้า</TableHead>
-                  <TableHead className="text-center">รายการ</TableHead>
+                  <TableHead>สถานะ</TableHead>
                   <TableHead className="text-right">มูลค่ารวม</TableHead>
                   <TableHead className="text-right">จัดการ</TableHead>
                 </TableRow>
@@ -106,12 +108,26 @@ export default function OfficePartsWithdrawPage() {
                         ) : "-"}
                       </TableCell>
                       <TableCell className="text-sm">{w.customerSnapshot?.name}</TableCell>
-                      <TableCell className="text-center font-bold">{w.items?.length || 0}</TableCell>
+                      <TableCell>
+                        <Badge variant={w.status === 'DRAFT' ? 'secondary' : 'default'} className="text-[10px]">
+                            {docStatusLabel(w.status, 'WITHDRAWAL')}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right font-black">฿{w.grandTotal.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
-                        <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-                            <Link href={`/app/documents/${w.id}`}><Eye className="h-4 w-4" /></Link>
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                            {w.status === 'DRAFT' ? (
+                                <Button asChild variant="outline" size="sm" className="h-8">
+                                    <Link href={`/app/office/parts/withdraw/new?editDocId=${w.id}`}>
+                                        <Edit className="h-3 w-3 mr-1" /> แก้ไข
+                                    </Link>
+                                </Button>
+                            ) : (
+                                <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                                    <Link href={`/app/documents/${w.id}`}><Eye className="h-4 w-4" /></Link>
+                                </Button>
+                            )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

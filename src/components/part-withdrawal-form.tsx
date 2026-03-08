@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { 
   collection, query, where, onSnapshot, doc, writeBatch, 
-  serverTimestamp, getDocs, limit, orderBy, runTransaction, getDoc
+  serverTimestamp, getDocs, limit, orderBy, runTransaction, getDoc, updateDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useDoc } from "@/firebase";
@@ -40,6 +40,7 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Customer, Job, Part, Document as DocumentType, StoreSettings } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const withdrawalItemSchema = z.object({
   partId: z.string().min(1, "กรุณาเลือกอะไหล่"),
@@ -50,13 +51,8 @@ const withdrawalItemSchema = z.object({
   unitPrice: z.coerce.number().min(0).default(0),
   total: z.coerce.number().default(0),
 }).superRefine((data, ctx) => {
-  if (data.stockQty !== undefined && data.quantity > data.stockQty) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "จำนวนเบิกห้ามเกินสต็อกที่มี",
-      path: ["quantity"],
-    });
-  }
+  // Only validate stock if not a draft (though draft could also warn)
+  // We'll handle strict stock check in the execution logic
 });
 
 const withdrawalSchema = z.object({
@@ -70,7 +66,11 @@ const withdrawalSchema = z.object({
 
 type WithdrawalFormData = z.infer<typeof withdrawalSchema>;
 
-export default function PartWithdrawalForm() {
+interface PartWithdrawalFormProps {
+    editDocId?: string | null;
+}
+
+export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProps) {
   const { db, storage } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -101,6 +101,9 @@ export default function PartWithdrawalForm() {
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
 
+  const docToEditRef = useMemo(() => (db && editDocId ? doc(db, "documents", editDocId) : null), [db, editDocId]);
+  const { data: docToEdit, isLoading: isLoadingDoc } = useDoc<DocumentType>(docToEditRef);
+
   const form = useForm<WithdrawalFormData>({
     resolver: zodResolver(withdrawalSchema),
     defaultValues: {
@@ -113,7 +116,7 @@ export default function PartWithdrawalForm() {
     },
   });
 
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, replace } = useFieldArray({
     control: form.control,
     name: "items",
   });
@@ -124,18 +127,19 @@ export default function PartWithdrawalForm() {
 
   // Fetch Preview Doc No
   useEffect(() => {
-    if (!db || !watchedDocDate) return;
+    if (!db || editDocId || !watchedDocDate) return;
     const fetchPreview = async () => {
       try {
+        setIndexErrorUrl(null);
         const result = await getNextAvailableDocNo(db, 'WITHDRAWAL', watchedDocDate);
         setPreviewDocNo(result.docNo);
         if (result.indexErrorUrl) setIndexErrorUrl(result.indexErrorUrl);
       } catch (e) {}
     };
     fetchPreview();
-  }, [db, watchedDocDate, isSubmitting]);
+  }, [db, watchedDocDate, isSubmitting, editDocId]);
 
-  // ดึงข้อมูลพื้นฐาน
+  // Load basic data
   useEffect(() => {
     if (!db) return;
     
@@ -159,9 +163,9 @@ export default function PartWithdrawalForm() {
     return () => { unsubCustomers(); unsubJobs(); unsubDocs(); unsubParts(); };
   }, [db]);
 
-  // ระบบเลือกใบงานอัตโนมัติจาก URL
+  // Handle URL Job ID
   useEffect(() => {
-    if (queryJobId && activeJobs.length > 0 && customers.length > 0) {
+    if (queryJobId && !editDocId && activeJobs.length > 0 && customers.length > 0) {
       const targetJob = activeJobs.find(j => j.id === queryJobId);
       if (targetJob) {
         form.setValue('refType', 'JOB');
@@ -169,7 +173,29 @@ export default function PartWithdrawalForm() {
         form.setValue('refId', targetJob.id);
       }
     }
-  }, [queryJobId, activeJobs, customers, form]);
+  }, [queryJobId, activeJobs, customers, form, editDocId]);
+
+  // Load existing doc for editing
+  useEffect(() => {
+    if (docToEdit && customers.length > 0) {
+        form.reset({
+            refType: docToEdit.jobId ? 'JOB' : 'LOAN', // Simple mapping
+            refId: docToEdit.jobId || 'MANUAL_LOAN',
+            customerId: docToEdit.customerId || "",
+            docDate: docToEdit.docDate,
+            items: docToEdit.items.map(i => ({
+                partId: i.partId || "",
+                code: i.code || "",
+                description: i.description || "",
+                quantity: i.quantity,
+                unitPrice: i.unitPrice,
+                total: i.total,
+                stockQty: parts.find(p => p.id === i.partId)?.stockQty || 0
+            })),
+            notes: docToEdit.notes || "",
+        });
+    }
+  }, [docToEdit, customers, parts, form]);
 
   const availableCustomers = useMemo(() => {
     if (watchedRefType === 'JOB') {
@@ -234,7 +260,7 @@ export default function PartWithdrawalForm() {
     setIsScannerOpen(false);
   };
 
-  const onSubmit = async (data: WithdrawalFormData) => {
+  const handleSave = async (data: WithdrawalFormData, isDraft: boolean) => {
     if (!db || !profile || !storeSettings) return;
     setIsSubmitting(true);
 
@@ -245,59 +271,52 @@ export default function PartWithdrawalForm() {
     }
 
     try {
-      await runTransaction(db, async (transaction) => {
-        // All Reads first
-        for (const item of data.items) {
-          const partRef = doc(db, "parts", item.partId);
-          const partSnap = await transaction.get(partRef);
-          if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${item.code}`);
-          const currentQty = partSnap.data().stockQty || 0;
-          if (currentQty < item.quantity) throw new Error(`สินค้า ${item.code} สต็อกไม่พอ (เหลือ ${currentQty})`);
-        }
+      // 1. If not a draft, perform stock deduction in a transaction
+      if (!isDraft) {
+        await runTransaction(db, async (transaction) => {
+          // All Reads first
+          for (const item of data.items) {
+            const partRef = doc(db, "parts", item.partId);
+            const partSnap = await transaction.get(partRef);
+            if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${item.code}`);
+            const currentQty = partSnap.data().stockQty || 0;
+            if (currentQty < item.quantity) throw new Error(`สินค้า ${item.code} สต็อกไม่พอ (เหลือ ${currentQty})`);
+          }
 
-        // All Writes
-        for (const item of data.items) {
-          const partRef = doc(db, "parts", item.partId);
-          // We already read it above, but transaction.update needs ref
-          const partSnap = await transaction.get(partRef); // Read again in same tx context if needed or use previous data
-          const currentQty = partSnap.data()?.stockQty || 0;
-          
-          transaction.update(partRef, {
-            stockQty: currentQty - item.quantity,
-            updatedAt: serverTimestamp()
-          });
+          // All Writes
+          for (const item of data.items) {
+            const partRef = doc(db, "parts", item.partId);
+            const partSnap = await transaction.get(partRef); 
+            const currentQty = partSnap.data()?.stockQty || 0;
+            
+            transaction.update(partRef, {
+              stockQty: currentQty - item.quantity,
+              updatedAt: serverTimestamp()
+            });
 
-          const actRef = doc(collection(db, "stockActivities"));
-          transaction.set(actRef, sanitizeForFirestore({
-            partId: item.partId,
-            partCode: item.code,
-            partName: item.description,
-            type: 'WITHDRAW',
-            diffQty: item.quantity,
-            beforeQty: currentQty,
-            afterQty: currentQty - item.quantity,
-            notes: `เบิกใส่ ${data.refType}: ${data.refId}. หมายเหตุ: ${data.notes || "-"}`,
-            createdByUid: profile.uid,
-            createdByName: profile.displayName,
-            createdAt: serverTimestamp(),
-          }));
-        }
+            const actRef = doc(collection(db, "stockActivities"));
+            transaction.set(actRef, sanitizeForFirestore({
+              partId: item.partId,
+              partCode: item.code,
+              partName: item.description,
+              type: 'WITHDRAW',
+              diffQty: item.quantity,
+              beforeQty: currentQty,
+              afterQty: currentQty - item.quantity,
+              notes: `เบิกใส่ ${data.refType}: ${data.refId}. หมายเหตุ: ${data.notes || "-"}`,
+              createdByUid: profile.uid,
+              createdByName: profile.displayName,
+              createdAt: serverTimestamp(),
+            }));
+          }
+        });
+      }
 
-        // Legacy record for backward compatibility if needed
-        const legacyWdRef = doc(collection(db, "partWithdrawals"));
-        transaction.set(legacyWdRef, sanitizeForFirestore({
-          ...data,
-          status: 'COMPLETED',
-          createdByUid: profile.uid,
-          createdByName: profile.displayName,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }));
-      });
-
-      // Create formal document
+      // 2. Create or Update document
       const subtotal = data.items.reduce((sum, i) => sum + (i.total || 0), 0);
-      await createDocument(db, 'WITHDRAWAL', {
+      const targetStatus = isDraft ? 'DRAFT' : 'ISSUED';
+      
+      const docPayload = {
         jobId: data.refType === 'JOB' ? data.refId : undefined,
         customerId: data.customerId,
         docDate: data.docDate,
@@ -320,9 +339,22 @@ export default function PartWithdrawalForm() {
         notes: data.notes,
         senderName: profile.displayName,
         receiverName: customer.name,
-      }, profile);
+      };
 
-      toast({ title: "สร้างใบเบิกอะไหล่สำเร็จ", description: "สต็อกถูกหักและเอกสารบันทึกเรียบร้อยแล้วค่ะ" });
+      if (isEditing && editDocId) {
+          await updateDoc(doc(db, 'documents', editDocId), sanitizeForFirestore({
+              ...docPayload,
+              status: targetStatus,
+              updatedAt: serverTimestamp()
+          }));
+      } else {
+          await createDocument(db, 'WITHDRAWAL', docPayload, profile, undefined, { initialStatus: targetStatus });
+      }
+
+      toast({ 
+          title: isDraft ? "บันทึกฉบับร่างสำเร็จ" : "สร้างใบเบิกอะไหล่สำเร็จ", 
+          description: isDraft ? "ข้อมูลถูกบันทึกแล้วแต่ยังไม่มีการตัดสต็อกสินค้าค่ะ" : "สต็อกถูกหักและเอกสารบันทึกเรียบร้อยแล้วค่ะ" 
+      });
       router.push("/app/office/parts/withdraw");
     } catch (e: any) {
       toast({ variant: "destructive", title: "ล้มเหลว", description: e.message });
@@ -331,18 +363,35 @@ export default function PartWithdrawalForm() {
     }
   };
 
-  if (isLoadingData) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-primary" /></div>;
+  if (isLoadingData || (editDocId && isLoadingDoc)) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-primary" /></div>;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}><ArrowLeft className="mr-2 h-4 w-4" /> กลับ</Button>
-            <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              สร้างรายการเบิก (Create Withdrawal)
-            </Button>
+            <div className="flex gap-2 w-full sm:w-auto">
+                <Button 
+                    type="button" 
+                    variant="secondary" 
+                    onClick={form.handleSubmit(d => handleSave(d, true))} 
+                    disabled={isSubmitting} 
+                    className="flex-1 sm:flex-none"
+                >
+                    {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    บันทึกฉบับร่าง
+                </Button>
+                <Button 
+                    type="button" 
+                    onClick={form.handleSubmit(d => handleSave(d, false))} 
+                    disabled={isSubmitting} 
+                    className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700"
+                >
+                    {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
+                    สร้างรายการเบิก (ตัดสต็อก)
+                </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -351,7 +400,7 @@ export default function PartWithdrawalForm() {
                 <div className="flex justify-between items-start">
                     <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-primary"/> 1. ข้อมูลเอกสาร</CardTitle>
                     <Badge variant="outline" className="font-mono text-[10px] border-primary/30 text-primary bg-primary/5">
-                        {previewDocNo || "Loading..."}
+                        {isEditing ? docToEdit?.docNo : (previewDocNo || "Loading...")}
                     </Badge>
                 </div>
               </CardHeader>
@@ -386,7 +435,7 @@ export default function PartWithdrawalForm() {
                     <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
                       <PopoverTrigger asChild>
                         <FormControl>
-                          <Button variant="outline" className={cn("w-full justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isSubmitting || !!queryJobId}>
+                          <Button variant="outline" className={cn("w-full justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isSubmitting || !!queryJobId || isEditing}>
                             <span className="truncate">
                               {field.value ? (customers.find(c => c.id === field.value)?.name || "เลือกรายชื่อ...") : "ค้นหาชื่อลูกค้า..."}
                             </span>
@@ -413,7 +462,7 @@ export default function PartWithdrawalForm() {
                   <FormField name="refId" control={form.control} render={({ field }) => (
                     <FormItem className="animate-in fade-in slide-in-from-top-1">
                       <FormLabel>เลือกรายการอ้างอิง</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""} disabled={isSubmitting || !!queryJobId}>
+                      <Select onValueChange={field.onChange} value={field.value || ""} disabled={isSubmitting || !!queryJobId || isEditing}>
                         <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
                         <SelectContent>
                           {watchedRefType === 'JOB' && filteredJobs.map(j => <SelectItem key={j.id} value={j.id}>{j.id} - {j.description.slice(0,20)}...</SelectItem>)}
