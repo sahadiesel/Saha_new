@@ -19,12 +19,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ChevronDown, Menu, User, Briefcase, Globe, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +37,11 @@ export function PublicHeader() {
   }, []);
 
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
+
+  const getInitials = (name?: string) => {
+    if (!name) return "U";
+    return name.charAt(0).toUpperCase();
+  }
 
   return (
     <header 
@@ -69,22 +69,24 @@ export function PublicHeader() {
             <Link href="/services">งานบริการ</Link>
           </Button>
 
-          {user && (
-            <Button variant="ghost" asChild className="text-primary hover:bg-primary/10 hover:text-primary font-bold">
-              <Link href="/app" className="flex items-center gap-2">
-                <LayoutDashboard className="h-4 w-4" />
-                เข้าสู่ application
-              </Link>
-            </Button>
-          )}
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="ml-4 border-primary text-primary hover:bg-primary hover:text-white font-bold gap-2 rounded-full">
-                ลงชื่อเข้าใช้ <ChevronDown className="h-4 w-4" />
-              </Button>
+              {user ? (
+                <Button variant="outline" className="ml-4 h-10 border-none bg-white hover:bg-white/90 text-slate-900 font-bold gap-2 rounded-full pl-1 pr-4 shadow-lg shadow-black/20">
+                  <Avatar className="h-8 w-8 ring-2 ring-primary/20">
+                    <AvatarImage src={`https://api.dicebear.com/8.x/initials/svg?seed=${profile?.displayName}`} />
+                    <AvatarFallback className="bg-primary text-white text-[10px]">{getInitials(profile?.displayName)}</AvatarFallback>
+                  </Avatar>
+                  <span className="max-w-[120px] truncate">{profile?.displayName || user.email}</span>
+                  <ChevronDown className="h-3 w-3 opacity-50" />
+                </Button>
+              ) : (
+                <Button variant="outline" className="ml-4 border-primary text-primary hover:bg-primary hover:text-white font-bold gap-2 rounded-full">
+                  ลงชื่อเข้าใช้ <ChevronDown className="h-4 w-4" />
+                </Button>
+              )}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 bg-slate-800 border-white/10 text-white">
+            <DropdownMenuContent align="end" className="w-56 bg-slate-800 border-white/10 text-white shadow-2xl">
               {!user ? (
                 <>
                   <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3">
@@ -101,13 +103,13 @@ export function PublicHeader() {
                 </>
               ) : (
                 <>
-                  <div className="px-3 py-2 text-xs text-slate-400 italic">
-                    เข้าใช้โดย: {profile?.displayName || user.email}
+                  <div className="px-3 py-2 text-[10px] text-slate-400 uppercase tracking-widest font-bold">
+                    เข้าใช้โดย: {profile?.displayName}
                   </div>
                   <DropdownMenuSeparator className="bg-white/10" />
-                  <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3">
+                  <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3 font-bold text-primary">
                     <Link href="/app">
-                      <LayoutDashboard className="mr-2 h-4 w-4 text-primary" /> 
+                      <LayoutDashboard className="mr-2 h-4 w-4" /> 
                       หน้าหลักของฉัน
                     </Link>
                   </DropdownMenuItem>
@@ -157,15 +159,6 @@ export function PublicHeader() {
                   </Link>
                 </Button>
 
-                {user && (
-                  <Button variant="ghost" asChild className="justify-start text-primary hover:bg-primary/10 mb-2 h-12 font-bold" onClick={closeMobileMenu}>
-                    <Link href="/app">
-                      <LayoutDashboard className="mr-3 h-5 w-5" />
-                      เข้าสู่ application
-                    </Link>
-                  </Button>
-                )}
-
                 <div className="mt-4 pt-4 border-t border-white/10">
                   {!user ? (
                     <div className="space-y-2">
@@ -177,10 +170,18 @@ export function PublicHeader() {
                       </Button>
                     </div>
                   ) : (
-                    <Button variant="ghost" onClick={() => { signOut(); closeMobileMenu(); }} className="w-full justify-start text-destructive h-12 font-bold">
-                      <LogOut className="mr-3 h-5 w-5" />
-                      ออกจากระบบ
-                    </Button>
+                    <div className="space-y-2">
+                      <Button variant="ghost" asChild className="justify-start text-primary h-12 font-bold" onClick={closeMobileMenu}>
+                        <Link href="/app">
+                          <LayoutDashboard className="mr-3 h-5 w-5" />
+                          หน้าหลักของฉัน
+                        </Link>
+                      </Button>
+                      <Button variant="ghost" onClick={() => { signOut(); closeMobileMenu(); }} className="w-full justify-start text-destructive h-12 font-bold">
+                        <LogOut className="mr-3 h-5 w-5" />
+                        ออกจากระบบ
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>
