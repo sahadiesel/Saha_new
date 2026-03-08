@@ -29,9 +29,8 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Loader2, Home } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -85,7 +84,7 @@ export default function LoginPage() {
       }
 
       toast({ title: "Login Successful" });
-      // Redirect to Home page instead of /app as requested
+      // Always redirect to Home page after successful login as requested
       router.push("/"); 
     } catch (error: any) {
       toast({
@@ -101,9 +100,9 @@ export default function LoginPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-2xl">Login</CardTitle>
+        <CardTitle className="text-2xl font-headline">ลงชื่อเข้าใช้</CardTitle>
         <CardDescription>
-          Enter your email below to login to your account.
+          กรุณากรอกอีเมลและรหัสผ่านเพื่อเข้าใช้งานระบบ
         </CardDescription>
       </CardHeader>
       <Form {...form}>
@@ -135,7 +134,19 @@ export default function LoginPage() {
               name="password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Password</FormLabel>
+                  <div className="flex items-center justify-between">
+                    <FormLabel>Password</FormLabel>
+                    <Link
+                      href="/login" // TODO: Implement forgot password page
+                      className="text-xs text-primary hover:underline font-medium"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toast({ title: "ระบบกู้คืนรหัสผ่าน", description: "กรุณาติดต่อแอดมินแผนกบุคคลเพื่อรีเซ็ตรหัสผ่านค่ะ" });
+                      }}
+                    >
+                      ลืมรหัสผ่าน?
+                    </Link>
+                  </div>
                   <FormControl>
                     <Input type="password" {...field} />
                   </FormControl>
@@ -145,29 +156,20 @@ export default function LoginPage() {
             />
           </CardContent>
           <CardFooter className="flex flex-col gap-4">
-            <Button type="submit" className="w-full" disabled={isSubmitting || loading}>
+            <Button type="submit" className="w-full h-11 text-base font-bold" disabled={isSubmitting || loading}>
               {isSubmitting || loading ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : null}
-              Login
+              เข้าสู่ระบบ (Login)
             </Button>
             
             <div className="flex flex-col items-center gap-3 text-sm w-full">
               <div className="text-muted-foreground">
-                Don&apos;t have an account?{" "}
+                ยังไม่มีบัญชีผู้ใช้?{" "}
                 <Link href="/signup" className="underline text-primary font-bold">
-                  Sign up
+                  สมัครสมาชิก (Sign up)
                 </Link>
               </div>
-              
-              <Separator />
-              
-              <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-primary">
-                <Link href="/" className="flex items-center gap-2">
-                  <Home className="h-4 w-4" />
-                  กลับหน้าหลัก (HOME)
-                </Link>
-              </Button>
             </div>
           </CardFooter>
         </form>
