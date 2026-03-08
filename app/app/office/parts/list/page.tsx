@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -100,7 +101,9 @@ const partSchema = z.object({
   sellingPrice: z.coerce.number().min(0, "ห้ามติดลบ"),
   stockQty: z.coerce.number().min(0, "ห้ามติดลบ"),
   costPrice: z.coerce.number().min(0, "ห้ามติดลบ").default(0),
+  minStock: z.coerce.number().min(0, "ห้ามติดลบ").default(0),
   location: z.string().optional().default(""),
+  details: z.string().optional().default(""),
 });
 
 type PartFormData = z.infer<typeof partSchema>;
@@ -170,7 +173,9 @@ export default function PartsInventoryPage() {
       sellingPrice: 0,
       stockQty: 0,
       costPrice: 0,
+      minStock: 0,
       location: "",
+      details: "",
     },
   });
 
@@ -209,11 +214,13 @@ export default function PartsInventoryPage() {
         sellingPrice: editingPart.sellingPrice,
         stockQty: editingPart.stockQty,
         costPrice: editingPart.costPrice || 0,
+        minStock: editingPart.minStock || 0,
         location: editingPart.location || "",
+        details: editingPart.details || "",
       });
       setPhotoPreview(editingPart.imageUrl || null);
     } else {
-      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, costPrice: 0, location: "" });
+      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, costPrice: 0, minStock: 0, location: "", details: "" });
       setPhotoPreview(null);
       setPhoto(null);
     }
@@ -324,7 +331,10 @@ export default function PartsInventoryPage() {
         categoryNameSnapshot: category?.name || "",
         sellingPrice: values.sellingPrice,
         costPrice: values.costPrice,
+        stockQty: values.stockQty, // Only used for new, but included for updates if needed (guarded by logic)
+        minStock: values.minStock,
         location: values.location || "",
+        details: values.details || "",
         imageUrl: finalImageUrl,
         updatedAt: serverTimestamp(),
         createdByUid: profile.uid,
@@ -333,11 +343,13 @@ export default function PartsInventoryPage() {
 
       if (editingPart) {
         const partRef = doc(db, "parts", editingPart.id);
+        // Remove stockQty from updates, must use adjust transaction
+        delete partData.stockQty;
         await updateDoc(partRef, sanitizeForFirestore(partData));
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         setIsDialogOpen(false);
       } else {
-        const finalData = { ...sanitizeForFirestore(partData), code: values.code, stockQty: values.stockQty, createdAt: serverTimestamp() };
+        const finalData = { ...sanitizeForFirestore(partData), code: values.code, createdAt: serverTimestamp() };
         await addDoc(collection(db, "parts"), finalData);
         toast({ title: "เพิ่มอะไหล่ใหม่สำเร็จ" });
         setIsDialogOpen(false);
@@ -503,7 +515,11 @@ export default function PartsInventoryPage() {
                       <TableCell><Badge variant="outline">{part.categoryNameSnapshot}</Badge></TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">฿{(part.costPrice || 0).toLocaleString()}</TableCell>
                       <TableCell className="text-right font-bold text-primary">฿{part.sellingPrice.toLocaleString()}</TableCell>
-                      <TableCell className="text-right"><Badge variant={part.stockQty > 5 ? "secondary" : "destructive"}>{part.stockQty}</Badge></TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={part.stockQty <= (part.minStock || 0) ? "destructive" : "secondary"}>
+                          {part.stockQty}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-xs"><div className="flex items-center gap-1"><MapPin className="h-3 w-3" />{part.location || '-'}</div></TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -523,18 +539,19 @@ export default function PartsInventoryPage() {
       </Card>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto p-0 flex flex-col">
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto p-0 flex flex-col">
           <DialogHeader className="p-6 pb-2"><DialogTitle>{editingPart ? "รายละเอียดและแก้ไขอะไหล่" : "เพิ่มอะไหล่ใหม่เข้าระบบ"}</DialogTitle></DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(data => onSubmit(data))} className="space-y-6 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+                {/* Left side: Image and Code */}
+                <div className="md:col-span-2 space-y-4">
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
-                    <div className="relative w-40 h-40 border rounded-md overflow-hidden bg-background shadow-inner">
+                    <div className="relative w-full aspect-square border rounded-md overflow-hidden bg-background shadow-inner">
                       {photoPreview ? <><Image src={photoPreview} alt="Preview" fill className="object-cover" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 rounded-full" onClick={handleRemovePhoto} disabled={isSubmitting || isCompressing}><X className="h-3 w-3" /></Button></> : <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>}
                     </div>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm" disabled={isSubmitting || isCompressing}>{isCompressing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เลือกรูปภาพ</Button></DropdownMenuTrigger>
+                      <DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm" className="w-full" disabled={isSubmitting || isCompressing}>{isCompressing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เลือกรูปภาพ</Button></DropdownMenuTrigger>
                       <DropdownMenuContent><DropdownMenuItem onClick={() => cameraInputRef.current?.click()}><Camera className="mr-2 h-4 w-4" /> กล้อง</DropdownMenuItem><DropdownMenuItem onClick={() => galleryInputRef.current?.click()}><ImageIcon className="mr-2 h-4 w-4" /> คลังรูป</DropdownMenuItem></DropdownMenuContent>
                     </DropdownMenu>
                     <input type="file" ref={cameraInputRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
@@ -556,19 +573,31 @@ export default function PartsInventoryPage() {
                     </FormItem>
                   )} />
                 </div>
-                <div className="space-y-4">
+
+                {/* Right side: Field inputs rearranged into 5 rows */}
+                <div className="md:col-span-3 space-y-4">
+                  {/* Row 1: Name */}
                   <FormField name="name" control={form.control} render={({ field }) => (<FormItem><FormLabel>ชื่อรายการสินค้า <span className="text-destructive">*</span></FormLabel><FormControl><Input {...field} disabled={isSubmitting} /></FormControl><FormMessage /></FormItem>)} />
+                  
+                  {/* Row 2: Category */}
                   <FormField name="categoryId" control={form.control} render={({ field }) => (
                     <FormItem>
                       <FormLabel>หมวดหมู่ <span className="text-destructive">*</span></FormLabel>
                       <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting}>
-                        <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
+                        <FormControl><SelectTrigger><SelectValue placeholder="เลือกหมวดหมู่..." /></SelectTrigger></FormControl>
                         <SelectContent>{categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                       </Select>
                       <FormMessage />
                     </FormItem>
                   )} />
-                  <FormField name="sellingPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel className="text-primary font-bold">ราคาขาย (บาท) <span className="text-destructive">*</span></FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
+
+                  {/* Row 3: Sale Price | Cost Price */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField name="sellingPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel className="text-primary font-bold">ราคาขาย (บาท) <span className="text-destructive">*</span></FormLabel><FormControl><Input type="number" step="0.01" {...field} disabled={isSubmitting} /></FormControl></FormItem>)} />
+                    <FormField name="costPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel>ราคาทุนเฉลี่ย</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value || ''} disabled={isSubmitting} /></FormControl></FormItem>)} />
+                  </div>
+
+                  {/* Row 4: Initial Stock | Minimum Stock */}
                   <div className="grid grid-cols-2 gap-4">
                     <FormField name="stockQty" control={form.control} render={({ field }) => (
                       <FormItem>
@@ -577,6 +606,17 @@ export default function PartsInventoryPage() {
                         {!!editingPart && <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] w-full mt-1 border-dashed" onClick={() => setIsAdjustingStock(true)}><RefreshCw className="mr-1 h-3 w-3" /> ปรับปรุงยอด</Button>}
                       </FormItem>
                     )} />
+                    <FormField name="minStock" control={form.control} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>จำนวนสต็อกขั้นต่ำ (Min)</FormLabel>
+                        <FormControl><Input type="number" {...field} disabled={isSubmitting} /></FormControl>
+                        <FormDescription className="text-[10px]">ระบบจะเตือนเมื่อสินค้าใกล้หมด</FormDescription>
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  {/* Row 5: Location | Details */}
+                  <div className="grid grid-cols-2 gap-4">
                     <FormField name="location" control={form.control} render={({ field }) => (
                       <FormItem className="flex flex-col">
                         <FormLabel>ชั้นจัดเก็บ</FormLabel>
@@ -645,8 +685,13 @@ export default function PartsInventoryPage() {
                         <FormMessage />
                       </FormItem>
                     )} />
+                    <FormField name="details" control={form.control} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>รายละเอียดเพิ่มเติม</FormLabel>
+                        <FormControl><Input placeholder="ระบุข้อมูลแจ้งไว้..." {...field} disabled={isSubmitting} /></FormControl>
+                      </FormItem>
+                    )} />
                   </div>
-                  <FormField name="costPrice" control={form.control} render={({ field }) => (<FormItem><FormLabel>ราคาทุนเฉลี่ย</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value || ''} disabled={isSubmitting} /></FormControl><FormDescription className="text-[10px]">ใส่ทุนเริ่มต้นสำหรับสินค้าเดิมในร้านค่ะ</FormDescription></FormItem>)} />
                 </div>
               </div>
               <DialogFooter className="pt-4 border-t mt-4"><Button variant="outline" type="button" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" disabled={isSubmitting}>{isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} {editingPart ? "บันทึกการแก้ไข" : "เพิ่มสินค้า"}</Button></DialogFooter>

@@ -890,6 +890,8 @@ export interface Part {
   costPrice: number;
   sellingPrice: number;
   stockQty: number;
+  minStock?: number; // New: Minimum stock threshold
+  details?: string; // New: Additional details
   location?: string;
   imageUrl?: string;
   showOnWeb?: boolean; // NEW: Flag to show on public site
