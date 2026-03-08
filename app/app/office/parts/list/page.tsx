@@ -53,7 +53,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.createElement("canvas").getContext("2d");
         if (!ctx) {
           resolve(file);
           return;
@@ -617,7 +617,7 @@ export default function PartsInventoryPage() {
                   </div>
 
                   <div className="grid grid-cols-12 gap-4 items-start">
-                    <div className="col-span-3">
+                    <div className="col-span-5">
                       <FormField name="location" control={form.control} render={({ field }) => (
                         <FormItem className="flex flex-col">
                           <FormLabel>ชั้นจัดเก็บ</FormLabel>
@@ -688,7 +688,7 @@ export default function PartsInventoryPage() {
                       )} />
                     </div>
 
-                    <div className="col-span-5">
+                    <div className="col-span-7">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">พิกัดตำแหน่ง</Label>
                       <div className="h-9 px-3 py-2 rounded-md border-2 border-dashed border-blue-200 bg-blue-50/30 text-[10px] flex items-center italic text-blue-700">
                         {selectedLocationZone ? (
@@ -701,18 +701,16 @@ export default function PartsInventoryPage() {
                         )}
                       </div>
                     </div>
-
-                    <div className="col-span-4">
-                      <FormField name="details" control={form.control} render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>รายละเอียดเพิ่มเติม</FormLabel>
-                          <FormControl>
-                            <Input placeholder="ระบุข้อมูลแจ้งไว้..." {...field} disabled={isSubmitting} className="h-9 text-xs" />
-                          </FormControl>
-                        </FormItem>
-                      )} />
-                    </div>
                   </div>
+
+                  <FormField name="details" control={form.control} render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>รายละเอียดเพิ่มเติม</FormLabel>
+                      <FormControl>
+                        <Input placeholder="ระบุข้อมูลแจ้งไว้..." {...field} disabled={isSubmitting} className="h-10 text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )} />
                 </div>
               </div>
               <DialogFooter className="pt-4 border-t mt-4">
