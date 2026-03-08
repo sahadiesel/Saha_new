@@ -281,7 +281,25 @@ export function JobList({
                 <Button asChild className="w-full h-9" variant="secondary"><Link href={`/app/jobs/${job.id}`}>ดูรายละเอียด <ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
                 <div className="w-full flex flex-col gap-2">
                   {canAssignWork && job.status === 'RECEIVED' && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
-                  {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (<div className="grid grid-cols-2 gap-2"><Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button><Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไปรอทำบิล')} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button></div>)}
+                  {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button 
+                        className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" 
+                        onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} 
+                        disabled={!!isProcessing}
+                      >
+                        <Check className="mr-1 h-3 w-3" />อนุมัติ
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" 
+                        onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล" เพื่อตรวจสอบค่าใช้จ่ายหรือออกบิล 0 บาทค่ะ')} 
+                        disabled={!!isProcessing}
+                      >
+                        <Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ
+                      </Button>
+                    </div>
+                  )}
                   
                   {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
                     <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]">

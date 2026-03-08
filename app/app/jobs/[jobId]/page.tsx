@@ -718,22 +718,22 @@ function JobDetailsPageContent() {
 
   const handleRejectJob = async () => {
     if (!db || !profile || !job) return;
-    if (!confirm("ยืนยันลูกค้าไม่อนุมัติงานนี้? งานจะถูกเปลี่ยนสถานะเป็นจบงานเพื่อรอทำบิลค่าบริการ")) return;
+    if (!confirm("ยืนยันลูกค้าไม่อนุมัติงานนี้? งานจะถูกเปลี่ยนสถานะเป็นรอทำบิลเพื่อให้ฝ่ายออฟฟิศตรวจสอบค่าใช้จ่ายค่ะ")) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { 
-      status: 'DONE', 
+      status: 'DONE', // Transition to DONE instead of CLOSED
       lastActivityAt: serverTimestamp(), 
       updatedAt: serverTimestamp() 
     });
     batch.set(doc(collection(jobDocRef, "activities")), { 
-      text: `ลูกค้าไม่อนุมัติการซ่อม / ยกเลิกงาน - ปรับสถานะเป็นจบงานเพื่อให้ฝ่ายออฟฟิศออกบิลค่าบริการ`, 
+      text: `ลูกค้าไม่อนุมัติการซ่อม / ยกเลิกงาน - ปรับสถานะเป็น "รอทำบิล" (DONE) เพื่อให้ฝ่ายออฟฟิศตรวจสอบค่าใช้จ่ายหรือออกบิล 0 บาทตามขั้นตอนค่ะ`, 
       userName: profile.displayName, 
       userId: profile.uid, 
       createdAt: serverTimestamp() 
     });
-    batch.commit().then(() => toast({ title: "เปลี่ยนสถานะเป็นจบงานเรียบร้อย" })).finally(() => setIsSubmittingNote(false));
+    batch.commit().then(() => toast({ title: "เปลี่ยนสถานะเป็นรอทำบิลเรียบร้อย" })).finally(() => setIsSubmittingNote(false));
   };
 
   const handlePartsReady = async () => {
