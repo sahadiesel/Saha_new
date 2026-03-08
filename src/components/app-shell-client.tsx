@@ -29,6 +29,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     pathname === "/signup" ||
     pathname === "/healthz" ||
     pathname === "/products" ||
+    pathname === "/services" || // เพิ่ม /services เข้าในรายการหน้าสาธารณะ
     pathname === "/contact";
 
   useEffect(() => {
