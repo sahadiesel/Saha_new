@@ -45,6 +45,14 @@ export default function LoginPage() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const form = useForm<z.infer<typeof loginSchema>>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  });
+
   async function onSubmit(values: z.infer<typeof loginSchema>) {
     if (!db) return;
     setIsSubmitting(true);
