@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Badge } from "@/components/ui/badge";
 import { Loader2, PlusCircle, Trash2, MapPin, Save, Edit, Search, Plus, Layers } from "lucide-react";
 import type { PartLocation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -191,7 +192,6 @@ export default function PartLocationsPage() {
     <div className="space-y-6">
       <PageHeader title="จัดการชั้นวางสินค้า" description="กำหนดพิกัดตำแหน่งการจัดเก็บอะไหล่ในคลังเพื่อให้ค้นหาได้ง่ายขึ้น">
         <div className="flex gap-2">
-          {/* Bulk Add Button */}
           <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
             <DialogTrigger asChild>
               <Button disabled={isSubmitting} variant="default" className="bg-green-700 hover:bg-green-800">
@@ -267,7 +267,6 @@ export default function PartLocationsPage() {
             </DialogContent>
           </Dialog>
 
-          {/* Single Add Button */}
           <Button variant="outline" onClick={() => { setEditingLocation(null); setIsEditDialogOpen(true); }}>
             <Plus className="mr-2 h-4 w-4" />
             เพิ่มทีละรายการ
@@ -354,7 +353,6 @@ export default function PartLocationsPage() {
         </CardContent>
       </Card>
 
-      {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent>
           <DialogHeader>
