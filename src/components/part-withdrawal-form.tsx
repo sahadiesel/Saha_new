@@ -43,7 +43,7 @@ import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const withdrawalItemSchema = z.object({
-  partId: z.string().min(1, "กรุณาเลือกอะไหล่"),
+  partId: z.string().min(1, "กรุณาเลือกอะไหล่จากระบบ"),
   code: z.string().optional(),
   description: z.string().min(1, "กรุณากรอกรายการ"),
   stockQty: z.number().optional(),
@@ -164,7 +164,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
 
   // Handle URL Job ID
   useEffect(() => {
-    if (queryJobId && !editDocId && activeJobs.length > 0 && customers.length > 0) {
+    if (queryJobId && !isEditing && activeJobs.length > 0 && customers.length > 0) {
       const targetJob = activeJobs.find(j => j.id === queryJobId);
       if (targetJob) {
         form.setValue('refType', 'JOB');
@@ -172,7 +172,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         form.setValue('refId', targetJob.id);
       }
     }
-  }, [queryJobId, activeJobs, customers, form, editDocId]);
+  }, [queryJobId, activeJobs, customers, form, isEditing]);
 
   // Load existing doc for editing
   useEffect(() => {
@@ -265,29 +265,31 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
 
     const customer = customers.find(c => c.id === data.customerId);
     if (!customer) {
+        toast({ variant: "destructive", title: "กรุณาเลือกลูกค้า" });
         setIsSubmitting(false);
         return;
     }
 
     try {
-      // 1. If not a draft, perform stock deduction in a transaction
+      // 1. If not a draft, perform stock deduction in a transaction (READ ALL THEN WRITE ALL)
       if (!isDraft) {
         await runTransaction(db, async (transaction) => {
-          // All Reads first
+          // --- STEP 1: READ ALL SNAPSHOTS ---
+          const snapshots: { partRef: any, currentQty: number, item: any }[] = [];
           for (const item of data.items) {
             const partRef = doc(db, "parts", item.partId);
             const partSnap = await transaction.get(partRef);
-            if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${item.code}`);
+            if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${item.code || item.description}`);
+            
             const currentQty = partSnap.data().stockQty || 0;
-            if (currentQty < item.quantity) throw new Error(`สินค้า ${item.code} สต็อกไม่พอ (เหลือ ${currentQty})`);
+            if (currentQty < item.quantity) {
+                throw new Error(`สินค้า ${item.code || item.description} สต็อกไม่พอ (เหลือ ${currentQty})`);
+            }
+            snapshots.push({ partRef, currentQty, item });
           }
 
-          // All Writes
-          for (const item of data.items) {
-            const partRef = doc(db, "parts", item.partId);
-            const partSnap = await transaction.get(partRef); 
-            const currentQty = partSnap.data()?.stockQty || 0;
-            
+          // --- STEP 2: PERFORM ALL WRITES ---
+          for (const { partRef, currentQty, item } of snapshots) {
             transaction.update(partRef, {
               stockQty: currentQty - item.quantity,
               updatedAt: serverTimestamp()
@@ -374,18 +376,18 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                 <Button 
                     type="button" 
                     variant="secondary" 
-                    onClick={form.handleSubmit(d => handleSave(d, true))} 
-                    disabled={isSubmitting} 
                     className="flex-1 sm:flex-none"
+                    disabled={isSubmitting} 
+                    onClick={form.handleSubmit(d => handleSave(d, true), (err) => toast({variant: "destructive", title: "กรุณากรอกข้อมูลให้ครบถ้วน"}))} 
                 >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     บันทึกฉบับร่าง
                 </Button>
                 <Button 
                     type="button" 
-                    onClick={form.handleSubmit(d => handleSave(d, false))} 
+                    onClick={form.handleSubmit(d => handleSave(d, false), (err) => toast({variant: "destructive", title: "กรุณาตรวจสอบรายการสินค้าที่เลือก"}))} 
                     disabled={isSubmitting} 
-                    className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700"
+                    className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
                 >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
                     สร้างรายการเบิก (ตัดสต็อก)
@@ -502,7 +504,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                                 <ScrollArea className="h-64">
                                   {parts.filter(p => p.name.toLowerCase().includes(partSearch.toLowerCase()) || p.code.toLowerCase().includes(partSearch.toLowerCase())).map(p => (
                                     <Button key={p.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleSelectPart(index, p)}>
-                                      <div className="flex flex-col"><p className="font-bold text-sm">{p.code}</p><p className="text-xs">{p.name}</p><p className="text-[10px] text-primary">คงเหลือ: {p.stockQty}</p></div>
+                                      <div className="flex flex-col"><p className="font-bold text-sm">{p.code}</p><p className="text-xs">{p.name}</p><p className="text-[10px] text-primary font-bold">คงเหลือ: {p.stockQty}</p></div>
                                     </Button>
                                   ))}
                                 </ScrollArea>
