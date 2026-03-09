@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -35,6 +36,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
 import Image from "next/image";
 import type { Part, PartCategory, PartLocation, StockActivity } from "@/lib/types";
 import type { WithId } from "@/firebase";
@@ -101,6 +103,7 @@ const partSchema = z.object({
   stockQty: z.coerce.number().min(0, "ห้ามติดลบ"),
   costPrice: z.coerce.number().min(0, "ห้ามติดลบ").default(0),
   minStock: z.coerce.number().min(0, "ห้ามติดลบ").default(0),
+  isOrderRequired: z.boolean().default(true),
   location: z.string().optional().default(""),
   details: z.string().optional().default(""),
 });
@@ -171,6 +174,7 @@ export default function PartsInventoryPage() {
       stockQty: 0,
       costPrice: 0,
       minStock: 0,
+      isOrderRequired: true,
       location: "",
       details: "",
     },
@@ -187,6 +191,7 @@ export default function PartsInventoryPage() {
 
   const watchedCode = form.watch("code");
   const watchedLocation = form.watch("location");
+  const watchedMinStock = form.watch("minStock");
 
   const selectedLocationZone = useMemo(() => {
     if (!watchedLocation || !locations) return "";
@@ -219,12 +224,13 @@ export default function PartsInventoryPage() {
         stockQty: editingPart.stockQty,
         costPrice: editingPart.costPrice || 0,
         minStock: editingPart.minStock || 0,
+        isOrderRequired: editingPart.isOrderRequired ?? true,
         location: editingPart.location || "",
         details: editingPart.details || "",
       });
       setPhotoPreview(editingPart.imageUrl || null);
     } else {
-      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, costPrice: 0, minStock: 0, location: "", details: "" });
+      form.reset({ code: "", name: "", categoryId: "", sellingPrice: 0, stockQty: 0, costPrice: 0, minStock: 0, isOrderRequired: true, location: "", details: "" });
       setPhotoPreview(null);
       setPhoto(null);
     }
@@ -337,6 +343,7 @@ export default function PartsInventoryPage() {
         costPrice: values.costPrice,
         stockQty: values.stockQty, // Only used for new
         minStock: values.minStock,
+        isOrderRequired: values.minStock === 0 ? values.isOrderRequired : true, // Always required if minStock > 0
         location: values.location || "",
         details: values.details || "",
         imageUrl: finalImageUrl,
@@ -605,13 +612,35 @@ export default function PartsInventoryPage() {
                         {isEditingMode && <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] w-full mt-1 border-dashed" onClick={() => setIsAdjustingStock(true)}><RefreshCw className="mr-1 h-3 w-3" /> ปรับปรุงยอด</Button>}
                       </FormItem>
                     )} />
-                    <FormField name="minStock" control={form.control} render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>จำนวนสต็อกขั้นต่ำ (Min)</FormLabel>
-                        <FormControl><Input type="number" {...field} disabled={isSubmitting} /></FormControl>
-                        <FormDescription className="text-[10px]">ระบบจะเตือนเมื่อสินค้าใกล้หมด</FormDescription>
-                      </FormItem>
-                    )} />
+                    <div className="space-y-4">
+                      <FormField name="minStock" control={form.control} render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>จำนวนสต็อกขั้นต่ำ (Min)</FormLabel>
+                          <FormControl><Input type="number" {...field} disabled={isSubmitting} /></FormControl>
+                          <FormDescription className="text-[10px]">ระบบจะเตือนเมื่อสินค้าใกล้หมด</FormDescription>
+                        </FormItem>
+                      )} />
+                      
+                      {watchedMinStock === 0 && (
+                        <FormField control={form.control} name="isOrderRequired" render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-3 bg-primary/5 animate-in fade-in duration-300">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                disabled={isSubmitting}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel className="text-xs font-bold text-primary cursor-pointer">จำเป็นต้องสั่งเมื่อของหมด</FormLabel>
+                              <FormDescription className="text-[9px]">
+                                หากไม่ติ๊ก สินค้าชิ้นนี้จะไม่ปรากฏในรายการที่ต้องเตรียมสั่งเมื่อยอดเป็น 0 ค่ะ
+                              </FormDescription>
+                            </div>
+                          </FormItem>
+                        )} />
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-12 gap-4 items-start">

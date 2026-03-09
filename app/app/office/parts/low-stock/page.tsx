@@ -20,7 +20,6 @@ import Image from "next/image";
 
 export default function LowStockPartsPage() {
   const { db } = useFirebase();
-  const { toast } = useToast();
   
   const [parts, setParts] = useState<WithId<Part>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +32,16 @@ export default function LowStockPartsPage() {
     const q = query(collection(db, "parts"), orderBy("name", "asc"));
     const unsubscribe = onSnapshot(q, (snap) => {
       const allParts = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<Part>));
-      // Filter for parts where stock is less than or equal to minimum stock
-      const lowStock = allParts.filter(p => p.stockQty <= (p.minStock || 0));
+      
+      // Filter logic: 
+      // 1. Stock is below or equal to Min Stock
+      // 2. BUT exclude if Min Stock is 0 AND user marked it as "No order required"
+      const lowStock = allParts.filter(p => {
+        const isBelowMin = p.stockQty <= (p.minStock || 0);
+        const isIgnoredIfZero = (p.minStock === 0 && p.isOrderRequired === false);
+        return isBelowMin && !isIgnoredIfZero;
+      });
+      
       setParts(lowStock);
       setLoading(false);
     }, (error) => {
@@ -74,7 +81,7 @@ export default function LowStockPartsPage() {
             <CardTitle className="text-lg">รายการสินค้าใกล้หมด ({parts.length})</CardTitle>
           </div>
           <CardDescription className="text-amber-600">
-            กรุณาตรวจสอบยอดเงินและรายการเพื่อวางแผนการจัดซื้อให้ทันเวลาค่ะ
+            รายการด้านล่างกรองเอาสินค้าที่ไม่จำเป็นต้องสต็อกออกให้แล้วค่ะ (กรณี Min Stock เป็น 0 และติ๊กไม่จำเป็นต้องสั่ง)
           </CardDescription>
         </CardHeader>
       </Card>
@@ -161,5 +168,3 @@ export default function LowStockPartsPage() {
     </div>
   );
 }
-
-import { useToast } from "@/hooks/use-toast";
