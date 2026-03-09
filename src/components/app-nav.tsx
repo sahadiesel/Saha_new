@@ -10,7 +10,7 @@ import {
 
 import {
   Building, Factory, Wrench, Truck, Package, Landmark,
-  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays, Globe, ShoppingCart, FileText, LayoutList, Tags, ClipboardList
+  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays, Globe, ShoppingCart, FileText, LayoutList, Tags, ClipboardList, AlertTriangle
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -357,6 +357,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                     <>
                         <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/low-stock" label="รายการที่ต้องเตรียมสั่ง" icon={AlertTriangle} onClick={onLinkClick} />
                         
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')}>
                             <CollapsibleTrigger asChild>
