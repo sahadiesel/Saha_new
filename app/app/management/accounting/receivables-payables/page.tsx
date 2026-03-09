@@ -164,7 +164,6 @@ function ReceivePaymentDialog({
         }
       }
 
-      // CRITICAL: Close associated job if fully paid
       if (newStatus === 'PAID' && obligation.jobId) {
           const jobRef = doc(db, 'jobs', obligation.jobId);
           const jobSnap = await getDoc(jobRef);
@@ -580,7 +579,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
                     </FormItem>
                   )}
                 />
-                <FormField name="amount" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยอดตัดหนี้ (Gross)</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
+                <FormField name="amount" render={({ field }) => (<FormItem><FormLabel>ยอดตัดหนี้ (Gross)</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
               </div>
               <div className="grid grid-cols-1 gap-4">
                 <FormField name="accountId" control={form.control} render={({ field }) => (

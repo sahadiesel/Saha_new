@@ -53,7 +53,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.createElement("canvas").getContext("2d");
+        const ctx = canvas.getContext("2d");
         if (!ctx) {
           resolve(file);
           return;
@@ -125,7 +125,6 @@ export default function PartsInventoryPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   
-  // Filtering States
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [locationFilter, setLocationFilter] = useState("ALL");
 
@@ -138,7 +137,6 @@ export default function PartsInventoryPage() {
   const [isAdjustingStock, setIsAdjustingStock] = useState(false);
   const [isAdjustmentSubmitting, setIsAdjustmentSubmitting] = useState(false);
 
-  // Autocomplete Location State
   const [locationSearch, setLocationSearch] = useState("");
   const [isLocationPopoverOpen, setIsLocationPopoverOpen] = useState(false);
 
@@ -190,7 +188,6 @@ export default function PartsInventoryPage() {
   const watchedCode = form.watch("code");
   const watchedLocation = form.watch("location");
 
-  // ดึงรายละเอียดพิกัดของตำแหน่งที่เลือก
   const selectedLocationZone = useMemo(() => {
     if (!watchedLocation || !locations) return "";
     const found = locations.find(l => l.name.toLowerCase() === watchedLocation.toLowerCase().trim());
@@ -350,7 +347,6 @@ export default function PartsInventoryPage() {
 
       if (editingPart) {
         const partRef = doc(db, "parts", editingPart.id);
-        // Remove stockQty from updates, must use adjust transaction
         delete partData.stockQty;
         await updateDoc(partRef, sanitizeForFirestore(partData));
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
@@ -447,6 +443,8 @@ export default function PartsInventoryPage() {
     if (!locationSearch) return locations;
     return locations.filter(l => l.name.toLowerCase().includes(locationSearch.toLowerCase()));
   }, [locations, locationSearch]);
+
+  const isEditingMode = !!editingPart;
 
   return (
     <div className="space-y-6">
@@ -547,7 +545,7 @@ export default function PartsInventoryPage() {
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto p-0 flex flex-col">
-          <DialogHeader className="p-6 pb-2"><DialogTitle>{editingPart ? "รายละเอียดและแก้ไขอะไหล่" : "เพิ่มอะไหล่ใหม่เข้าระบบ"}</DialogTitle></DialogHeader>
+          <DialogHeader className="p-6 pb-2"><DialogTitle>{isEditingMode ? "รายละเอียดและแก้ไขอะไหล่" : "เพิ่มอะไหล่ใหม่เข้าระบบ"}</DialogTitle></DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(data => onSubmit(data))} className="space-y-6 p-6">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
@@ -567,8 +565,8 @@ export default function PartsInventoryPage() {
                     <FormItem>
                       <FormLabel>รหัสสินค้า / Barcode <span className="text-destructive">*</span></FormLabel>
                       <div className="flex gap-2">
-                        <FormControl><Input placeholder="รหัสสินค้า..." {...field} disabled={isSubmitting || !!editingPart} className={cn(!!editingPart && "bg-muted font-mono")} /></FormControl>
-                        {!editingPart && <Button type="button" variant="secondary" size="icon" onClick={startScanner} disabled={isSubmitting}><ScanBarcode className="h-5 w-5" /></Button>}
+                        <FormControl><Input placeholder="รหัสสินค้า..." {...field} disabled={isSubmitting || isEditingMode} className={cn(isEditingMode && "bg-muted font-mono")} /></FormControl>
+                        {!isEditingMode && <Button type="button" variant="secondary" size="icon" onClick={startScanner} disabled={isSubmitting}><ScanBarcode className="h-5 w-5" /></Button>}
                       </div>
                       {(watchedCode || editingPart?.code) && (
                         <div className="mt-2 flex flex-col items-center p-2 border rounded-lg bg-white shadow-sm overflow-hidden h-14">
@@ -602,9 +600,9 @@ export default function PartsInventoryPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <FormField name="stockQty" control={form.control} render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{editingPart ? "สต็อกปัจจุบัน" : "สต็อกเริ่มต้น"}</FormLabel>
-                        <FormControl><Input type="number" {...field} disabled={isSubmitting || !!editingPart} className={cn(!!editingPart && "bg-muted")} /></FormControl>
-                        {!!editingPart && <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] w-full mt-1 border-dashed" onClick={() => setIsAdjustingStock(true)}><RefreshCw className="mr-1 h-3 w-3" /> ปรับปรุงยอด</Button>}
+                        <FormLabel>{isEditingMode ? "สต็อกปัจจุบัน" : "สต็อกเริ่มต้น"}</FormLabel>
+                        <FormControl><Input type="number" {...field} disabled={isSubmitting || isEditingMode} className={cn(isEditingMode && "bg-muted")} /></FormControl>
+                        {isEditingMode && <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] w-full mt-1 border-dashed" onClick={() => setIsAdjustingStock(true)}><RefreshCw className="mr-1 h-3 w-3" /> ปรับปรุงยอด</Button>}
                       </FormItem>
                     )} />
                     <FormField name="minStock" control={form.control} render={({ field }) => (
@@ -717,7 +715,7 @@ export default function PartsInventoryPage() {
                 <Button variant="outline" type="button" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>ยกเลิก</Button>
                 <Button type="submit" disabled={isSubmitting}>
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} 
-                  {editingPart ? "บันทึกการแก้ไข" : "เพิ่มสินค้า"}
+                  {isEditingMode ? "บันทึกการแก้ไข" : "เพิ่มสินค้า"}
                 </Button>
               </DialogFooter>
             </form>
