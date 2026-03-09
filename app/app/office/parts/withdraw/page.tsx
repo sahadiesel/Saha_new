@@ -57,7 +57,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
-import { sanitizeForFirestore } from "@/lib/utils";
+import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Document } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 
