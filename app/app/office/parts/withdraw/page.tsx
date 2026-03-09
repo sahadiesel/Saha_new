@@ -1,26 +1,77 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { collection, query, orderBy, onSnapshot, limit, where } from "firebase/firestore";
+import { 
+  collection, 
+  query, 
+  orderBy, 
+  onSnapshot, 
+  limit, 
+  where, 
+  doc, 
+  deleteDoc, 
+  runTransaction, 
+  serverTimestamp,
+  writeBatch
+} from "firebase/firestore";
 import { useFirebase } from "@/firebase";
+import { useAuth } from "@/context/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, PlusCircle, ClipboardList, History, Search, Eye, Edit } from "lucide-react";
+import { 
+  Loader2, 
+  PlusCircle, 
+  ClipboardList, 
+  Search, 
+  Eye, 
+  Edit, 
+  MoreHorizontal, 
+  Trash2, 
+  AlertCircle,
+  RotateCcw
+} from "lucide-react";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
+import { useRouter } from "next/navigation";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
+import { sanitizeForFirestore } from "@/lib/utils";
 import type { Document } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 
 export default function OfficePartsWithdrawPage() {
   const { db } = useFirebase();
+  const { profile } = useAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+
   const [withdrawals, setWithdrawals] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<Document | null>(null);
+
+  const isAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
   useEffect(() => {
     if (!db) return;
@@ -38,6 +89,69 @@ export default function OfficePartsWithdrawPage() {
         setLoading(false);
     });
   }, [db]);
+
+  const handleConfirmDelete = async () => {
+    if (!db || !docToDelete || !profile) return;
+    setIsDeleting(true);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docRef = doc(db, "documents", docToDelete.id);
+        const docSnap = await transaction.get(docRef);
+        
+        if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
+        const docData = docSnap.data() as Document;
+
+        // If it was already ISSUED (stock deducted), we must revert stock
+        if (docData.status === 'ISSUED') {
+          for (const item of docData.items) {
+            if (!item.partId) continue;
+            const partRef = doc(db, "parts", item.partId);
+            const partSnap = await transaction.get(partRef);
+            
+            if (partSnap.exists()) {
+              const currentQty = partSnap.data().stockQty || 0;
+              const revertQty = item.quantity || 0;
+              
+              transaction.update(partRef, {
+                stockQty: currentQty + revertQty,
+                updatedAt: serverTimestamp()
+              });
+
+              // Log stock activity for reversion
+              const actRef = doc(collection(db, "stockActivities"));
+              transaction.set(actRef, sanitizeForFirestore({
+                partId: item.partId,
+                partCode: item.code,
+                partName: item.description,
+                type: 'ADJUST_ADD', // Reverting withdrawal is an adjustment add
+                diffQty: revertQty,
+                beforeQty: currentQty,
+                afterQty: currentQty + revertQty,
+                notes: `คืนสต็อกเนื่องจากการลบใบเบิก ${docData.docNo} โดย ${profile.displayName}`,
+                createdByUid: profile.uid,
+                createdByName: profile.displayName,
+                createdAt: serverTimestamp(),
+              }));
+            }
+          }
+        }
+
+        // Delete the document
+        transaction.delete(docRef);
+      });
+
+      toast({ 
+        title: "ลบรายการเบิกสำเร็จ", 
+        description: docToDelete.status === 'ISSUED' ? "ระบบได้ทำการคืนยอดสต็อกกลับเข้าคลังให้เรียบร้อยแล้วค่ะ" : "ลบข้อมูลฉบับร่างเรียบร้อยแล้วค่ะ" 
+      });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsDeleting(false);
+      setDocToDelete(null);
+    }
+  };
 
   const filtered = useMemo(() => {
     if (!searchTerm) return withdrawals;
@@ -89,7 +203,7 @@ export default function OfficePartsWithdrawPage() {
                   <TableHead>ลูกค้า</TableHead>
                   <TableHead>สถานะ</TableHead>
                   <TableHead className="text-right">มูลค่ารวม</TableHead>
-                  <TableHead className="text-right">จัดการ</TableHead>
+                  <TableHead className="text-right w-24">จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -98,7 +212,9 @@ export default function OfficePartsWithdrawPage() {
                 ) : filtered.length > 0 ? (
                   filtered.map(w => (
                     <TableRow key={w.id} className="hover:bg-muted/30">
-                      <TableCell className="font-bold font-mono text-primary text-xs">{w.docNo}</TableCell>
+                      <TableCell className="font-bold font-mono text-primary text-xs">
+                        <Link href={`/app/documents/${w.id}`} className="hover:underline">{w.docNo}</Link>
+                      </TableCell>
                       <TableCell className="text-xs">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
                       <TableCell>
                         {w.jobId ? (
@@ -115,19 +231,36 @@ export default function OfficePartsWithdrawPage() {
                       </TableCell>
                       <TableCell className="text-right font-black">฿{w.grandTotal.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                            {w.status === 'DRAFT' ? (
-                                <Button asChild variant="outline" size="sm" className="h-8">
-                                    <Link href={`/app/office/parts/withdraw/new?editDocId=${w.id}`}>
-                                        <Edit className="h-3 w-3 mr-1" /> แก้ไข
-                                    </Link>
-                                </Button>
-                            ) : (
-                                <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-                                    <Link href={`/app/documents/${w.id}`}><Eye className="h-4 w-4" /></Link>
-                                </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => router.push(`/app/documents/${w.id}`)}>
+                              <Eye className="mr-2 h-4 w-4" /> ดูรายละเอียด
+                            </DropdownMenuItem>
+                            
+                            {w.status === 'DRAFT' && (
+                              <DropdownMenuItem onClick={() => router.push(`/app/office/parts/withdraw/new?editDocId=${w.id}`)}>
+                                <Edit className="mr-2 h-4 w-4" /> แก้ไขฉบับร่าง
+                              </DropdownMenuItem>
                             )}
-                        </div>
+
+                            {(isAdmin || w.status === 'DRAFT') && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setDocToDelete(w)}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" /> ลบรายการ
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))
@@ -139,6 +272,40 @@ export default function OfficePartsWithdrawPage() {
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!docToDelete} onOpenChange={(o) => !o && setDocToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              ยืนยันการลบใบเบิก?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>คุณต้องการลบเอกสารเลขที่ <span className="font-bold">{docToDelete?.docNo}</span> ใช่หรือไม่?</p>
+              {docToDelete?.status === 'ISSUED' && (
+                <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 text-destructive">
+                  <RotateCcw className="h-4 w-4" />
+                  <AlertTitle className="text-xs font-bold">ข้อมูลการคืนสต็อก</AlertTitle>
+                  <AlertDescription className="text-[10px]">
+                    เนื่องจากเอกสารนี้ถูกตัดสต็อกไปแล้ว เมื่อลบระบบจะทำการ **บวกยอดสินค้าคืนเข้าคลัง** ให้โดยอัตโนมัติค่ะ
+                  </AlertDescription>
+                </Alert>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmDelete} 
+              disabled={isDeleting}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              ยืนยันการลบ
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
