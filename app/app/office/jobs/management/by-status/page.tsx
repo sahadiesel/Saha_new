@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, Suspense, useMemo, useEffect } from "react";
@@ -12,7 +11,7 @@ import { Search, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/auth-context";
 import { cn } from "@/lib/utils";
 
-type TabValue = "quotation" | "waiting-approve" | "pending-parts" | "in-repair" | "done" | "pickup";
+type TabValue = "quotation" | "waiting-approve" | "pending-parts" | "in-repair" | "done" | "pickup" | "waiting-payment";
 
 function ByStatusContent() {
   const { profile, loading: authLoading } = useAuth();
@@ -30,17 +29,17 @@ function ByStatusContent() {
     
     // Admin and System Management see everything
     if (userRole === 'ADMIN' || userDept === 'MANAGEMENT') {
-      return ["quotation", "waiting-approve", "pending-parts", "in-repair", "done", "pickup"];
+      return ["quotation", "waiting-approve", "pending-parts", "in-repair", "done", "pickup", "waiting-payment"];
     }
 
     // Department-based restrictions
     switch (userDept) {
       case 'OFFICE':
-        return ["quotation", "waiting-approve", "in-repair", "done", "pickup"];
+        return ["quotation", "waiting-approve", "in-repair", "done", "pickup", "waiting-payment"];
       case 'PURCHASING':
         return ["pending-parts"];
       case 'ACCOUNTING_HR':
-        return ["done", "pickup"];
+        return ["done", "pickup", "waiting-payment"];
       default:
         return [];
     }
@@ -87,7 +86,7 @@ function ByStatusContent() {
       
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-          <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1 h-auto">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-1 h-auto">
             <TabsTrigger 
               value="quotation" 
               disabled={isTabDisabled("quotation")}
@@ -129,6 +128,13 @@ function ByStatusContent() {
               className={cn("text-[10px] sm:text-xs", isTabDisabled("pickup") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
             >
               รอลูกค้ารับสินค้า
+            </TabsTrigger>
+            <TabsTrigger 
+              value="waiting-payment" 
+              disabled={isTabDisabled("waiting-payment")}
+              className={cn("text-[10px] sm:text-xs font-bold text-blue-600", isTabDisabled("waiting-payment") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
+            >
+              รอรับเงิน
             </TabsTrigger>
           </TabsList>
         </div>
@@ -191,6 +197,16 @@ function ByStatusContent() {
                             status="WAITING_CUSTOMER_PICKUP"
                             emptyTitle="ไม่มีงานที่รอลูกค้ารับของ"
                             emptyDescription="ไม่มีงานที่อยู่ในสถานะ WAITING_CUSTOMER_PICKUP"
+                        />
+                    )}
+                </TabsContent>
+                <TabsContent value="waiting-payment" className="mt-0">
+                    {activeTab === 'waiting-payment' && allowedTabs.includes('waiting-payment') && (
+                        <JobList 
+                            searchTerm={searchTerm}
+                            status="PICKED_UP"
+                            emptyTitle="ไม่มีงานที่รอรับเงิน"
+                            emptyDescription="ยังไม่มีงานที่ลูกค้าได้รับของไปแล้วและอยู่ระหว่างรอรับเงินจริงค่ะ"
                         />
                     )}
                 </TabsContent>

@@ -1,4 +1,3 @@
-
 export const DEPARTMENT_LABELS: Record<string, string> = {
     MANAGEMENT: "ฝ่ายบริหาร",
     OFFICE: "แผนกออฟฟิศ",
@@ -31,6 +30,7 @@ export const JOB_STATUS_LABELS: Record<string, string> = {
     IN_REPAIR_PROCESS: "กำลังดำเนินการซ่อม",
     DONE: "ทำเสร็จรอทำบิล",
     WAITING_CUSTOMER_PICKUP: "รอลูกค้ารับสินค้า",
+    PICKED_UP: "รับสินค้าแล้ว",
     CLOSED: "ปิดงาน",
 };
 

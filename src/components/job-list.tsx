@@ -14,6 +14,7 @@ import {
   writeBatch,
   serverTimestamp,
   getDocs,
+  getDoc,
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
@@ -71,7 +72,7 @@ import type { Job, JobStatus, JobDepartment, UserProfile } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
-import { cn } from "@/lib/utils";
+import { cn, sanitizeForFirestore } from "@/lib/utils";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -83,6 +84,7 @@ const getStatusStyles = (status: Job['status']) => {
     case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
     case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
     case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'PICKED_UP': return 'bg-blue-600 text-white border-blue-700 hover:bg-blue-600';
     case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
     default: return 'bg-secondary text-secondary-foreground';
   }
@@ -252,6 +254,47 @@ export function JobList({
     } catch (e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); } finally { setIsProcessing(null); }
   };
 
+  const handleCustomerPickup = async (job: Job) => {
+    if (!db || !profile || isProcessing) return;
+    setIsProcessing(job.id);
+    try {
+      const batch = writeBatch(db);
+      const jobRef = doc(db, "jobs", job.id);
+      
+      // 1. Update Job Status to PICKED_UP
+      batch.update(jobRef, { 
+        status: 'PICKED_UP', 
+        lastActivityAt: serverTimestamp(), 
+        updatedAt: serverTimestamp() 
+      });
+      
+      // 2. Update associated document if it exists and is in DRAFT to PENDING_REVIEW (Submit for review)
+      if (job.salesDocId) {
+        const docRef = doc(db, "documents", job.salesDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().status === 'DRAFT') {
+          batch.update(docRef, {
+            status: 'PENDING_REVIEW',
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
+      // 3. Log Activity
+      batch.set(doc(collection(jobRef, "activities")), { 
+        text: `ลูกค้ารับสินค้าแล้ว - เปลี่ยนสถานะเป็น "รับสินค้าแล้ว" และส่งเรื่องให้ฝ่ายบัญชีตรวจสอบการชำระเงิน`, 
+        userName: profile.displayName, 
+        userId: profile.uid, 
+        createdAt: serverTimestamp() 
+      });
+      
+      await batch.commit();
+      toast({ title: "บันทึกการรับสินค้าสำเร็จ", description: "งานถูกย้ายไปยังส่วนรอรับเงินแล้วค่ะ" });
+    } catch (e: any) { 
+      toast({ variant: "destructive", title: "Error", description: e.message }); 
+    } finally { setIsProcessing(null); }
+  };
+
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />สร้าง Index</a></Button></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
   if (jobs.length === 0) return (<Card className="text-center py-12"><CardHeader><CardTitle className="text-muted-foreground">{emptyTitle}</CardTitle><CardDescription>{emptyDescription}</CardDescription></CardHeader></Card>);
@@ -263,7 +306,7 @@ export function JobList({
           const isOwnDept = profile?.department === job.department;
           const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
           const hasQuotation = !!job.salesDocId && job.salesDocType === 'QUOTATION';
-          const isPickupStatus = job.status === 'WAITING_CUSTOMER_PICKUP';
+          const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
           
           return (
             <Card key={job.id} className="flex flex-col overflow-hidden hover:shadow-md transition-shadow">
@@ -322,10 +365,27 @@ export function JobList({
 
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (<Button asChild className="w-full h-9 font-bold" variant="default"><Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link></Button>)}
-                  {['DONE', 'WAITING_CUSTOMER_PICKUP', 'CLOSED'].includes(job.status) && (
+                  
+                  {['DONE', 'WAITING_CUSTOMER_PICKUP', 'PICKED_UP', 'CLOSED'].includes(job.status) && (
                     <div className="flex flex-col gap-2 w-full">
-                      {(hasActualBill || isPickupStatus) ? (
-                        <Button asChild variant="outline" className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold overflow-hidden"><Link href={`/app/jobs/${job.id}`}><div className="flex items-center justify-center truncate"><Eye className="mr-2 h-4 w-4 shrink-0" /><span className="truncate">ดูบิล {job.salesDocNo || ""}</span></div></Link></Button>
+                      {isWaitingPickup ? (
+                        <Button 
+                          onClick={() => handleCustomerPickup(job)}
+                          disabled={isProcessing === job.id}
+                          className="w-full h-9 bg-primary hover:bg-primary/90 text-white font-bold"
+                        >
+                          {isProcessing === job.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                          ลูกค้ารับสินค้า
+                        </Button>
+                      ) : (hasActualBill || job.status === 'PICKED_UP') ? (
+                        <Button asChild variant="outline" className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold overflow-hidden">
+                          <Link href={`/app/jobs/${job.id}`}>
+                            <div className="flex items-center justify-center truncate">
+                              <Eye className="mr-2 h-4 w-4 shrink-0" />
+                              <span className="truncate">{job.status === 'PICKED_UP' ? 'รอดำเนินการรับเงิน' : (job.status === 'CLOSED' ? 'ดูรายละเอียด' : `ดูบิล ${job.salesDocNo || ""}`)}</span>
+                            </div>
+                          </Link>
+                        </Button>
                       ) : (
                         <>
                           {job.status === 'DONE' && canDoBilling && (<Button className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold" variant="outline" onClick={() => setBillingJob(job)}><Receipt className="mr-2 h-4 w-4" />ออกบิล</Button>)}

@@ -10,7 +10,7 @@ export type UserStatus = (typeof USER_STATUSES)[number];
 export const PAY_TYPES = ["MONTHLY", "DAILY", "MONTHLY_NOSCAN", "NOPAY"] as const;
 export type PayType = (typeof PAY_TYPES)[number];
 
-export const JOB_STATUSES = ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS", "DONE", "WAITING_CUSTOMER_PICKUP", "CLOSED"] as const;
+export const JOB_STATUSES = ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS", "DONE", "WAITING_CUSTOMER_PICKUP", "PICKED_UP", "CLOSED"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export const JOB_DEPARTMENTS = ["OFFICE", "CAR_SERVICE", "COMMONRAIL", "MECHANIC", "OUTSOURCE"] as const;
