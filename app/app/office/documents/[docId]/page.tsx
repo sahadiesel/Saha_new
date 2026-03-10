@@ -11,11 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, Loader2, Share2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
 import type { Document, AccountingAccount, Customer } from "@/lib/types";
+import { useToast } from "@/hooks/use-toast";
 
 import {
   AlertDialog,
@@ -236,6 +237,7 @@ function DocumentPageContent() {
     const { docId } = useParams();
     const router = useRouter();
     const { db } = useFirebase();
+    const { toast } = useToast();
     const searchParams = useSearchParams();
 
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
@@ -280,7 +282,6 @@ function DocumentPageContent() {
         const tab = searchParams.get('tab');
         
         if (from === 'inbox') {
-            // Force redirection back to Inbox with correct tab
             router.push(`/app/management/accounting/inbox?tab=${tab || 'receive'}`);
             return;
         }
@@ -319,6 +320,26 @@ function DocumentPageContent() {
         else window.print();
     };
 
+    const handleShare = async () => {
+        if (!document) return;
+        const shareData = {
+            title: `เอกสาร ${document.docNo} - Sahadiesel`,
+            text: `ส่งเอกสาร ${document.docNo} ของ ${document.customerSnapshot.name} ให้ตรวจสอบค่ะ`,
+            url: window.location.href.split('?')[0] // แชร์ URL ของหน้าพรีวิวนี้
+        };
+
+        try {
+            if (navigator.share) {
+                await navigator.share(shareData);
+            } else {
+                await navigator.clipboard.writeText(shareData.url);
+                toast({ title: "คัดลอกลิงก์แล้ว", description: "ท่านสามารถนำลิงก์ไปวางใน LINE เพื่อส่งให้ลูกค้าได้ทันทีค่ะ" });
+            }
+        } catch (e) {
+            // User cancelled or error
+        }
+    };
+
     if (isLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
     if (error || !document || !effectiveCustomer) return <div className="p-12 text-center space-y-4"><AlertCircle className="mx-auto h-12 w-12 text-destructive"/><h2 className="text-xl font-bold">ไม่พบเอกสาร</h2><Button variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2"/> กลับ</Button></div>;
 
@@ -330,6 +351,9 @@ function DocumentPageContent() {
                 <div className="flex justify-between items-center bg-background p-4 rounded-lg border shadow-sm print:hidden mx-4 md:mx-0">
                     <Button variant="outline" onClick={handleBack}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
                     <div className="flex gap-2">
+                        <Button variant="outline" onClick={handleShare} className="border-primary text-primary hover:bg-primary/5">
+                            <Share2 className="mr-2 h-4 w-4"/> แชร์ส่ง LINE
+                        </Button>
                         <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
                     </div>
                 </div>
