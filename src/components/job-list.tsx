@@ -39,7 +39,12 @@ import {
   Check,
   Ban,
   PackageCheck,
-  ClipboardList
+  ClipboardList,
+  Wallet,
+  PlusCircle,
+  Trash2,
+  Send,
+  CalendarDays
 } from "lucide-react";
 import {
   AlertDialog,
@@ -67,8 +72,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format, parseISO } from "date-fns";
 import { useRouter } from "next/navigation";
-import type { Job, JobStatus, JobDepartment, UserProfile } from "@/lib/types";
+import type { Job, JobStatus, JobDepartment, UserProfile, AccountingAccount, Document as DocumentType } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
@@ -89,6 +100,8 @@ const getStatusStyles = (status: Job['status']) => {
     default: return 'bg-secondary text-secondary-foreground';
   }
 }
+
+const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface JobListProps {
   department?: JobDepartment;
@@ -126,6 +139,16 @@ export function JobList({
   const [deptWorkers, setDeptWorkers] = useState<UserProfile[]>([]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>("");
+
+  // Payment Confirmation States
+  const [paymentConfirmJob, setPaymentConfirmJob] = useState<Job | null>(null);
+  const [paymentConfirmDoc, setPaymentConfirmDoc] = useState<DocumentType | null>(null);
+  const [isFetchingDoc, setIsFetchingDoc] = useState(false);
+  const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
+  const [suggestedPayments, setSuggestedPayments] = useState<{accountId: string, amount: number}[]>([]);
+  const [recordRemainingAsCredit, setRecordRemainingAsCredit] = useState(false);
+  const [submitBillingRequired, setSubmitBillingRequired] = useState(false);
+  const [submitDueDate, setSubmitDueDate] = useState('');
 
   const statusConfig = useMemo(() => {
     const statusArray = status ? (Array.isArray(status) ? status : [status]) : [];
@@ -168,16 +191,8 @@ export function JobList({
           (j.customerSnapshot?.phone || "").includes(term) ||
           (j.description || "").toLowerCase().includes(term) ||
           (j.id && j.id.toLowerCase().includes(term)) ||
-          // Vehicle Search
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
-          (j.carServiceDetails?.brand || "").toLowerCase().includes(term) ||
-          (j.carServiceDetails?.model || "").toLowerCase().includes(term) ||
-          (j.commonrailDetails?.brand || "").toLowerCase().includes(term) ||
-          (j.commonrailDetails?.partNumber || "").toLowerCase().includes(term) ||
-          (j.commonrailDetails?.registrationNumber || "").toLowerCase().includes(term) ||
-          (j.mechanicDetails?.brand || "").toLowerCase().includes(term) ||
-          (j.mechanicDetails?.partNumber || "").toLowerCase().includes(term) ||
-          (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(term)
+          (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
       }
       setJobs(jobsData);
@@ -191,6 +206,13 @@ export function JobList({
     });
     return () => unsubscribe();
   }, [db, department, assigneeUid, statusConfig.key, searchTerm]);
+
+  useEffect(() => {
+    if (!db) return;
+    onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
+        setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
+    });
+  }, [db]);
 
   const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
     if (!db || !profile || isProcessing) return;
@@ -254,46 +276,114 @@ export function JobList({
     } catch (e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); } finally { setIsProcessing(null); }
   };
 
-  const handleCustomerPickup = async (job: Job) => {
-    if (!db || !profile || isProcessing) return;
-    setIsProcessing(job.id);
+  const handleOpenPaymentConfirm = async (job: Job) => {
+    if (!db || isFetchingDoc) return;
+    if (!job.salesDocId) {
+        toast({ variant: 'destructive', title: 'ไม่พบเอกสารบิล', description: 'กรุณาออกบิลก่อนทำรายการส่งมอบค่ะ' });
+        return;
+    }
+    
+    setIsFetchingDoc(true);
     try {
-      const batch = writeBatch(db);
-      const jobRef = doc(db, "jobs", job.id);
-      
-      // 1. Update Job Status to PICKED_UP
-      batch.update(jobRef, { 
-        status: 'PICKED_UP', 
-        lastActivityAt: serverTimestamp(), 
-        updatedAt: serverTimestamp() 
-      });
-      
-      // 2. Update associated document if it exists and is in DRAFT to PENDING_REVIEW (Submit for review)
-      if (job.salesDocId) {
-        const docRef = doc(db, "documents", job.salesDocId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists() && docSnap.data().status === 'DRAFT') {
-          batch.update(docRef, {
-            status: 'PENDING_REVIEW',
-            updatedAt: serverTimestamp()
-          });
+        const docSnap = await getDoc(doc(db, "documents", job.salesDocId));
+        if (docSnap.exists()) {
+            const document = { id: docSnap.id, ...docSnap.data() } as DocumentType;
+            setPaymentConfirmJob(job);
+            setPaymentConfirmDoc(document);
+            setRecordRemainingAsCredit(document.paymentTerms === 'CREDIT');
+            setSubmitBillingRequired(document.billingRequired || false);
+            setSubmitDueDate(document.dueDate || '');
+            
+            const defaultAcc = accounts.find(a => a.type === 'CASH') || accounts[0];
+            setSuggestedPayments([{ accountId: defaultAcc?.id || '', amount: document.grandTotal }]);
+        } else {
+            toast({ variant: 'destructive', title: 'ไม่พบเอกสารบิลในระบบ' });
         }
-      }
-
-      // 3. Log Activity
-      batch.set(doc(collection(jobRef, "activities")), { 
-        text: `ลูกค้ารับสินค้าแล้ว - เปลี่ยนสถานะเป็น "รับสินค้าแล้ว" และส่งเรื่องให้ฝ่ายบัญชีตรวจสอบการชำระเงิน`, 
-        userName: profile.displayName, 
-        userId: profile.uid, 
-        createdAt: serverTimestamp() 
-      });
-      
-      await batch.commit();
-      toast({ title: "บันทึกการรับสินค้าสำเร็จ", description: "งานถูกย้ายไปยังส่วนรอรับเงินแล้วค่ะ" });
-    } catch (e: any) { 
-      toast({ variant: "destructive", title: "Error", description: e.message }); 
-    } finally { setIsProcessing(null); }
+    } catch (e: any) {
+        toast({ variant: 'destructive', title: 'เกิดข้อผิดพลาด', description: e.message });
+    } finally {
+        setIsFetchingDoc(false);
+    }
   };
+
+  const handleFinalPaymentConfirm = async () => {
+    if (!db || !profile || !paymentConfirmJob || !paymentConfirmDoc || isProcessing) return;
+    
+    const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId);
+    if (validPayments.length === 0 && !recordRemainingAsCredit) {
+        toast({ variant: 'destructive', title: 'กรุณาระบุการรับเงิน', description: 'ต้องระบุบัญชีรับเงิน หรือเลือกเป็นขายเชื่อ (Credit) ค่ะ' });
+        return;
+    }
+
+    const currentTotal = suggestedPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const remaining = Math.round((paymentConfirmDoc.grandTotal - currentTotal) * 100) / 100;
+    
+    if (remaining > 0.01 && !recordRemainingAsCredit) {
+        toast({ variant: 'destructive', title: 'ยอดเงินไม่ครบ', description: 'ยอดที่ระบุรับเงินไม่ครบตามบิล กรุณาเลือก "บันทึกยอดคงเหลือเป็นลูกหนี้" หรือแก้ไขจำนวนเงินค่ะ' });
+        return;
+    }
+
+    setIsProcessing(paymentConfirmJob.id);
+    try {
+        const batch = writeBatch(db);
+        const jobRef = doc(db, "jobs", paymentConfirmJob.id);
+        const docRef = doc(db, "documents", paymentConfirmDoc.id);
+
+        const finalPayments = validPayments.map(p => {
+            const acc = accounts.find(a => a.id === p.accountId);
+            return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
+        });
+
+        // 1. Update Document
+        batch.update(docRef, sanitizeForFirestore({
+            status: 'PENDING_REVIEW',
+            paymentTerms: recordRemainingAsCredit ? 'CREDIT' : 'CASH',
+            suggestedPayments: finalPayments,
+            billingRequired: recordRemainingAsCredit ? submitBillingRequired : false,
+            dueDate: recordRemainingAsCredit ? submitDueDate : null,
+            updatedAt: serverTimestamp(),
+            dispute: { isDisputed: false, reason: "" }
+        }));
+
+        // 2. Update Job Status
+        batch.update(jobRef, { 
+            status: 'PICKED_UP', 
+            lastActivityAt: serverTimestamp(), 
+            updatedAt: serverTimestamp() 
+        });
+
+        // 3. Log Activity
+        batch.set(doc(collection(jobRef, "activities")), { 
+            text: `ลูกค้ารับสินค้าแล้ว - ระบุเงื่อนไขการรับเงิน: ${recordRemainingAsCredit ? 'ขายเชื่อ (Credit)' : 'รับเงินสด/โอน'} ยอดรวม ฿${formatCurrency(paymentConfirmDoc.grandTotal)}`, 
+            userName: profile.displayName, 
+            userId: profile.uid, 
+            createdAt: serverTimestamp() 
+        });
+
+        await batch.commit();
+        toast({ title: "บันทึกการส่งมอบสำเร็จ", description: "ข้อมูลถูกส่งให้ฝ่ายบัญชีตรวจสอบการรับเงินแล้วค่ะ" });
+        setPaymentConfirmJob(null);
+        setPaymentConfirmDoc(null);
+    } catch (e: any) {
+        toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
+        setIsProcessing(null);
+    }
+  };
+
+  const handleUpdatePaymentLine = (index: number, field: 'accountId' | 'amount', value: any) => {
+    setSuggestedPayments(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const currentSuggestedTotal = useMemo(() => suggestedPayments.reduce((sum, p) => sum + (p.amount || 0), 0), [suggestedPayments]);
+  const remainingInDialog = useMemo(() => {
+      if (!paymentConfirmDoc) return 0;
+      return Math.round((paymentConfirmDoc.grandTotal - currentSuggestedTotal) * 100) / 100;
+  }, [paymentConfirmDoc, currentSuggestedTotal]);
 
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />สร้าง Index</a></Button></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
@@ -325,42 +415,17 @@ export function JobList({
                   {canAssignWork && job.status === 'RECEIVED' && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
                   {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
                     <div className="grid grid-cols-2 gap-2">
-                      <Button 
-                        className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" 
-                        onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} 
-                        disabled={!!isProcessing}
-                      >
-                        <Check className="mr-1 h-3 w-3" />อนุมัติ
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" 
-                        onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล" เพื่อตรวจสอบค่าใช้จ่ายหรือออกบิล 0 บาทค่ะ')} 
-                        disabled={!!isProcessing}
-                      >
-                        <Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ
-                      </Button>
+                      <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button>
+                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"')} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button>
                     </div>
                   )}
                   
                   {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
-                    <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]">
-                      <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
-                        <ClipboardList className="mr-2 h-4 w-4" />
-                        เบิกอะไหล่
-                      </Link>
-                    </Button>
+                    <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]"><Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}><ClipboardList className="mr-2 h-4 w-4" />เบิกอะไหล่</Link></Button>
                   )}
 
                   {job.status === 'IN_REPAIR_PROCESS' && (
-                    <Button 
-                      className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" 
-                      onClick={() => handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล')}
-                      disabled={!!isProcessing}
-                    >
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                      งานเสร็จแจ้งทำบิล
-                    </Button>
+                    <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล')} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
                   )}
 
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
@@ -370,11 +435,11 @@ export function JobList({
                     <div className="flex flex-col gap-2 w-full">
                       {isWaitingPickup ? (
                         <Button 
-                          onClick={() => handleCustomerPickup(job)}
-                          disabled={isProcessing === job.id}
+                          onClick={() => handleOpenPaymentConfirm(job)}
+                          disabled={isProcessing === job.id || isFetchingDoc}
                           className="w-full h-9 bg-primary hover:bg-primary/90 text-white font-bold"
                         >
-                          {isProcessing === job.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                          {isProcessing === job.id || isFetchingDoc ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                           ลูกค้ารับสินค้า
                         </Button>
                       ) : (hasActualBill || job.status === 'PICKED_UP') ? (
@@ -392,7 +457,6 @@ export function JobList({
                           {hasQuotation && (<Button asChild variant="ghost" className="w-full h-8 text-primary hover:text-primary hover:bg-primary/5 text-[10px] font-bold border border-dashed border-primary/20"><Link href={`/app/office/documents/quotation/${job.salesDocId}`}><Eye className="mr-1 h-3 w-3" /> ดูใบเสนอราคา {job.salesDocNo}</Link></Button>)}
                         </>
                       )}
-                      {canDoBilling && job.status === 'DONE' && (<Button asChild variant="ghost" className="w-full h-8 text-destructive hover:text-destructive hover:bg-destructive/10 text-[10px] font-bold"><Link href={`/app/jobs/${job.id}?action=revert`}><RotateCcw className="mr-1 h-3 w-3" /> ส่งกลับแก้ไข</Link></Button>)}
                     </div>
                   )}
                 </div>
@@ -416,6 +480,103 @@ export function JobList({
           <AlertDialogFooter className="flex flex-col sm:flex-row gap-2"><Button variant="outline" onClick={() => setBillingJob(null)} className="w-full sm:w-auto">ยกเลิก</Button><Button variant="secondary" onClick={() => { if (billingJob) router.push(`/app/office/documents/delivery-note/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบส่งของชั่วคราว</Button><Button onClick={() => { if (billingJob) router.push(`/app/office/documents/tax-invoice/new?jobId=${billingJob.id}`); setBillingJob(null); }} className="w-full sm:w-auto">ใบกำกับภาษี</Button></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Payment Condition Dialog (Customer Pickup) */}
+      <Dialog open={!!paymentConfirmJob} onOpenChange={(o) => !o && !isProcessing && setPaymentConfirmJob(null)}>
+        <DialogContent className="sm:max-w-xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-0">
+            <DialogTitle>ระบุเงื่อนไขการรับเงิน (Customer Pickup)</DialogTitle>
+            <DialogDescription>สำหรับงานซ่อมของ {paymentConfirmJob?.customerSnapshot.name}</DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+              <div className="p-4 bg-primary/5 rounded-lg border flex justify-between items-center">
+                <span className="font-semibold">ยอดรวมทั้งสิ้นตามบิล:</span>
+                <span className="text-2xl font-black text-primary">฿{formatCurrency(paymentConfirmDoc?.grandTotal)}</span>
+              </div>
+
+              <div className="space-y-4">
+                <Label className="flex items-center gap-2 font-bold text-primary"><Wallet className="h-4 w-4" /> รายการรับเงินที่ออฟฟิศรับมา</Label>
+                <div className="border rounded-md overflow-hidden">
+                    <Table>
+                        <TableHeader className="bg-muted/50">
+                            <TableRow>
+                                <TableHead>บัญชี (Account)</TableHead>
+                                <TableHead className="w-32">จำนวน</TableHead>
+                                <TableHead className="w-10"></TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {suggestedPayments.map((p, i) => (
+                                <TableRow key={i}>
+                                    <TableCell className="p-2">
+                                        <Select value={p.accountId} onValueChange={(v) => handleUpdatePaymentLine(i, 'accountId', v)}>
+                                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="เลือกบัญชี..."/></SelectTrigger>
+                                            <SelectContent>
+                                                {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                    </TableCell>
+                                    <TableCell className="p-2">
+                                        <Input type="number" className="h-8 text-right text-xs" value={p.amount || ''} onChange={(e) => handleUpdatePaymentLine(i, 'amount', parseFloat(e.target.value) || 0)}/>
+                                    </TableCell>
+                                    <TableCell className="p-2">
+                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setSuggestedPayments(prev => prev.filter((_, idx) => idx !== i))}>
+                                            <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
+                <Button variant="outline" size="sm" className="w-full h-8 border-dashed" onClick={() => setSuggestedPayments([...suggestedPayments, {accountId: '', amount: 0}])}>
+                    <PlusCircle className="mr-2 h-3 w-3" /> เพิ่มบัญชีรับเงิน
+                </Button>
+
+                <div className="pt-4 border-t">
+                    <div className={cn("flex justify-between items-center p-3 rounded-md border", remainingInDialog > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}>
+                        <span className="text-sm font-bold">ยอดเงินที่ยังไม่ได้รับ:</span>
+                        <span className={cn("text-lg font-black", remainingInDialog > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingInDialog)}</span>
+                    </div>
+                    
+                    {remainingInDialog > 0.01 && (
+                        <div className="mt-4 space-y-4 animate-in fade-in">
+                            <div className="flex items-center space-x-2">
+                                <Checkbox id="r-credit-list" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} />
+                                <Label htmlFor="r-credit-list" className="font-bold text-amber-700 cursor-pointer">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label>
+                            </div>
+                            {recordRemainingAsCredit && (
+                                <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
+                                    <div className="space-y-2">
+                                        <Label className="text-xs">วันครบกำหนดชำระ</Label>
+                                        <Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} className="h-9" />
+                                    </div>
+                                    <div className="flex items-center space-x-2 pt-6">
+                                        <Checkbox id="r-billing-list" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} />
+                                        <Label htmlFor="r-billing-list" className="text-xs cursor-pointer">ต้องวางบิลรวม</Label>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+              </div>
+          </div>
+          
+          <DialogFooter className="bg-muted/30 p-6 border-t gap-2">
+            <Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button>
+            <Button 
+                onClick={handleFinalPaymentConfirm} 
+                disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || suggestedPayments.some(p => p.amount > 0 && !p.accountId)}
+                className="bg-green-600 hover:bg-green-700 font-bold"
+            >
+                {isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} 
+                ยืนยันและส่งให้บัญชี
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
