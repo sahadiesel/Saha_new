@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, Loader2, Share2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, Loader2, Share2, MessageCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
@@ -320,12 +320,19 @@ function DocumentPageContent() {
         else window.print();
     };
 
+    const handleLineShare = () => {
+        if (!document) return;
+        const shareUrl = window.location.href.split('?')[0];
+        const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareUrl)}`;
+        window.open(lineUrl, '_blank');
+    };
+
     const handleShare = async () => {
         if (!document) return;
         const shareData = {
             title: `เอกสาร ${document.docNo} - Sahadiesel`,
             text: `ส่งเอกสาร ${document.docNo} ของ ${document.customerSnapshot.name} ให้ตรวจสอบค่ะ`,
-            url: window.location.href.split('?')[0] // แชร์ URL ของหน้าพรีวิวนี้
+            url: window.location.href.split('?')[0]
         };
 
         try {
@@ -333,10 +340,10 @@ function DocumentPageContent() {
                 await navigator.share(shareData);
             } else {
                 await navigator.clipboard.writeText(shareData.url);
-                toast({ title: "คัดลอกลิงก์แล้ว", description: "ท่านสามารถนำลิงก์ไปวางใน LINE เพื่อส่งให้ลูกค้าได้ทันทีค่ะ" });
+                toast({ title: "คัดลอกลิงก์แล้ว", description: "ท่านสามารถนำลิงก์ไปวางเพื่อส่งให้ลูกค้าได้ทันทีค่ะ" });
             }
         } catch (e) {
-            // User cancelled or error
+            // User cancelled
         }
     };
 
@@ -348,11 +355,14 @@ function DocumentPageContent() {
     return (
         <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden print:overflow-visible">
             <div className="max-w-[210mm] mx-auto space-y-6 print:space-y-0 print:m-0 print:max-w-none">
-                <div className="flex justify-between items-center bg-background p-4 rounded-lg border shadow-sm print:hidden mx-4 md:mx-0">
+                <div className="flex flex-wrap justify-between items-center bg-background p-4 rounded-lg border shadow-sm print:hidden mx-4 md:mx-0 gap-4">
                     <Button variant="outline" onClick={handleBack}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={handleLineShare} className="border-green-600 text-green-600 hover:bg-green-50">
+                            <MessageCircle className="mr-2 h-4 w-4"/> แชร์ส่ง LINE
+                        </Button>
                         <Button variant="outline" onClick={handleShare} className="border-primary text-primary hover:bg-primary/5">
-                            <Share2 className="mr-2 h-4 w-4"/> แชร์ส่ง LINE
+                            <Share2 className="mr-2 h-4 w-4"/> แชร์อื่นๆ
                         </Button>
                         <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
                     </div>
