@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { Suspense, useEffect, useState } from "react";
@@ -29,7 +30,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     pathname === "/signup" ||
     pathname === "/healthz" ||
     pathname === "/products" ||
-    pathname === "/services" || // เพิ่ม /services เข้าในรายการหน้าสาธารณะ
+    pathname === "/services" ||
     pathname === "/contact";
 
   useEffect(() => {
@@ -42,23 +43,16 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Auto-redirect to Home (not app) from auth pages if already logged in
     const isAuthPage = pathname === "/login" || pathname === "/signup";
     
-    if (isAuthPage && pathname !== "/pending") {
-        if (profile?.status === "ACTIVE") {
-            router.replace("/"); // Redirect to Home
-        } else if (profile) {
-            router.replace("/pending");
-        }
+    if (isAuthPage && profile?.status === "ACTIVE") {
+        router.replace("/");
         return;
     }
 
-    if (!isPublicRoute) {
-        if (!profile || (profile.status && profile.status !== "ACTIVE")) {
-            if (pathname !== "/pending") {
-                router.replace("/pending");
-            }
+    if (!isPublicRoute && profile) {
+        if (profile.status !== "ACTIVE" && pathname !== "/pending") {
+            router.replace("/pending");
         }
     }
   }, [loading, user, profile, router, pathname, isPublicRoute]);
@@ -69,10 +63,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   
   if (loading || !user || (!profile && pathname !== "/pending")) {
     return <FullscreenSpinner />;
-  }
-  
-  if (!profile && pathname === "/pending") {
-      return <div className="p-4">{children}</div>;
   }
   
   const isPrintMode = searchParams.get("print") === "1";

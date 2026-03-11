@@ -34,13 +34,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!auth || !db) {
-      // Firebase services not ready yet.
       const timer = setTimeout(() => {
         if(!auth || !db) {
-            setAuthError(new Error("Firebase services could not be initialized. Please check your connection and configuration."));
+            setAuthError(new Error("Firebase services could not be initialized."));
             setLoading(false);
         }
-      }, 10000); // Wait up to 10s for initialization
+      }, 5000);
       return () => clearTimeout(timer);
     }
     setAuthError(null);
@@ -58,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!db || !user) {
+        if (!user && !loading) setLoading(false);
         return;
     };
     
@@ -68,14 +68,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (docSnap.exists()) {
                 setProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
             } else {
-                console.warn("User profile not found in Firestore for UID:", user.uid);
                 setProfile(null);
             }
             setLoading(false);
         },
         (error) => {
             console.error("Error fetching user profile:", error);
-            // Don't set error globally here, just stop loading
             setProfile(null);
             setLoading(false);
         }
