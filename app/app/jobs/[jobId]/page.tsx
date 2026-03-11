@@ -388,7 +388,7 @@ function JobDetailsPageContent() {
 
   const handleOpenEditVehicleDialog = () => {
     if (!job) return;
-    const data = job.carServiceDetails || job.commonrailDetails || job.mechanicDetails || job.carSnapshot || {};
+    const data = job.carServiceDetails || job.commonrailDetails || job.mechanicDetails || {};
     setVehicleEditData(data);
     setIsEditVehicleDialogOpen(true);
   };
@@ -621,7 +621,7 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { status: 'DONE', lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobRef, "activities")), { text: `ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    batch.set(doc(collection(jobDocRef, "activities")), { text: `ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => {
         toast({ title: "บันทึกแจ้งทำบิลสำเร็จ", description: "สถานะงานเปลี่ยนเป็น 'DONE' แล้วค่ะ กรุณาแจ้งแผนกออฟฟิศเพื่อออกบิลนะคะ" });
     })

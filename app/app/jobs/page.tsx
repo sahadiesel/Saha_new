@@ -265,7 +265,8 @@ export default function ManagementJobsPage() {
                 (j.description || "").toLowerCase().includes(q) ||
                 (j.id && j.id.toLowerCase().includes(q)) ||
                 (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(q) ||
-                (j.carSnapshot?.licensePlate || "").toLowerCase().includes(q)
+                (j.commonrailDetails?.registrationNumber || "").toLowerCase().includes(q) ||
+                (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(q)
             );
         }
         return openJobs;

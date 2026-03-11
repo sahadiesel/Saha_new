@@ -18,13 +18,19 @@ const DetailRow: React.FC<DetailRowProps> = ({ label, value }) => {
 };
 
 export function JobVehicleDetails({ job }: { job: Job }) {
-  // Check details across all possible structures including snapshots for archived jobs
-  const car = job.carServiceDetails || job.carSnapshot;
-  const commonrail = job.commonrailDetails || job.carSnapshot;
-  const mechanic = job.mechanicDetails || job.carSnapshot;
+  const car = job.carServiceDetails;
+  const commonrail = job.commonrailDetails;
+  const mechanic = job.mechanicDetails;
 
-  const hasCarDetails = !!(car?.brand || car?.licensePlate || car?.model);
-  const hasPartsDetails = !!(commonrail?.brand || commonrail?.partNumber || commonrail?.registrationNumber);
+  const hasCarDetails = !!(car?.brand || car?.model || car?.licensePlate);
+  const hasPartsDetails = !!(
+    commonrail?.brand ||
+    commonrail?.partNumber ||
+    commonrail?.registrationNumber ||
+    mechanic?.brand ||
+    mechanic?.partNumber ||
+    mechanic?.registrationNumber
+  );
 
   return (
     <div className="space-y-1">
@@ -35,15 +41,17 @@ export function JobVehicleDetails({ job }: { job: Job }) {
           <DetailRow label="ทะเบียนรถ" value={car?.licensePlate} />
         </>
       )}
-      {hasPartsDetails && !hasCarDetails && (
+
+      {!hasCarDetails && hasPartsDetails && (
         <>
-          <DetailRow label="ยี่ห้อ" value={commonrail?.brand} />
-          <DetailRow label="เลขอะไหล่" value={commonrail?.partNumber} />
-          <DetailRow label="เลขทะเบียนชิ้นส่วน" value={commonrail?.registrationNumber} />
+          <DetailRow label="ยี่ห้อ" value={commonrail?.brand || mechanic?.brand} />
+          <DetailRow label="เลขอะไหล่" value={commonrail?.partNumber || mechanic?.partNumber} />
+          <DetailRow label="ทะเบียนชิ้นส่วน" value={commonrail?.registrationNumber || mechanic?.registrationNumber} />
         </>
       )}
+      
       {!hasCarDetails && !hasPartsDetails && (
-        <p className="text-xs text-muted-foreground italic">ไม่มีข้อมูลรายละเอียดรถ/ชิ้นส่วน</p>
+        <p className="text-xs text-muted-foreground italic">ไม่มีข้อมูลรายละเอียดรถหรือชิ้นส่วน</p>
       )}
     </div>
   );
