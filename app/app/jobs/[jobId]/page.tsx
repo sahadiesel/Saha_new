@@ -49,6 +49,33 @@ import { restoreJobFromArchive } from "@/firebase/jobs-archive";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
+// --- Helpers ---
+const getSafeTime = (val: any): number => {
+    if (!val) return 0;
+    if (typeof val.toMillis === 'function') return val.toMillis();
+    if (val.seconds !== undefined) return val.seconds * 1000;
+    if (val instanceof Date) return val.getTime();
+    if (typeof val === 'number') return val;
+    return 0;
+};
+
+const getStatusStyles = (status: Job['status']) => {
+  switch (status) {
+    case 'RECEIVED': return 'bg-amber-500 text-white border-amber-600 hover:bg-amber-500';
+    case 'IN_PROGRESS': return 'bg-cyan-500 text-white border-cyan-600 hover:bg-cyan-500';
+    case 'WAITING_QUOTATION': return 'bg-blue-500 text-white border-blue-600 hover:bg-blue-500';
+    case 'PENDING_CUSTOMER_INFORM': return 'bg-pink-500 text-white border-pink-600 hover:bg-pink-500';
+    case 'WAITING_APPROVE': return 'bg-orange-500 text-white border-orange-600 hover:bg-orange-500';
+    case 'PENDING_PARTS': return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-500';
+    case 'IN_REPAIR_PROCESS': return 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-600';
+    case 'DONE': return 'bg-green-500 text-white border-green-600 hover:bg-green-500';
+    case 'WAITING_CUSTOMER_PICKUP': return 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-600 shadow-sm';
+    case 'PICKED_UP': return 'bg-blue-600 text-white border-blue-700 hover:bg-blue-600';
+    case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
+    default: return 'bg-secondary text-secondary-foreground';
+  }
+}
+
 const compressImageIfNeeded = async (file: File): Promise<File> => {
   if (file.size <= FILE_SIZE_THRESHOLD) return file;
 
@@ -227,7 +254,7 @@ function JobDetailsPageContent() {
   const getJobRef = () => {
     if (!db || !job) return null;
     if (job.isArchived || archiveYear) {
-      const year = archiveYear || parseInt((job.closedDate || "").split('-')[0]) || new Date().getFullYear();
+      const year = archiveYear || parseInt(job.closedDate || "") || new Date().getFullYear();
       return doc(db, `jobsArchive_${year}`, jobId);
     }
     return doc(db, "jobs", jobId);
@@ -594,7 +621,7 @@ function JobDetailsPageContent() {
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { status: 'DONE', lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    batch.set(doc(collection(jobRef, "activities")), { text: `ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => {
         toast({ title: "บันทึกแจ้งทำบิลสำเร็จ", description: "สถานะงานเปลี่ยนเป็น 'DONE' แล้วค่ะ กรุณาแจ้งแผนกออฟฟิศเพื่อออกบิลนะคะ" });
     })
@@ -661,7 +688,7 @@ function JobDetailsPageContent() {
     if (!db || !profile || !job || !job.isArchived) return;
     setIsRestoring(true);
     try {
-      const year = archiveYear || parseInt((job.closedDate || "").split('-')[0]) || new Date().getFullYear();
+      const year = archiveYear || parseInt(job.closedDate || "") || new Date().getFullYear();
       await restoreJobFromArchive(db, job.id, year, profile);
       toast({ title: "กู้คืนงานสำเร็จ", description: "งานถูกย้ายกลับมาเป็นงานที่กำลังดำเนินการ (Active) เรียบร้อยแล้วค่ะ" });
       setIsRestoreDialogOpen(false);
