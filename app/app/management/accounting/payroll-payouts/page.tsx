@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect, useCallback } from "react";
@@ -18,7 +17,7 @@ import {
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { addMonths, subMonths, format, parseISO } from "date-fns";
+import { addMonths, subMonths, format, parseISO, startOfMonth } from "date-fns";
 import * as z from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -119,7 +118,7 @@ function PayDialog({
                             !field.value && "text-muted-foreground"
                           )}
                         >
-                          {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                          {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
                           <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
                         </Button>
                       </FormControl>
@@ -128,7 +127,7 @@ function PayDialog({
                       <Calendar
                         mode="single"
                         selected={field.value ? parseISO(field.value) : undefined}
-                        onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                        onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")}
                         initialFocus
                       />
                     </PopoverContent>
@@ -186,8 +185,16 @@ export default function PayrollPayoutsPage() {
   const { profile } = useAuth();
   const { toast } = useToast();
 
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [period, setPeriod] = useState<1 | 2>(new Date().getDate() <= 15 ? 1 : 2);
+  // FIXED: Defer initialization to prevent hydration error
+  const [currentMonth, setCurrentMonth] = useState<Date | null>(null);
+  const [period, setPeriod] = useState<1 | 2 | null>(null);
+
+  useEffect(() => {
+    const today = new Date();
+    setCurrentMonth(startOfMonth(today));
+    setPeriod(today.getDate() <= 15 ? 1 : 2);
+  }, []);
+
   const [payslips, setPayslips] = useState<WithId<PayslipNew>[]>([]);
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,7 +206,7 @@ export default function PayrollPayoutsPage() {
   const hasPermission = useMemo(() => profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT', [profile]);
 
   useEffect(() => {
-    if (!db || !hasPermission) {
+    if (!db || !hasPermission || !currentMonth || !period) {
       setLoading(false);
       return;
     }
@@ -208,7 +215,6 @@ export default function PayrollPayoutsPage() {
     setIndexErrorUrl(null);
     const payrollBatchId = `${format(currentMonth, 'yyyy-MM')}-${period}`;
     
-    // Change query to include both READY_TO_PAY and PAID for tracking
     const payslipsQuery = query(
       collection(db, "payrollBatches", payrollBatchId, "payslips"),
       where("status", "in", ["READY_TO_PAY", "PAID"])
@@ -222,7 +228,6 @@ export default function PayrollPayoutsPage() {
 
     const unsubPayslips = onSnapshot(payslipsQuery, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as WithId<PayslipNew>));
-      // Sort: Ready to pay first, then paid
       data.sort((a, b) => {
           if (a.status === b.status) return a.userName.localeCompare(b.userName, 'th');
           return a.status === 'READY_TO_PAY' ? -1 : 1;
@@ -314,14 +319,7 @@ export default function PayrollPayoutsPage() {
   };
 
   if (!hasPermission) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>ไม่มีสิทธิ์เข้าถึง</CardTitle>
-          <CardDescription>สำหรับฝ่ายบริหาร/บัญชีเท่านั้น</CardDescription>
-        </CardHeader>
-      </Card>
-    );
+    return <Card><CardHeader><CardTitle>ไม่มีสิทธิ์เข้าถึง</CardTitle></CardHeader></Card>;
   }
 
   return (
@@ -335,10 +333,7 @@ export default function PayrollPayoutsPage() {
           <AlertDescription className="flex flex-col gap-2">
             <span>ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงรายชื่อบัญชีธนาคาร กรุณากดปุ่มด้านล่างเพื่อสร้าง Index</span>
             <Button asChild variant="outline" size="sm" className="w-fit bg-white text-destructive">
-              <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                สร้าง Index (Firebase Console)
-              </a>
+              <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />สร้าง Index (Firebase Console)</a>
             </Button>
           </AlertDescription>
         </Alert>
@@ -349,11 +344,11 @@ export default function PayrollPayoutsPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <CardTitle>รายการสลิปในงวดนี้</CardTitle>
             <div className="flex items-center gap-2 self-end sm:self-center">
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => subMonths(prev, 1))}><ChevronLeft /></Button>
-              <span className="font-semibold text-lg text-center w-32">{format(currentMonth, 'MMMM yyyy')}</span>
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}><ChevronRight /></Button>
-              <Select value={period.toString()} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
-                <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft /></Button>
+              <span className="font-semibold text-lg text-center w-32">{currentMonth ? format(currentMonth, 'MMMM yyyy') : '...'}</span>
+              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? addMonths(prev, 1) : null)}><ChevronRight /></Button>
+              <Select value={period?.toString() || ""} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
+                <SelectTrigger className="w-[180px]"><SelectValue placeholder="..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="1">งวดที่ 1</SelectItem>
                   <SelectItem value="2">งวดที่ 2</SelectItem>
@@ -363,7 +358,7 @@ export default function PayrollPayoutsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {loading || !currentMonth ? (
             <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>
           ) : payslips.length === 0 ? (
             <div className="text-center text-muted-foreground p-8">ไม่มีรายการที่พร้อมจ่ายหรือจ่ายแล้วในงวดนี้</div>

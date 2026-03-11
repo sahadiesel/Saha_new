@@ -66,7 +66,9 @@ interface AttendanceMonthlySummary {
 export default function ManagementHRAttendanceSummaryPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  
+  // FIXED: Initialize currentMonth to null to prevent hydration mismatch
+  const [currentMonth, setCurrentMonth] = useState<Date | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   
   const [summaryData, setSummaryData] = useState<AttendanceMonthlySummary[]>([]);
@@ -76,6 +78,11 @@ export default function ManagementHRAttendanceSummaryPage() {
   const [indexCreationUrl, setIndexCreationUrl] = useState<string | null>(null);
   const [openUserIds, setOpenUserIds] = useState<Set<string>>(new Set());
   const [adjustingDayInfo, setAdjustingDayInfo] = useState<{ user: WithId<UserProfile>, day: AttendanceDailySummary } | null>(null);
+
+  // Set initial date on client only
+  useEffect(() => {
+    setCurrentMonth(startOfMonth(new Date()));
+  }, []);
 
   const toggleOpen = (userId: string) => {
     setOpenUserIds(prev => {
@@ -181,19 +188,15 @@ export default function ManagementHRAttendanceSummaryPage() {
         daily.rawOut = lastOut;
 
         if (!firstIn) {
-          // --- ABSENT Logic Update ---
           if (!isToday) {
-            // Past days: Absent if no record
             totalAbsent += 1;
             daily.status = 'ABSENT';
           } else {
-            // Today: Only mark as ABSENT after 23:50
             const absentTriggerTime = set(now, { hours: 23, minutes: 50, seconds: 0 });
             if (isAfter(now, absentTriggerTime)) {
               totalAbsent += 1;
               daily.status = 'ABSENT';
             } else {
-              // Before 23:50 today: Not absent yet
               daily.status = 'NO_DATA'; 
             }
           }
@@ -240,7 +243,7 @@ export default function ManagementHRAttendanceSummaryPage() {
   }, []);
   
   const fetchData = useCallback(async () => {
-      if (!db) return;
+      if (!db || !currentMonth) return;
       setIsLoading(true);
       setError(null);
       setIndexCreationUrl(null);
@@ -250,14 +253,13 @@ export default function ManagementHRAttendanceSummaryPage() {
           const year = currentMonth.getFullYear();
           const startStr = dfFormat(dateRange.from, 'yyyy-MM-dd');
           const nextMonthStart = startOfMonth(addMonths(currentMonth, 1));
-          const nextStr = dfFormat(nextMonthStart, 'yyyy-MM-dd');
           
           const usersQuery = query(collection(db, 'users'), orderBy('displayName','asc'));
           const settingsDocRef = doc(db, 'settings', 'hr');
           const holidaysQuery = query(collection(db, 'hrHolidays'), orderBy('date', 'asc'));
           const leavesQuery = query(collection(db, 'hrLeaves'), where('year', '==', year));
           const attendanceQuery = query(collection(db, 'attendance'), where('timestamp', '>=', dateRange.from), where('timestamp', '<', nextMonthStart), orderBy('timestamp', 'asc'));
-          const adjustmentsQuery = query(collection(db, 'hrAttendanceAdjustments'), where('date', '>=', startStr), where('date', '<', nextStr), orderBy('date', 'asc'));
+          const adjustmentsQuery = query(collection(db, 'hrAttendanceAdjustments'), where('date', '>=', startStr), where('date', '<', dfFormat(nextMonthStart, 'yyyy-MM-dd')), orderBy('date', 'asc'));
 
           const [usersSnap, settingsSnap, holidaysSnap, leavesSnap, attendanceSnap, adjustmentsSnap] = await Promise.all([
               getDocs(usersQuery),
@@ -279,7 +281,6 @@ export default function ManagementHRAttendanceSummaryPage() {
           const usersToProcess = allUsersData.filter(u => u.hr?.payType && u.hr.payType !== 'NOPAY' && u.hr.payType !== 'MONTHLY_NOSCAN');
           setSummaryData(calculateSummary(usersToProcess, hrSettingsData, allHolidaysData, yearLeavesData, monthAttendanceData, monthAdjustmentsData, dateRange));
       } catch (err: any) {
-          console.error(err);
           if (err.message?.includes('requires an index')) {
               const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
               if (urlMatch) setIndexCreationUrl(urlMatch[0]);
@@ -326,15 +327,15 @@ export default function ManagementHRAttendanceSummaryPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
-              <Button variant="outline" onClick={() => setCurrentMonth(new Date())}><CalendarDays className="mr-2 h-4 w-4" />Today</Button>
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => subMonths(prev, 1))}><ChevronLeft className="h-4 w-4" /></Button>
-              <span className="font-semibold text-lg text-center w-36">{dfFormat(currentMonth, 'MMMM yyyy')}</span>
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}><ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" onClick={() => setCurrentMonth(startOfMonth(new Date()))}><CalendarDays className="mr-2 h-4 w-4" />Today</Button>
+              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft className="h-4 w-4" /></Button>
+              <span className="font-semibold text-lg text-center w-36">{currentMonth ? dfFormat(currentMonth, 'MMMM yyyy') : '...'}</span>
+              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? addMonths(prev, 1) : null)}><ChevronRight className="h-4 w-4" /></Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading || !currentMonth ? (
             <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>
           ) : error && !indexCreationUrl ? (
             <div className="text-center p-8 text-destructive"><AlertCircle className="h-8 w-8 mx-auto mb-2" /><p>{error.message}</p></div>

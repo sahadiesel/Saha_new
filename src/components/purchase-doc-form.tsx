@@ -12,7 +12,7 @@ import { useAuth } from "@/context/auth-context";
 import { useDoc } from "@/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box, ImageIcon, PackagePlus, Info } from "lucide-react";
@@ -162,7 +162,7 @@ export function PurchaseDocForm() {
     resolver: zodResolver(purchaseFormSchema),
     defaultValues: {
       vendorId: "",
-      docDate: new Date().toISOString().split("T")[0],
+      docDate: "", // FIXED: Defer to useEffect
       invoiceNo: "",
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       withTax: true,
@@ -177,6 +177,13 @@ export function PurchaseDocForm() {
       suggestedPaymentMethod: "CASH",
     },
   });
+
+  // Client-side initialization for docDate
+  useEffect(() => {
+    if (!editDocId && !form.getValues("docDate")) {
+      form.setValue("docDate", format(new Date(), "yyyy-MM-dd"));
+    }
+  }, [editDocId, form]);
 
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "items" });
   const watchedItems = useWatch({ control: form.control, name: "items" });
@@ -224,7 +231,7 @@ export function PurchaseDocForm() {
     if (docToEdit) {
       form.reset({
         vendorId: docToEdit.vendorId || "",
-        docDate: docToEdit.docDate || new Date().toISOString().split("T")[0],
+        docDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         invoiceNo: docToEdit.invoiceNo || "",
         items: docToEdit.items?.map(i => ({ ...i })) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
         subtotal: docToEdit.subtotal || 0,
@@ -426,7 +433,7 @@ export function PurchaseDocForm() {
             const counterRef = doc(db, 'documentCounters', String(year));
             const prefix = (docSettingsSnap.exists() ? (docSettingsSnap.data() as any).purchasePrefix : 'PUR') || 'PUR';
             
-            const seqParts = previewDocNo.split('-');
+            const seqParts = finalDocNo.split('-');
             const seq = parseInt(seqParts[seqParts.length - 1], 10);
             
             transaction.set(counterRef, { 

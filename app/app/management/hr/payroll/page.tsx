@@ -159,8 +159,9 @@ export default function HRGeneratePayslipsPage() {
     const { profile: adminProfile } = useAuth();
     const printFrameRef = useRef<HTMLIFrameElement | null>(null);
 
-    const [currentMonth, setCurrentMonth] = useState(new Date());
-    const [period, setPeriod] = useState<1 | 2>(new Date().getDate() <= 15 ? 1 : 2);
+    // FIXED: Initialize states to null or deferred values to prevent hydration errors
+    const [currentMonth, setCurrentMonth] = useState<Date | null>(null);
+    const [period, setPeriod] = useState<1 | 2 | null>(null);
     
     const [isLoading, setIsLoading] = useState(false);
     const [isActing, setIsActing] = useState<string | null>(null);
@@ -174,7 +175,6 @@ export default function HRGeneratePayslipsPage() {
     const [drawerSnapshot, setDrawerSnapshot] = useState<PayslipSnapshot | null>(null);
     const [otherPeriodSnapshot, setOtherPeriodSnapshot] = useState<PayslipSnapshot | null>(null);
 
-    // Day selection states for adjustment
     const [isDaySelectOpen, setIsDaySelectOpen] = useState(false);
     const [selectedDayToAdjust, setSelectedDayToAdjust] = useState<any>(null);
     const [isLeaveManageOpen, setIsLeaveManageOpen] = useState(false);
@@ -187,8 +187,15 @@ export default function HRGeneratePayslipsPage() {
     
     const hasPermission = useMemo(() => adminProfile?.role === 'ADMIN' || adminProfile?.role === 'MANAGER' || adminProfile?.department === 'MANAGEMENT', [adminProfile]);
 
+    // Initialize period and month on client only
+    useEffect(() => {
+      const today = new Date();
+      setCurrentMonth(startOfMonth(today));
+      setPeriod(today.getDate() <= 15 ? 1 : 2);
+    }, []);
+
     const handleFetchEmployees = useCallback(async (autoOpenUid?: string) => {
-        if (!db || !hrSettings || !adminProfile) {
+        if (!db || !hrSettings || !adminProfile || !currentMonth || !period) {
             return;
         }
         setIsLoading(true);
@@ -249,13 +256,13 @@ export default function HRGeneratePayslipsPage() {
             setSsoDecision(finalSsoDecision);
 
             const usersQuery = query(collection(db, 'users'), where('status', '==', 'ACTIVE'));
-            const holidaysQuery = query(collection(db, 'hrHolidays'));
+            const holidaysQuery = collection(db, 'hrHolidays');
             const leavesQuery = query(collection(db, 'hrLeaves'), where('year', '==', year), where('status', '==', 'APPROVED'));
             const attendancePeriodQuery = query(collection(db, 'attendance'), where('timestamp', '>=', payPeriod.start), where('timestamp', '<=', payPeriod.end));
             const adjustmentsPeriodQuery = query(collection(db, 'hrAttendanceAdjustments'), where('date', '>=', format(payPeriod.start, 'yyyy-MM-dd')), where('date', '<=', format(payPeriod.end, 'yyyy-MM-dd')));
             const attendanceYtdQuery = query(collection(db, 'attendance'), where('timestamp', '>=', ytdStart), where('timestamp', '<=', payPeriod.end));
             const adjustmentsYtdQuery = query(collection(db, 'hrAttendanceAdjustments'), where('date', '>=', ytdStartStr), where('date', '<=', periodEndStr));
-            const payslipsQuery = query(collection(db, 'payrollBatches', payrollBatchId, 'payslips'));
+            const payslipsQuery = collection(db, 'payrollBatches', payrollBatchId, 'payslips');
 
             const [
                 usersSnap, holidaysSnap, leavesSnap, 
@@ -318,15 +325,14 @@ export default function HRGeneratePayslipsPage() {
         }
     }, [db, hrSettings, currentMonth, period, adminProfile, toast]);
 
-    // Automatic fetch on dependencies change
     useEffect(() => {
-        if (hasPermission && hrSettings && adminProfile && db) {
+        if (hasPermission && hrSettings && adminProfile && db && currentMonth && period) {
             handleFetchEmployees();
         }
     }, [currentMonth, period, hrSettings, adminProfile, db, hasPermission, handleFetchEmployees]);
     
     const handleSsoDecisionConfirm = async (decision: any) => {
-        if (!db || !adminProfile) return;
+        if (!db || !adminProfile || !currentMonth) return;
         const monthBatchId = `${format(currentMonth, 'yyyy-MM')}`;
         const batchRef = doc(db, 'payrollBatches', monthBatchId);
         const finalDecision = { ...decision, decidedAt: serverTimestamp(), decidedByUid: adminProfile.uid, decidedByName: adminProfile.displayName };
@@ -337,14 +343,13 @@ export default function HRGeneratePayslipsPage() {
     };
 
     const handleOpenDrawer = async (user: EmployeeRowData, forceRecalculate: boolean = false) => {
-        if (!db) return;
+        if (!db || !currentMonth || !period) return;
         setEditingPayslip(user);
         const { periodMetrics, periodMetricsYtd, snapshot: existingSnapshot, hr } = user;
 
         if (!hr?.payType || hr.payType === 'NOPAY') return;
         if (!periodMetrics || !periodMetricsYtd) { toast({variant: 'destructive', title: 'คำนวณไม่สำเร็จ'}); setEditingPayslip(null); return; }
         
-        // Fetch Other Period Data for SSO Cross-period analysis
         const otherPeriodNo = period === 1 ? 2 : 1;
         const otherBatchId = `${format(currentMonth, 'yyyy-MM')}-${otherPeriodNo}`;
         const otherPayslipRef = doc(db, 'payrollBatches', otherBatchId, 'payslips', user.id);
@@ -352,13 +357,11 @@ export default function HRGeneratePayslipsPage() {
         const otherSnapshot = otherPayslipSnap.exists() ? (otherPayslipSnap.data().snapshot as PayslipSnapshot) : null;
         setOtherPeriodSnapshot(otherSnapshot);
 
-        // STRATEGY: If snapshot exists and not forcing recalculate, use the frozen snapshot values
         if (existingSnapshot && !forceRecalculate) {
             setDrawerSnapshot(existingSnapshot);
             return;
         }
 
-        // RECALCULATE LOGIC (Used for new slips or when admin clicks 'recalculate')
         let basePay = 0;
         if (hr.payType === 'DAILY') {
             basePay = Math.round((hr.salaryDaily || 0) * periodMetrics.attendanceSummary.payableUnits);
@@ -418,7 +421,7 @@ export default function HRGeneratePayslipsPage() {
     };
     
     const handleSaveDraft = async () => {
-        if (!db || !adminProfile || !editingPayslip || !drawerSnapshot) return;
+        if (!db || !adminProfile || !editingPayslip || !drawerSnapshot || !currentMonth || !period) return;
         setIsActing(editingPayslip.id);
         const payrollBatchId = `${format(currentMonth, 'yyyy-MM')}-${period}`;
         const batchRef = doc(db, 'payrollBatches', payrollBatchId);
@@ -435,7 +438,7 @@ export default function HRGeneratePayslipsPage() {
     };
     
     const handleSaveAndSend = async () => {
-        if (!db || !adminProfile || !editingPayslip || !drawerSnapshot) return;
+        if (!db || !adminProfile || !editingPayslip || !drawerSnapshot || !currentMonth || !period) return;
         setIsActing(editingPayslip.id);
         const payrollBatchId = `${format(currentMonth, 'yyyy-MM')}-${period}`;
         const batchRef = doc(db, 'payrollBatches', payrollBatchId);
@@ -453,33 +456,20 @@ export default function HRGeneratePayslipsPage() {
     };
 
     const handlePrintInDrawer = () => {
-        if (!editingPayslip || !drawerSnapshot || !storeSettings) return;
+        if (!editingPayslip || !drawerSnapshot || !storeSettings || !currentMonth || !period) return;
         try {
           const frame = printFrameRef.current;
           if (!frame) return;
           const totals = calcTotals(drawerSnapshot);
           const periodLabelText = `งวด ${period} (${format(currentMonth, 'MMMM yyyy')})`;
-          const html = `
-          <html><head><meta charset="utf-8" /><style>@page { size: A4; margin: 15mm; } body { font-family: sans-serif; font-size: 14px; } .header { text-align: center; border-bottom: 2px solid #333; margin-bottom: 20px; } table { width: 100%; border-collapse: collapse; margin-bottom: 15px; } th, td { border: 1px solid #ddd; padding: 8px; } .text-right { text-align: right; } .total { font-weight: bold; background: #eee; }</style></head>
-          <body>
-            <div class="header"><h1>${storeSettings.taxName || 'Sahadiesel Service'}</h1><p>ใบแจ้งยอดเงินเดือน / PAY SLIP</p></div>
-            <p><strong>พนักงาน:</strong> ${editingPayslip.displayName} | <strong>งวด:</strong> ${periodLabelText}</p>
-            <table><thead><tr><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
-              <tbody>
-                <tr><td>เงินเดือน/ค่าแรงงวดนี้</td><td class="text-right">${formatCurrency(totals.basePay)}</td></tr>
-                ${(drawerSnapshot.additions || []).map(a => `<tr><td>${a.name}</td><td class="text-right">${formatCurrency(a.amount)}</td></tr>`).join('')}
-                ${(drawerSnapshot.deductions || []).map(d => `<tr><td>${d.name}</td><td class="text-right">-${formatCurrency(d.amount)}</td></tr>`).join('')}
-                <tr class="total"><td>สุทธิได้รับจริง</td><td class="text-right">${formatCurrency(totals.netPay)} บาท</td></tr>
-              </tbody>
-            </table>
-          </body></html>`;
+          const html = `<html><head><meta charset="utf-8" /><style>@page { size: A4; margin: 15mm; } body { font-family: sans-serif; font-size: 14px; } .header { text-align: center; border-bottom: 2px solid #333; margin-bottom: 20px; } table { width: 100%; border-collapse: collapse; margin-bottom: 15px; } th, td { border: 1px solid #ddd; padding: 8px; } .text-right { text-align: right; } .total { font-weight: bold; background: #eee; }</style></head><body><div class="header"><h1>${storeSettings.taxName || 'Sahadiesel Service'}</h1><p>ใบแจ้งยอดเงินเดือน / PAY SLIP</p></div><p><strong>พนักงาน:</strong> ${editingPayslip.displayName} | <strong>งวด:</strong> ${periodLabelText}</p><table><thead><tr><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead><tbody><tr><td>เงินเดือน/ค่าแรงงวดนี้</td><td class="text-right">${formatCurrency(totals.basePay)}</td></tr>${(drawerSnapshot.additions || []).map(a => `<tr><td>${a.name}</td><td class="text-right">${formatCurrency(a.amount)}</td></tr>`).join('')}${(drawerSnapshot.deductions || []).map(d => `<tr><td>${d.name}</td><td class="text-right">-${formatCurrency(d.amount)}</td></tr>`).join('')}<tr class="total"><td>สุทธิได้รับจริง</td><td class="text-right">${formatCurrency(totals.netPay)} บาท</td></tr></tbody></table></body></html>`;
           frame.onload = () => { frame.contentWindow?.focus(); frame.contentWindow?.print(); };
           frame.srcdoc = html;
         } catch (e) { toast({ variant: 'destructive', title: 'พิมพ์ไม่สำเร็จ' }); }
     };
 
     const periodDaysList = useMemo(() => {
-        if (!hrSettings) return [];
+        if (!hrSettings || !currentMonth || !period) return [];
         const p1EndDay = hrSettings.payroll?.period1End || 15;
         const p2StartDay = hrSettings.payroll?.period2Start || 16;
         const start = period === 1 ? startOfMonth(currentMonth) : set(currentMonth, { date: p2StartDay });
@@ -512,11 +502,11 @@ export default function HRGeneratePayslipsPage() {
                             {isLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                         </div>
                         <div className="flex items-center gap-2 self-end sm:self-center">
-                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => subMonths(prev, 1))}><ChevronLeft /></Button>
-                            <span className="font-semibold text-lg text-center w-32">{format(currentMonth, 'MMMM yyyy')}</span>
-                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}><ChevronRight /></Button>
-                            <Select value={period.toString()} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
-                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft /></Button>
+                            <span className="font-semibold text-lg text-center w-32">{currentMonth ? format(currentMonth, 'MMMM yyyy') : '...'}</span>
+                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? addMonths(prev, 1) : null)}><ChevronRight /></Button>
+                            <Select value={period?.toString() || ""} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
+                                <SelectTrigger className="w-[120px]"><SelectValue placeholder="..." /></SelectTrigger>
                                 <SelectContent><SelectItem value="1">งวดที่ 1</SelectItem><SelectItem value="2">งวดที่ 2</SelectItem></SelectContent>
                             </Select>
                             <Button variant="ghost" size="icon" onClick={() => handleFetchEmployees()} disabled={isLoading} title="รีเฟรชข้อมูล">
@@ -585,10 +575,10 @@ export default function HRGeneratePayslipsPage() {
                 >
                     <PayslipSlipView 
                         userName={editingPayslip.displayName} 
-                        periodLabel={`งวด ${period} (${format(currentMonth, 'MMMM yyyy')})`} 
+                        periodLabel={currentMonth ? `งวด ${period} (${format(currentMonth, 'MMMM yyyy')})` : ""} 
                         snapshot={drawerSnapshot} 
                         otherPeriodSnapshot={otherPeriodSnapshot}
-                        currentPeriodNo={period}
+                        currentPeriodNo={period || 1}
                         userProfile={editingPayslip}
                         mode="edit" 
                         payType={editingPayslip.hr?.payType} 

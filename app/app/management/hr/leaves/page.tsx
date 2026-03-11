@@ -271,9 +271,17 @@ export default function ManagementHRLeavesPage() {
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState('summary');
-  const [selectedYear, setSelectedYear] = useState(getYear(new Date()));
-  const [selectedMonth, setSelectedMonth] = useState<string>(String(new Date().getMonth() + 1));
+  
+  // FIXED: Defer initialization to prevent hydration error
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [filters, setFilters] = useState({ status: 'ALL', userId: 'ALL' });
+
+  useEffect(() => {
+    const today = new Date();
+    setSelectedYear(today.getFullYear());
+    setSelectedMonth(String(today.getMonth() + 1));
+  }, []);
   
   const [rejectingLeave, setRejectingLeave] = useState<WithId<LeaveRequest> | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -298,7 +306,7 @@ export default function ManagementHRLeavesPage() {
   const { data: hrSettings, isLoading: isLoadingSettings } = useDoc<HRSettings>(settingsDocRef);
 
   useEffect(() => {
-    if (!db || !selectedYear) return;
+    if (!db || !selectedYear || !selectedMonth) return;
     
     const fetchPeriodData = async () => {
         setIsLoadingExtras(true);
@@ -326,9 +334,8 @@ export default function ManagementHRLeavesPage() {
             setPeriodHolidays(new Map(holSnap.docs.map(d => [d.data().date, d.data().name])));
             setPeriodAdjustments(adjSnap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AttendanceAdjustment>)));
         } catch (e: any) {
-            console.error("Failed to fetch summary extras:", e);
             if (e.message?.includes('requires an index')) {
-                const urlMatch = error.message.match(/https?:\/\/[^\s]+/);
+                const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
                 if (urlMatch) setIndexCreationUrl(urlMatch[0]);
             }
         } finally {
@@ -353,7 +360,7 @@ export default function ManagementHRLeavesPage() {
     
     const sortedYears = Array.from(years).sort((a, b) => b - a);
 
-    if (!allLeaves || !users) {
+    if (!allLeaves || !users || !selectedYear || !selectedMonth) {
       return { leaveSummary: [], filteredLeaves: [], yearOptions: sortedYears };
     }
 
@@ -548,7 +555,7 @@ export default function ManagementHRLeavesPage() {
     }
   };
 
-  if (isLoadingUsers || isLoadingSettings || isLoadingLeaves) {
+  if (isLoadingUsers || isLoadingSettings || isLoadingLeaves || !selectedYear || !selectedMonth) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8" /></div>;
   }
 
@@ -613,7 +620,7 @@ export default function ManagementHRLeavesPage() {
             <CardHeader><CardTitle>คำขอลาทั้งหมด</CardTitle></CardHeader>
             <CardContent>
                 <div className="flex flex-wrap gap-4 mb-6">
-                <div className="flex flex-col gap-1.5 flex-1 min-w-[100px] max-w-[120px]"><Label className="text-xs">ปี</Label><Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select></div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-[100px] max-w-[120px]"><Label className="text-xs">ปี</Label><Select value={selectedYear?.toString() || ""} onValueChange={(v) => setSelectedYear(Number(v))}><SelectTrigger><SelectValue placeholder="..." /></SelectTrigger><SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select></div>
                 <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]"><Label className="text-xs">สถานะ</Label><Select value={filters.status} onValueChange={(v) => setFilters(f => ({...f, status: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">ทุกสถานะ</SelectItem>{LEAVE_STATUSES.map(s=><SelectItem key={s} value={s}>{leaveStatusLabel(s)}</SelectItem>)}</SelectContent></Select></div>
                 <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]"><Label className="text-xs">พนักงาน</Label><Select value={filters.userId} onValueChange={(v) => setFilters(f => ({...f, userId: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>{users?.map(u=><SelectItem key={u.id} value={u.id}>{u.displayName}</SelectItem>)}</SelectContent></Select></div>
                 </div>
