@@ -10,10 +10,9 @@ export function FirebaseClientProvider({ children }: { children: ReactNode }) {
     return initializeFirebase();
   }, []);
 
-  if (!services.firebaseApp || !services.firestore || !services.auth || !services.storage) {
-    return null;
-  }
-
+  // During SSR, services might contain nulls. 
+  // We still render children to avoid total blank screen, 
+  // hooks inside will handle null Firebase instances gracefully.
   return (
     <FirebaseProvider 
       firebaseApp={services.firebaseApp} 

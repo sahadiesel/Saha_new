@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect } from "react";
@@ -12,29 +11,26 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, UserX } from "lucide-react";
 
 export default function PendingPage() {
   const { signOut, user, profile, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (loading) return; // Wait until auth & profile status is determined
+    if (loading) return; 
 
     if (!user) {
-      // If user is logged out for any reason, go to login page
       router.replace("/login");
       return;
     }
     
-    // If profile is loaded and the status is now ACTIVE, redirect to the app
     if (profile?.status === "ACTIVE") {
       router.replace("/app");
     }
   }, [user, profile, loading, router]);
 
-  // Show a loading spinner while we determine the auth/profile state
-  if (loading || !profile) {
+  if (loading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -42,7 +38,34 @@ export default function PendingPage() {
     );
   }
 
-  // If the user's status is PENDING, show the pending message
+  // Handle case where user is logged in but profile doesn't exist in Firestore
+  if (!profile) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
+        <Card className="w-full max-w-md text-center">
+          <CardHeader>
+            <div className="mx-auto bg-destructive/10 p-3 rounded-full w-fit mb-4">
+                <UserX className="h-8 w-8 text-destructive" />
+            </div>
+            <CardTitle className="text-2xl font-headline">Profile Not Found</CardTitle>
+            <CardDescription>
+              ไม่พบข้อมูลโปรไฟล์ของคุณในระบบ
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-6 text-sm text-muted-foreground">
+              คุณได้เข้าสู่ระบบแล้ว แต่ดูเหมือนว่าข้อมูลโปรไฟล์พนักงานจะยังไม่ได้ถูกสร้าง 
+              กรุณาติดต่อฝ่ายบุคคลหรือผู้ดูแลระบบเพื่อเปิดใช้งานบัญชีค่ะ
+            </p>
+            <Button variant="outline" onClick={signOut}>
+              ออกจากระบบ (Logout)
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (profile.status === 'PENDING') {
     return (
       <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
@@ -50,16 +73,16 @@ export default function PendingPage() {
           <CardHeader>
             <CardTitle className="text-2xl font-headline">Account Pending</CardTitle>
             <CardDescription>
-              Your account is currently awaiting activation.
+              บัญชีของคุณอยู่ระหว่างรอการอนุมัติ
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="mb-6 text-sm text-muted-foreground">
-              Please contact an administrator to activate your account. You will
-              be able to log in once your account is active.
+              กรุณาติดต่อผู้ดูแลระบบเพื่อเปิดใช้งานบัญชี 
+              คุณจะสามารถเข้าใช้งานระบบได้ทันทีเมื่อบัญชีได้รับการอนุมัติเรียบร้อยแล้วค่ะ
             </p>
             <Button variant="outline" onClick={signOut}>
-              Logout
+              ออกจากระบบ (Logout)
             </Button>
           </CardContent>
         </Card>
@@ -67,22 +90,21 @@ export default function PendingPage() {
     );
   }
   
-  // Fallback for other non-active statuses like SUSPENDED
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
         <Card className="w-full max-w-md text-center">
             <CardHeader>
-                <CardTitle className="text-2xl font-headline">Account Issue</CardTitle>
+                <CardTitle className="text-2xl font-headline">Account Restricted</CardTitle>
                 <CardDescription>
-                    Your account status is: {profile.status}
+                    สถานะบัญชีปัจจุบัน: {profile.status}
                 </CardDescription>
             </CardHeader>
             <CardContent>
                 <p className="mb-6 text-sm text-muted-foreground">
-                    Please contact an administrator for assistance.
+                    บัญชีของคุณถูกจำกัดการเข้าใช้งานชั่วคราว กรุณาติดต่อผู้ดูแลระบบเพื่อขอข้อมูลเพิ่มเติมค่ะ
                 </p>
                 <Button variant="outline" onClick={signOut}>
-                    Logout
+                    ออกจากระบบ (Logout)
                 </Button>
             </CardContent>
         </Card>

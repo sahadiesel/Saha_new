@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { Suspense, useEffect, useState } from "react";
@@ -11,8 +10,9 @@ import { AppHeader } from "@/components/app-header";
 
 function FullscreenSpinner() {
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-background">
+    <div className="flex h-screen w-full flex-col items-center justify-center bg-background gap-4">
       <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      <p className="text-sm text-muted-foreground animate-pulse">กำลังเตรียมข้อมูลระบบ...</p>
     </div>
   );
 }
@@ -45,12 +45,26 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
     const isAuthPage = pathname === "/login" || pathname === "/signup";
     
-    if (isAuthPage && profile?.status === "ACTIVE") {
-        router.replace("/");
+    if (isAuthPage && pathname !== "/pending") {
+        if (profile?.status === "ACTIVE") {
+            router.replace("/");
+        } else if (profile) {
+            router.replace("/pending");
+        }
         return;
     }
 
-    if (!isPublicRoute && profile) {
+    // IF NOT PUBLIC AND LOGGED IN
+    if (!isPublicRoute) {
+        // Case 1: No profile found in Firestore (new user or data issue)
+        if (!profile) {
+            if (pathname !== "/pending") {
+                router.replace("/pending");
+            }
+            return;
+        }
+        
+        // Case 2: Profile exists but not active
         if (profile.status !== "ACTIVE" && pathname !== "/pending") {
             router.replace("/pending");
         }
@@ -61,8 +75,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
   
-  if (loading || !user || (!profile && pathname !== "/pending")) {
+  // Guard against stuck spinner: only spin if we are actually loading OR we definitely need to redirect
+  if (loading || !user) {
     return <FullscreenSpinner />;
+  }
+
+  // If we are on a non-public route and profile is missing, redirecting is handled in useEffect.
+  // We show spinner until redirected or profile loaded.
+  if (!profile && pathname !== "/pending") {
+      return <FullscreenSpinner />;
   }
   
   const isPrintMode = searchParams.get("print") === "1";
