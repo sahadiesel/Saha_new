@@ -1,12 +1,12 @@
-
 "use client";
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
-import { Loader2, LayoutDashboard, Landmark, Wrench, Package, Truck, UserCircle, LogOut } from 'lucide-react';
+import { Loader2, LayoutDashboard, Landmark, Wrench, Package, Truck, UserCircle, LogOut, PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
