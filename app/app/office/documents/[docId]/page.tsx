@@ -263,6 +263,17 @@ function DocumentPageContent() {
         };
     }, [document, liveCustomer]);
 
+    // Set browser tab title to document number for filename auto-suggestion
+    useEffect(() => {
+        if (document?.docNo) {
+            const originalTitle = window.document.title;
+            window.document.title = document.docNo;
+            return () => {
+                window.document.title = originalTitle;
+            };
+        }
+    }, [document?.docNo]);
+
     useEffect(() => {
         if (document && searchParams.get('autoprint') === '1') {
             const timer = setTimeout(() => {

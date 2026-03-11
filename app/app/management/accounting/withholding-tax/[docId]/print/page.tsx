@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useEffect } from "react";
@@ -11,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import type { Document as DocumentType } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 
+export const dynamic = 'force-dynamic';
+
 export default function WhtPrintPage() {
     const { docId } = useParams();
     const router = useRouter();
@@ -18,6 +19,17 @@ export default function WhtPrintPage() {
 
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<DocumentType>(docRef);
+
+    // Set browser tab title to document number for filename auto-suggestion
+    useEffect(() => {
+        if (document?.docNo) {
+            const originalTitle = window.document.title;
+            window.document.title = document.docNo;
+            return () => {
+                window.document.title = originalTitle;
+            };
+        }
+    }, [document?.docNo]);
 
     useEffect(() => {
         if (document && !isLoading) {
@@ -42,7 +54,6 @@ export default function WhtPrintPage() {
         );
     }
 
-    // Helper to split Tax ID into individual digits for form boxes
     const getTaxIdDigits = (taxId: string | undefined) => {
         return (taxId || '').replace(/\D/g, '').split('');
     };
@@ -50,7 +61,6 @@ export default function WhtPrintPage() {
     const taxIdPayer = getTaxIdDigits(document.payerSnapshot?.taxId);
     const taxIdPayee = getTaxIdDigits(document.payeeSnapshot?.taxId);
 
-    // Default to Row 5 (ITEM 5) as per requirements
     const isItem5 = document.incomeTypeCode === 'ITEM5' || !document.incomeTypeCode;
 
     return (
@@ -114,7 +124,6 @@ export default function WhtPrintPage() {
                 }
             `}</style>
 
-            {/* Toolbar */}
             <div className="print-hidden sticky top-0 bg-background/95 backdrop-blur border-b p-4 flex items-center justify-between z-50 mb-6 shadow-sm">
                 <div className="flex items-center gap-4">
                     <Button variant="outline" size="sm" onClick={() => router.back()}>
@@ -130,16 +139,9 @@ export default function WhtPrintPage() {
                 </Button>
             </div>
 
-            {/* A4 Page Container */}
             <div className="document-container wht-form-wrapper shadow-2xl border">
                 <div className="wht-form-bg" />
-
-                {/* --- Data Overlays --- */}
-
-                {/* เลขที่เล่ม / เลขที่ (Book No / Doc No) */}
                 <div className="field font-bold" style={{ top: '42.5mm', left: '168mm' }}>{document.docNo}</div>
-
-                {/* 1. ผู้มีหน้าที่หักภาษี (Payer) */}
                 <div className="digit-box" style={{ top: '58.5mm', left: '128.5mm', gap: '1.45mm' }}>
                     {taxIdPayer.map((d, i) => <span key={i} className="digit">{d}</span>)}
                 </div>
@@ -147,8 +149,6 @@ export default function WhtPrintPage() {
                 <div className="field text-xs" style={{ top: '72.5mm', left: '32mm', width: '150mm', whiteSpace: 'normal', lineHeight: 1.1 }}>
                     {document.payerSnapshot?.address}
                 </div>
-
-                {/* 2. ผู้ถูกหักภาษี (Payee) */}
                 <div className="digit-box" style={{ top: '88.5mm', left: '128.5mm', gap: '1.45mm' }}>
                     {taxIdPayee.map((d, i) => <span key={i} className="digit">{d}</span>)}
                 </div>
@@ -156,57 +156,32 @@ export default function WhtPrintPage() {
                 <div className="field text-xs" style={{ top: '102.5mm', left: '32mm', width: '150mm', whiteSpace: 'normal', lineHeight: 1.1 }}>
                     {document.payeeSnapshot?.address}
                 </div>
-
-                {/* 3. ลำดับที่ในแบบ (Assuming PND53 for business) */}
                 <div className="field font-bold" style={{ top: '118.5mm', left: '103.5mm' }}>/</div>
-                {/* pndSequenceNo if exists */}
                 <div className="field text-xs" style={{ top: '118.5mm', left: '115mm' }}>{document.pndSequenceNo}</div>
-
-                {/* 4. รายละเอียดเงินได้ (ITEM 5 - Default) */}
                 {isItem5 && (
                     <>
-                        {/* Checkbox for Item 5 */}
                         <div className="field font-bold" style={{ top: '192.5mm', left: '24mm' }}>/</div>
-                        {/* Date (MM/YYYY) */}
                         <div className="field" style={{ top: '192.5mm', left: '115mm' }}>
                             {document.paidMonth ? `${String(document.paidMonth).padStart(2, '0')}/${document.paidYear}` : safeFormat(new Date(document.docDate), 'MM/yyyy')}
                         </div>
-                        {/* Paid Amount Gross */}
                         <div className="field text-right font-mono" style={{ top: '192.5mm', left: '142mm', width: '32mm' }}>
                             {document.paidAmountGross?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </div>
-                        {/* Withholding Amount */}
                         <div className="field text-right font-mono" style={{ top: '192.5mm', left: '176mm', width: '22mm' }}>
                             {document.withholdingAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </div>
                     </>
                 )}
-
-                {/* สรุปยอดรวม (Totals) */}
                 <div className="field text-right font-bold" style={{ top: '232.5mm', left: '142mm', width: '32mm' }}>
                     {document.paidAmountGross?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
                 <div className="field text-right font-bold" style={{ top: '232.5mm', left: '176mm', width: '22mm' }}>
                     {document.withholdingAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
-
-                {/* ลายเซ็นและผู้รับรอง (Signer) */}
                 <div className="field text-center font-semibold" style={{ top: '270.5mm', left: '125mm', width: '60mm' }}>
                     {document.senderName}
                     <div className="text-xs font-normal mt-1">{safeFormat(new Date(document.docDate), 'dd MMMM yyyy')}</div>
                 </div>
-            </div>
-
-            {/* Helpful instructions for the user (only on screen) */}
-            <div className="print-hidden max-w-[210mm] mx-auto mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-sm">
-                <h3 className="font-bold mb-1 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4"/> คำแนะนำการพิมพ์
-                </h3>
-                <ul className="list-disc pl-5 space-y-1">
-                    <li>ใช้สำหรับพิมพ์ลงบนแบบฟอร์ม <b>หนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ)</b></li>
-                    <li>หากตำแหน่งข้อความไม่ตรงกับช่อง ให้ปรับ <b>"Scale"</b> ในการตั้งค่าการพิมพ์เป็น <b>"100%"</b> และ <b>"Margins"</b> เป็น <b>"None"</b></li>
-                    <li>ตรวจสอบให้แน่ใจว่าได้เลือก <b>"Background Graphics"</b> ในการตั้งค่าการพิมพ์</li>
-                </ul>
             </div>
         </div>
     );
