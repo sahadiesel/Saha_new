@@ -93,18 +93,19 @@ function LeaveManageDialog({
     resolver: zodResolver(leaveSchema),
     defaultValues: {
       leaveType: 'SICK',
-      startDate: format(new Date(), 'yyyy-MM-dd'),
-      endDate: format(new Date(), 'yyyy-MM-dd'),
+      startDate: "", // Set in useEffect
+      endDate: "", // Set in useEffect
       reason: 'บันทึกด่วนจากหน้าสลิปเงินเดือน',
     }
   });
 
   useEffect(() => {
     if (isOpen) {
+        const today = format(new Date(), 'yyyy-MM-dd');
         form.reset({
           leaveType: 'SICK',
-          startDate: format(new Date(), 'yyyy-MM-dd'),
-          endDate: format(new Date(), 'yyyy-MM-dd'),
+          startDate: today,
+          endDate: today,
           reason: 'บันทึกด่วนจากหน้าสลิปเงินเดือน',
         });
     }
@@ -131,8 +132,8 @@ function LeaveManageDialog({
                   </FormItem>
                 )} />
                 <div className="grid grid-cols-2 gap-4">
-                    <FormField control={form.control} name="startDate" render={({ field }) => (<FormItem><FormLabel>วันเริ่มลา</FormLabel><FormControl><Input type="date" {...field}/></FormControl></FormItem>)} />
-                    <FormField control={form.control} name="endDate" render={({ field }) => (<FormItem><FormLabel>วันสิ้นสุด</FormLabel><FormControl><Input type="date" {...field}/></FormControl></FormItem>)} />
+                    <FormField control={form.control} name="startDate" render={({ field }) => (<FormItem><FormLabel>วันเริ่มลา</FormLabel><FormControl><Input type="date" {...field}/></FormItem>)} />
+                    <FormField control={form.control} name="endDate" render={({ field }) => (<FormItem><FormLabel>วันสิ้นสุด</FormLabel><FormControl><Input type="date" {...field}/></FormItem>)} />
                 </div>
                 <FormField control={form.control} name="reason" render={({ field }) => (
                   <FormItem>

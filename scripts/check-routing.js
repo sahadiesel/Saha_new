@@ -16,14 +16,13 @@ function logWarning(message) {
 
 console.log('Running routing sanity checks...');
 
-// --- Check 1: Disallow functional src/app directory ---
-// Modified: Now only warns for src/app to allow the build process to handle overlaps,
-// as root app/ is our project's designated source of truth.
-const disallowedSrcAppDir = path.join(projectRoot, 'src', 'app');
-if (fs.existsSync(disallowedSrcAppDir)) {
-  const files = findFiles(disallowedSrcAppDir, /(page|layout)\.tsx$/);
+// --- Check 1: Prevent Next.js 15 Route Conflicts between root app/ and src/app/ ---
+const srcAppDir = path.join(projectRoot, 'src', 'app');
+if (fs.existsSync(srcAppDir)) {
+  const files = findFiles(srcAppDir, /(page|layout)\.tsx$/);
   if (files.length > 0) {
-    logWarning('Project contains routes in "src/app". These should be removed or moved to the root "app/" directory to ensure canonical routing and prevent Next.js build conflicts.');
+    // Next.js 15 will fail build if both app/ and src/app/ exist with functional pages.
+    logError('Route Conflict Detected: Project contains functional routes in "src/app". All routes must be moved to the root "app/" directory to avoid Next.js 15 build failure.');
   }
 }
 
@@ -45,14 +44,13 @@ function findFiles(startPath, filter, fileList = []) {
   return fileList;
 }
 
-// --- Main Checks ---
+// --- Check 2: Infinite loops in re-exports ---
 const allPageFiles = findFiles(path.join(projectRoot, 'app'), /(page|layout)\.tsx$/);
 
 for (const filePath of allPageFiles) {
   const content = fs.readFileSync(filePath, 'utf8');
   const relativePath = path.relative(projectRoot, filePath).replace(/\\/g, '/');
 
-  // Rule 2: Check for self-export loops
   const selfExportRegex = /export\s*{\s*default\s*}\s*from\s*["']@\/(.*?)["']/;
   const match = content.match(selfExportRegex);
   if (match) {
