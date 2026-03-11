@@ -93,8 +93,8 @@ function LeaveManageDialog({
     resolver: zodResolver(leaveSchema),
     defaultValues: {
       leaveType: 'SICK',
-      startDate: "", // Set in useEffect
-      endDate: "", // Set in useEffect
+      startDate: "", 
+      endDate: "", 
       reason: 'บันทึกด่วนจากหน้าสลิปเงินเดือน',
     }
   });
@@ -183,7 +183,7 @@ export default function HRGeneratePayslipsPage() {
     const { data: hrSettings } = useDoc<HRSettings>(settingsDocRef);
 
     const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
-    const { data: storeSettings, isLoading: isLoadingStore } = useDoc<StoreSettings>(storeSettingsRef);
+    const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
     
     const hasPermission = useMemo(() => adminProfile?.role === 'ADMIN' || adminProfile?.role === 'MANAGER' || adminProfile?.department === 'MANAGEMENT', [adminProfile]);
 

@@ -76,7 +76,7 @@ function PayDialog({
   const form = useForm<PaymentFormData>({
     resolver: zodResolver(paymentSchema),
     defaultValues: {
-      paidDate: "", // Set in useEffect
+      paidDate: "",
       accountId: accounts.find(a => a.type === 'BANK')?.id || accounts[0]?.id || "",
       referenceNo: "",
     },
