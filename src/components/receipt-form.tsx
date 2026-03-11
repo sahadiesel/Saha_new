@@ -70,7 +70,7 @@ export function ReceiptForm() {
   const form = useForm<ReceiptFormData>({
     resolver: zodResolver(receiptFormSchema),
     defaultValues: {
-      paymentDate: new Date().toISOString().split("T")[0],
+      paymentDate: "", // Set in useEffect
       amount: 0,
       customerId: searchParams.get('customerId') || "",
       sourceDocIds: searchParams.get('sourceDocId') ? [searchParams.get('sourceDocId')!] : [],
@@ -78,6 +78,13 @@ export function ReceiptForm() {
       notes: "",
     },
   });
+
+  // Safe client-side initialization for paymentDate
+  useEffect(() => {
+    if (!editDocId && !form.getValues("paymentDate")) {
+      form.setValue("paymentDate", format(new Date(), "yyyy-MM-dd"));
+    }
+  }, [editDocId, form]);
 
   const selectedCustomerId = form.watch('customerId');
   const watchedSourceDocIds = form.watch('sourceDocIds');
@@ -99,7 +106,7 @@ export function ReceiptForm() {
       form.reset({
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
         sourceDocIds: docToEdit.referencesDocIds || [],
-        paymentDate: docToEdit.paymentDate || docToEdit.docDate || new Date().toISOString().split("T")[0],
+        paymentDate: docToEdit.paymentDate || docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         accountId: docToEdit.receivedAccountId || "",
         amount: docToEdit.grandTotal,
         notes: docToEdit.notes || "",

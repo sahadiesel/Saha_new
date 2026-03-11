@@ -7,7 +7,7 @@ import { collection, serverTimestamp, writeBatch, doc, getDoc } from 'firebase/f
 import { useFirebase, useDoc } from '@/firebase';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
-import { format, differenceInSeconds } from 'date-fns';
+import { format, differenceInSeconds, parseISO } from 'date-fns';
 import { safeFormat } from '@/lib/date-utils';
 import type { HRSettings } from '@/lib/types';
 
@@ -40,7 +40,15 @@ function ScanPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recentClock, setRecentClock] = useState<{type: 'IN' | 'OUT', time: Date} | null>(null);
   const [secondsSinceLast, setSecondsSinceLast] = useState<number | null>(null);
+  const [now, setNow] = useState<Date | null>(null);
   
+  // Set current time only on client to avoid hydration mismatch
+  useEffect(() => {
+    setNow(new Date());
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     if (!kioskDocId || !tokenValue || !db) return;
 
@@ -91,7 +99,7 @@ function ScanPageContent() {
   }, [secondsSinceLast]);
 
   const handleClockAction = async () => {
-    if (!db || !profile || authLoading) return;
+    if (!db || !profile || authLoading || !now) return;
     
     if (profile.status !== 'ACTIVE') {
       toast({ variant: 'destructive', title: 'การเข้าถึงถูกปฏิเสธ', description: 'บัญชีของคุณไม่ได้อยู่ในสถานะที่ใช้งานได้'});
@@ -106,7 +114,6 @@ function ScanPageContent() {
       return;
     }
 
-    const now = new Date();
     const todayKey = format(now, 'yyyy-MM-dd');
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
     
@@ -214,18 +221,17 @@ function ScanPageContent() {
     );
   }
 
-  const isActuallyLoading = authLoading || tokenStatus === "verifying";
-  const now = new Date();
-  const nextAction = (now.getHours() * 60 + now.getMinutes()) < (hrSettings?.afternoonCutoffTime?.split(':').map(Number).reduce((h, m) => h * 60 + m) || 720) ? 'IN' : 'OUT';
+  const isActuallyLoading = authLoading || tokenStatus === "verifying" || !now;
+  const nextAction = now ? ((now.getHours() * 60 + now.getMinutes()) < (hrSettings?.afternoonCutoffTime?.split(':').map(Number).reduce((h, m) => h * 60 + m) || 720) ? 'IN' : 'OUT') : 'IN';
 
   return (
     <>
-      <PageHeader title="ลงเวลาทำงาน" description={`บันทึกเวลาเข้า-ออกงานประจำวันที่ ${format(now, 'dd/MM/yyyy')}`} />
+      <PageHeader title="ลงเวลาทำงาน" description={`บันทึกเวลาเข้า-ออกงานประจำวันที่ ${now ? format(now, 'dd/MM/yyyy') : '...'}`} />
       <div className="flex justify-center">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <CardTitle>ยืนยันการลงเวลา</CardTitle>
-            <CardDescription>ขณะนี้เวลา {format(now, 'HH:mm')} ระบบจะบันทึกเป็นรายการ <Badge variant={nextAction === 'IN' ? 'default' : 'secondary'}>{nextAction === 'IN' ? 'เข้างาน (IN)' : 'ออกงาน (OUT)'}</Badge></CardDescription>
+            <CardDescription>ขณะนี้เวลา {now ? format(now, 'HH:mm') : '...'} ระบบจะบันทึกเป็นรายการ <Badge variant={nextAction === 'IN' ? 'default' : 'secondary'}>{nextAction === 'IN' ? 'เข้างาน (IN)' : 'ออกงาน (OUT)'}</Badge></CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4">
             <Button size="lg" className="w-full h-32 text-2xl flex-col gap-2" onClick={handleClockAction} disabled={isSubmitting || isActuallyLoading}>
@@ -238,7 +244,7 @@ function ScanPageContent() {
                 </>
               )}
             </Button>
-            {nextAction === 'OUT' && profile?.lastAttendanceDateKey !== format(now, 'yyyy-MM-dd') && (
+            {now && nextAction === 'OUT' && profile?.lastAttendanceDateKey !== format(now, 'yyyy-MM-dd') && (
               <div className="flex items-start text-sm text-amber-600 p-3 rounded-md bg-amber-50 border border-amber-200">
                 <AlertCircle className="mr-2 h-5 w-5 shrink-0" />
                 <p>วันนี้ยังไม่มีรายการลงเวลาเข้า ระบบจะบันทึกเป็นรายการออก (OUT) ทันที</p>

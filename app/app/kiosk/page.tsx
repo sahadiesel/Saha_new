@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -27,23 +26,23 @@ export default function KioskPage() {
   const [qrData, setQrData] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [kioskId, setKioskId] = useState<string | null>(null);
 
-  // KIOSK FEATURE FLAG - Set to true to enable
+  // KIOSK FEATURE FLAG
   const KIOSK_ENABLED = true;
 
-  // Use a stable kiosk ID from local storage with safety for mobile private browsing
-  const kioskId = useMemo(() => {
-    if (typeof window === 'undefined') return null;
+  // Safe client-side initialization for Kiosk ID
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
         let id = localStorage.getItem('kiosk_device_id');
         if (!id) {
           id = 'kiosk_' + Math.random().toString(36).substring(2, 15);
           localStorage.setItem('kiosk_device_id', id);
         }
-        return id;
+        setKioskId(id);
     } catch (e) {
-        console.warn("LocalStorage access blocked, using session fallback");
-        return 'session_' + Math.random().toString(36).substring(2, 8);
+        setKioskId('session_' + Math.random().toString(36).substring(2, 8));
     }
   }, []);
 
@@ -54,7 +53,6 @@ export default function KioskPage() {
     setIsLoading(true);
     try {
       await generateKioskToken(db);
-      // Data will be updated via onSnapshot
     } catch (error: any) {
       console.error("Kiosk rotation failed:", error);
       toast({
@@ -67,7 +65,7 @@ export default function KioskPage() {
     }
   }, [db, authLoading, profile, isLoading, KIOSK_ENABLED, toast]);
 
-  // Subscribe to kiosk doc changes (rotate immediately when used)
+  // Subscribe to kiosk doc changes
   useEffect(() => {
     if (!db || !kioskId || !KIOSK_ENABLED) return;
 
@@ -77,7 +75,6 @@ export default function KioskPage() {
         const data = snap.data();
         const now = Date.now();
         
-        // If used (isActive=false) or expired, rotate immediately
         if (!data.isActive || now > data.expiresAtMs) {
           rotateToken();
         } else {
@@ -87,7 +84,6 @@ export default function KioskPage() {
           setQrData(fullUrl);
         }
       } else {
-        // Initial setup
         rotateToken();
       }
     });

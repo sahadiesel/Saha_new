@@ -16,12 +16,13 @@ export function FirebaseErrorListener() {
       } else {
         // In production, we log it to prevent crashing the entire app
         // but still allow the developer to see it in the console/logs
-        console.error("Firestore Permission Error:", error.message, error.context);
+        console.error("Firestore Permission Error Context:", error.context);
+        console.error("Firestore Permission Error Message:", error.message);
       }
     });
     
-    // Assume errorEmitter.on might return a cleanup function or we handle it via listeners array
-    // Since our custom emitter is simple, we just leave it for the lifecycle of the app
+    // In our simple emitter, we don't have a direct unsubscribe mechanism yet
+    // but we can at least log that the listener is active
   }, []);
 
   return null;

@@ -116,13 +116,13 @@ export default function CashbookPage() {
     resolver: zodResolver(entrySchema),
     defaultValues: {
       entryType: "CASH_IN",
-      entryDate: "", // Set in useEffect
+      entryDate: "",
       amount: 0,
       description: "",
     },
   });
 
-  // Client-side only initialization
+  // Safe client-side only initialization to prevent hydration errors
   useEffect(() => {
     const today = startOfToday();
     setCurrentMonth(today);
@@ -259,6 +259,18 @@ export default function CashbookPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!db || !entryToDelete) return;
+    try {
+      await deleteDoc(doc(db, "accountingEntries", entryToDelete.id));
+      toast({ title: "ลบรายการสำเร็จ" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: e.message });
+    } finally {
+      setEntryToDelete(null);
+    }
+  };
+
   if (authLoading || !currentMonth) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>;
 
   return (
@@ -274,7 +286,6 @@ export default function CashbookPage() {
         </div>
       </PageHeader>
 
-      {/* Rest of the UI remains the same... */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-green-50 border-green-200">
           <CardHeader className="pb-2">
@@ -400,7 +411,6 @@ export default function CashbookPage() {
         </CardContent>
       </Card>
 
-      {/* Dialogs... */}
       <Dialog open={isAdding} onOpenChange={(o) => { setIsAdding(o); if(!o) setEntryToEdit(null); }}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>

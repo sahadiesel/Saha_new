@@ -123,7 +123,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     defaultValues: {
       jobId: jobId || undefined,
       customerId: "",
-      issueDate: new Date().toISOString().split("T")[0],
+      issueDate: "", // Set in useEffect to avoid hydration error
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       subtotal: 0,
       discountAmount: 0,
@@ -145,6 +145,13 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   const grandTotal = form.watch('grandTotal');
   
   const isLocked = isEditing && (docToEdit?.status === 'PAID' || docToEdit?.status === 'PENDING_REVIEW') && profile?.role !== 'ADMIN' && profile?.role !== 'MANAGER';
+
+  // Client-side initialization for issueDate
+  useEffect(() => {
+    if (!isEditing && !form.getValues("issueDate")) {
+      form.setValue("issueDate", format(new Date(), "yyyy-MM-dd"));
+    }
+  }, [isEditing, form]);
 
   useEffect(() => {
     if (!db || isEditing || !watchedIssueDate) return;
@@ -180,7 +187,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
       form.reset({
         jobId: docToEdit.jobId || undefined,
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
-        issueDate: docToEdit.docDate || new Date().toISOString().split("T")[0],
+        issueDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         items: docToEdit.items?.map(item => ({...item})) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
         notes: docToEdit.notes ?? '',
         discountAmount: docToEdit.discountAmount || 0,
@@ -438,7 +445,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                           <Button
                             variant={"outline"}
                             className={cn(
-                              "w-full pl-3 text-left font-normal",
+                              "w-full pl-3 text-left font-normal h-10",
                               !field.value && "text-muted-foreground"
                             )}
                             disabled={isLocked}

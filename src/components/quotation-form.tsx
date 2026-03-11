@@ -95,8 +95,8 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     resolver: zodResolver(quotationFormSchema),
     defaultValues: {
       jobId: jobId || undefined,
-      issueDate: new Date().toISOString().split("T")[0],
-      expiryDate: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split("T")[0],
+      issueDate: "", // Set in useEffect
+      expiryDate: "", // Set in useEffect
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       isVat: true,
       subtotal: 0,
@@ -113,6 +113,15 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   const currentCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
   const isCustomerSelectionDisabled = !!jobId || (isEditing && !!docToEdit?.customerId);
   const isCancelled = docToEdit?.status === 'CANCELLED';
+
+  // Client-side initialization for issueDate
+  useEffect(() => {
+    if (!isEditing && !form.getValues("issueDate")) {
+      const today = new Date();
+      form.setValue("issueDate", format(today, "yyyy-MM-dd"));
+      form.setValue("expiryDate", format(new Date(today.setDate(today.getDate() + 30)), "yyyy-MM-dd"));
+    }
+  }, [isEditing, form]);
 
   // Preview Document Number
   useEffect(() => {
@@ -167,8 +176,8 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     form.reset({
         jobId: 'jobId' in dataToLoad ? dataToLoad.jobId || undefined : jobId || undefined,
         customerId: customerId,
-        issueDate: 'docDate' in dataToLoad ? dataToLoad.docDate : new Date().toISOString().split("T")[0],
-        expiryDate: 'expiryDate' in dataToLoad && (dataToLoad as any).expiryDate ? (dataToLoad as any).expiryDate : new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split("T")[0],
+        issueDate: 'docDate' in dataToLoad ? dataToLoad.docDate : format(new Date(), 'yyyy-MM-dd'),
+        expiryDate: 'expiryDate' in dataToLoad && (dataToLoad as any).expiryDate ? (dataToLoad as any).expiryDate : format(new Date(new Date().setDate(new Date().getDate() + 30)), 'yyyy-MM-dd'),
         items: items,
         notes: 'notes' in dataToLoad ? dataToLoad.notes : '',
         isVat: 'withTax' in dataToLoad ? dataToLoad.withTax : true,
@@ -241,7 +250,6 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             toast({ title: "อัปเดตสำเร็จ" });
             router.push(`/app/office/documents/quotation/${editDocId}`);
         } else {
-            // New flow: set status to PENDING_CUSTOMER_INFORM instead of WAITING_APPROVE
             const { docId } = await createDocument(db, 'QUOTATION', documentData, profile, data.jobId ? 'PENDING_CUSTOMER_INFORM' : undefined);
             toast({ title: "สร้างใบเสนอราคาสำเร็จ" });
             router.push(`/app/office/documents/quotation/${docId}`);
@@ -391,7 +399,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                             <Button
                               variant={"outline"}
                               className={cn(
-                                "w-full pl-3 text-left font-normal",
+                                "w-full pl-3 text-left font-normal h-10",
                                 !field.value && "text-muted-foreground"
                               )}
                               disabled={isCancelled || isProcessing}
@@ -426,7 +434,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                             <Button
                               variant={"outline"}
                               className={cn(
-                                "w-full pl-3 text-left font-normal",
+                                "w-full pl-3 text-left font-normal h-10",
                                 !field.value && "text-muted-foreground"
                               )}
                               disabled={isCancelled || isProcessing}

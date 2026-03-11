@@ -125,7 +125,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     defaultValues: {
       jobId: jobId || undefined,
       customerId: "",
-      issueDate: new Date().toISOString().split("T")[0],
+      issueDate: "", // Set in useEffect
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       isVat: true,
       subtotal: 0,
@@ -148,6 +148,13 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   const grandTotal = form.watch('grandTotal');
   
   const isLocked = isEditing && (docToEdit?.status === 'PAID' || docToEdit?.status === 'PENDING_REVIEW') && profile?.role !== 'ADMIN' && profile?.role !== 'MANAGER';
+
+  // Client-side initialization for issueDate
+  useEffect(() => {
+    if (!isEditing && !form.getValues("issueDate")) {
+      form.setValue("issueDate", format(new Date(), "yyyy-MM-dd"));
+    }
+  }, [isEditing, form]);
 
   // Preview Document Number
   useEffect(() => {
@@ -185,7 +192,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
       form.reset({
         jobId: docToEdit.jobId || undefined,
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
-        issueDate: docToEdit.docDate || new Date().toISOString().split("T")[0],
+        issueDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         items: docToEdit.items?.map(item => ({...item})) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
         notes: docToEdit.notes ?? '',
         isVat: true,
@@ -312,7 +319,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   };
 
   const handleSaveWrapper = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
-    if (isProcessing) return; // ล็อคทันทีกันกดเบิ้ล
+    if (isProcessing) return; 
     try {
       if (data.jobId) {
         const ok = await checkUniqueness(data.jobId);
@@ -449,7 +456,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
                           <Button
                             variant={"outline"}
                             className={cn(
-                              "w-full pl-3 text-left font-normal",
+                              "w-full pl-3 text-left font-normal h-10",
                               !field.value && "text-muted-foreground"
                             )}
                             disabled={isLocked}
