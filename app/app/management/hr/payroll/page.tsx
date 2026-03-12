@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
@@ -512,9 +511,9 @@ export default function HRGeneratePayslipsPage() {
                             {isLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                         </div>
                         <div className="flex items-center gap-2 self-end sm:self-center">
-                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft /></Button>
+                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => (prev ? subMonths(prev, 1) : null))}><ChevronLeft /></Button>
                             <span className="font-semibold text-lg text-center w-32">{currentMonth ? format(currentMonth, 'MMMM yyyy') : '...'}</span>
-                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1) : null)}><ChevronRight /></Button>
+                            <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => (prev ? addMonths(prev, 1) : null))}><ChevronRight /></Button>
                             <Select value={period?.toString() || ""} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
                                 <SelectTrigger className="w-[120px]"><SelectValue placeholder="..." /></SelectTrigger>
                                 <SelectContent><SelectItem value="1">งวดที่ 1</SelectItem><SelectItem value="2">งวดที่ 2</SelectItem></SelectContent>
