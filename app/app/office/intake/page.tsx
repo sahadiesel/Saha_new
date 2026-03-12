@@ -43,7 +43,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.createElement("canvas").getContext("2d");
         if (!ctx) {
           resolve(file);
           return;

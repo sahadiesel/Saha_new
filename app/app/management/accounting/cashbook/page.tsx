@@ -53,6 +53,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { 
   Loader2, PlusCircle, Search, 
   ArrowDownCircle, ArrowUpCircle, Trash2, Edit,
   ChevronLeft, ChevronRight, Filter, AlertCircle, FileText, Wallet, Save, ExternalLink, CalendarDays
