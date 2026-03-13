@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useEffect, useMemo, useState, Suspense, useCallback } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -142,7 +141,6 @@ function ConfirmReceiptPageContent() {
         const accountsData = accountsSnap.docs.map(d => ({id: d.id, ...d.data()}) as WithId<AccountingAccount>);
         setAccounts(accountsData);
         
-        // Auto-calculate initial Net Received
         const initialNetTotal = fetchedInvoices.reduce((sum, inv) => {
             const gross = obligations[inv.id]?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal;
             const whtBase = inv.withTax ? (gross / 1.07) : gross;
@@ -166,7 +164,6 @@ function ConfirmReceiptPageContent() {
     fetchData();
   }, [db, receiptId, form]);
   
-  // Calculate allocations for display
   const calculatedAllocations = useMemo(() => {
     return invoices.map(inv => {
         const ob = obligations[inv.id];
@@ -206,11 +203,18 @@ function ConfirmReceiptPageContent() {
             const receiptSnap = await transaction.get(receiptRef);
             
             if (!receiptSnap.exists()) throw new Error("ไม่พบใบเสร็จในระบบ");
-            const rData = receiptSnap.data();
+            const rData = receiptSnap.data() as DocumentType;
             
             if (rData.status === 'CONFIRMED' || rData.accountingEntryId) {
                 throw new Error("รายการนี้ถูกยืนยันไปก่อนหน้านี้แล้ว");
             }
+
+            const parentReferenceIds = rData.referencesDocIds || [];
+            const parentSnaps = await Promise.all(parentReferenceIds.map(id => transaction.get(doc(db, 'documents', id))));
+
+            const jobIdsToRead = Array.from(new Set(calculatedAllocations.map(a => obligations[a.invoiceId]?.jobId).filter(Boolean)));
+            const jobSnaps = await Promise.all(jobIdsToRead.map(id => transaction.get(doc(db, 'jobs', id!))));
+            const jobSnapMap = Object.fromEntries(jobSnaps.map(s => [s.id, s]));
 
             const account = accounts.find(a => a.id === data.accountId);
             if (!account) throw new Error("ไม่พบข้อมูลบัญชีที่เลือก");
@@ -235,7 +239,7 @@ function ConfirmReceiptPageContent() {
                     invoiceId: a.invoiceId,
                     invoiceDocNo: a.invoiceDocNo,
                     netCashApplied: a.netCash,
-                    withholdingAmount: a.withholdingAmount,
+                    withholdingAmount: a.whtAmount,
                     grossApplied: a.gross,
                 })),
                 createdAt: serverTimestamp(),
@@ -272,13 +276,9 @@ function ConfirmReceiptPageContent() {
                 updatedAt: serverTimestamp(),
             }));
             
-            const parentReferenceIds = rData.referencesDocIds || [];
-            for (const refId of parentReferenceIds) {
-                const docRef = doc(db, 'documents', refId);
-                const dSnap = await transaction.get(docRef);
-                if (dSnap.exists()) {
-                    const dData = dSnap.data();
-                    transaction.update(docRef, { status: 'PAID', updatedAt: serverTimestamp() });
+            for (const pSnap of parentSnaps) {
+                if (pSnap.exists()) {
+                    transaction.update(pSnap.ref, { status: 'PAID', updatedAt: serverTimestamp() });
                 }
             }
 
@@ -310,11 +310,10 @@ function ConfirmReceiptPageContent() {
                     });
 
                     if (newStatus === 'PAID' && ob.jobId) {
-                        const jobRef = doc(db, 'jobs', ob.jobId);
-                        const jobSnap = await transaction.get(jobRef);
-                        if (jobSnap.exists()) {
-                            transaction.update(jobRef, { status: 'CLOSED', updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
-                            transaction.set(doc(collection(jobRef, 'activities')), {
+                        const jobSnap = jobSnapMap[ob.jobId];
+                        if (jobSnap && jobSnap.exists()) {
+                            transaction.update(jobSnap.ref, { status: 'CLOSED', updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
+                            transaction.set(doc(collection(jobSnap.ref, 'activities')), {
                                 text: `ฝ่ายบัญชียืนยันรับเงินตามใบเสร็จ ${receiptDocNo} และปิดงานเรียบร้อยค่ะ`,
                                 userName: profile.displayName,
                                 userId: profile.uid,

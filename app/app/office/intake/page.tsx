@@ -43,7 +43,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.createElement("canvas").getContext("2d");
+        const ctx = canvas.getContext("2d");
         if (!ctx) {
           resolve(file);
           return;
@@ -189,7 +189,6 @@ export default function IntakePage() {
     return () => unsub();
   }, [db]);
 
-  // Fetch sequential ID preview
   useEffect(() => {
     if (!db) return;
     const fetchPreview = async () => {
@@ -301,7 +300,7 @@ export default function IntakePage() {
   };
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader title="เปิดงานใหม่" description={`สร้างใบงานใหม่ (แนบรูปประกอบได้สูงสุด ${DATA_LIMITS.MAX_INTAKE_PHOTOS} รูป)`} />
       
       {indexErrorUrl && (
@@ -469,6 +468,6 @@ export default function IntakePage() {
           </Form>
         </CardContent>
       </Card>
-    </>
+    </div>
   );
 }

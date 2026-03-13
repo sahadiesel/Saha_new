@@ -129,7 +129,6 @@ export default function CashbookPage() {
     },
   });
 
-  // Safe client-side only initialization to prevent hydration errors
   useEffect(() => {
     const today = startOfToday();
     setCurrentMonth(today);
@@ -284,9 +283,9 @@ export default function CashbookPage() {
     <div className="space-y-6">
       <PageHeader title="รับ-จ่ายเงิน (Cashbook)" description="บันทึกและตรวจสอบรายการความเคลื่อนไหวทางการเงินทั้งหมด">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft /></Button>
+          <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => (prev ? subMonths(prev, 1) : null))}><ChevronLeft /></Button>
           <span className="font-bold text-lg w-32 text-center">{format(currentMonth, "MMMM yyyy")}</span>
-          <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? addMonths(prev, 1) : null)}><ChevronRight /></Button>
+          <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => (prev ? addMonths(prev, 1) : null))}><ChevronRight /></Button>
           <Button onClick={() => { setEntryToEdit(null); form.reset({ entryType: "CASH_IN", entryDate: format(new Date(), "yyyy-MM-dd"), amount: 0, description: "" }); setIsAdding(true); }} className="ml-4 shadow-lg bg-primary hover:bg-primary/90">
             <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มรายการใหม่
           </Button>

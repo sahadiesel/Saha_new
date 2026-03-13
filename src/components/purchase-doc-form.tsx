@@ -224,10 +224,12 @@ export function PurchaseDocForm() {
       setIsLoadingData(false);
     });
     const unsubParts = onSnapshot(query(collection(db, "parts"), orderBy("name", "asc")), (snap) => {
-      setParts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Part)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Part));
+      setParts(data);
     });
     const unsubAccounts = onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
-        setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount));
+        setAccounts(data);
     });
     return () => { unsubVendors(); unsubParts(); unsubAccounts(); };
   }, [db]);
@@ -615,7 +617,9 @@ export function PurchaseDocForm() {
                                   <FormLabel>บัญชีที่จ่าย</FormLabel>
                                   <Select onValueChange={field.onChange} value={field.value}>
                                     <FormControl><SelectTrigger><SelectValue placeholder="เลือก..."/></SelectTrigger></FormControl>
-                                    <SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>
+                                      {accounts.map(a=><SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                                    </SelectContent>
                                   </Select>
                                 </FormItem>
                               )} />
