@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList } from "lucide-react";
+import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -652,6 +652,25 @@ function JobDetailsPageContent() {
     .finally(() => setIsSubmittingNote(false));
   };
 
+  const handleRequestMoreParts = async () => {
+    if (!db || !profile || !job) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, { 
+      status: 'PENDING_PARTS', 
+      lastActivityAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { 
+      text: `ช่างแจ้งเบิกอะไหล่เพิ่ม (สถานะเปลี่ยนเป็น: กำลังจัดเตรียมอะไหล่)`, 
+      userName: profile.displayName, 
+      userId: profile.uid, 
+      createdAt: serverTimestamp() 
+    });
+    batch.commit().then(() => toast({ title: "ส่งแจ้งเบิกอะไหล่เพิ่มแล้ว" })).finally(() => setIsSubmittingNote(false));
+  };
+
   const handleRevertJob = async () => {
     if (!db || !profile || !job || !revertReason.trim()) return;
     setIsReverting(true);
@@ -1096,8 +1115,8 @@ function JobDetailsPageContent() {
                         </Button>
                     )}
 
-                    {/* Withdraw Parts */}
-                    {['IN_PROGRESS', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
+                    {/* Withdraw Parts - Logic Split */}
+                    {['IN_PROGRESS', 'PENDING_PARTS'].includes(job.status) && (
                         <Button 
                           asChild
                           variant="outline"
@@ -1107,6 +1126,19 @@ function JobDetailsPageContent() {
                               <ClipboardList className="mr-2 h-4 w-4" /> 
                               เบิกอะไหล่
                             </Link>
+                        </Button>
+                    )}
+
+                    {/* Request More Parts (Only when In Repair) */}
+                    {job.status === 'IN_REPAIR_PROCESS' && (
+                        <Button 
+                          variant="outline"
+                          onClick={handleRequestMoreParts}
+                          disabled={isSubmittingNote}
+                          className="w-full border-amber-600 text-amber-600 hover:bg-amber-50 font-bold"
+                        >
+                            <PlusCircle className="mr-2 h-4 w-4" /> 
+                            แจ้งเบิกอะไหล่เพิ่ม
                         </Button>
                     )}
 
