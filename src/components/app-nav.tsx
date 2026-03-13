@@ -357,7 +357,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                     <>
                         <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/low-stock" label="รายการที่ต้องเตรียมสั่ง" icon={AlertTriangle} onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/low-stock" label="รายการที่ต้องเตรียมสั่ง" onClick={onLinkClick} />
                         
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')}>
                             <CollapsibleTrigger asChild>
