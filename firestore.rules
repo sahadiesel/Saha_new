@@ -196,6 +196,10 @@ service cloud.firestore {
         allow read, write: if isAccountingAllowed();
     }
 
+    match /arPayments/{id} {
+      allow read, write: if isAccountingAllowed();
+    }
+
     match /parts/{partId} {
       allow read: if signedIn() || resource.data.showOnWeb == true;
       allow create, update: if isPurchasingAllowed();

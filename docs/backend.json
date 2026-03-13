@@ -197,6 +197,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       }
     },
+    "ARPayment": {
+      "title": "AR Payment Allocation",
+      "description": "Details of a confirmed payment and its allocation across multiple invoices.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "receiptId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "paymentDate": { "type": "string", "format": "date" },
+        "netReceivedTotal": { "type": "number" },
+        "withholdingTotal": { "type": "number" },
+        "allocations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "invoiceId": { "type": "string" },
+              "invoiceDocNo": { "type": "string" },
+              "netCashApplied": { "type": "number" },
+              "withholdingAmount": { "type": "number" },
+              "grossApplied": { "type": "number" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
     "Part": {
       "title": "Part Item",
       "description": "Represents an individual part or item in inventory.",
@@ -284,6 +311,10 @@
     "/accountingEntries/{entryId}": {
       "schema": { "$ref": "#/backend/entities/AccountingEntry" },
       "description": "Records of all financial transactions."
+    },
+    "/arPayments/{id}": {
+      "schema": { "$ref": "#/backend/entities/ARPayment" },
+      "description": "Allocation of payments to invoices."
     },
     "/parts/{partId}": {
       "schema": { "$ref": "#/backend/entities/Part" },
