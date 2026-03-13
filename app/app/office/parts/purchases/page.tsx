@@ -12,14 +12,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, Filter } from "lucide-react";
+import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, Filter, Package, Wrench } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { PurchaseDoc } from "@/lib/types";
 import { WithId } from "@/firebase/firestore/use-collection";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
+import { useRouter } from "next/navigation";
 
 // Status Badge & Tooltip Helper (Thai Labels)
 const getStatusDisplay = (status?: PurchaseDoc['status']) => {
@@ -51,6 +53,7 @@ export default function PurchaseDocsListPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
   const { profile } = useAuth();
+  const router = useRouter();
 
   const [docs, setDocs] = useState<WithId<PurchaseDoc>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +61,7 @@ export default function PurchaseDocsListPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [docToDelete, setDocToDelete] = useState<WithId<PurchaseDoc> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   const isAdmin = profile?.role === 'ADMIN';
 
@@ -112,12 +116,10 @@ export default function PurchaseDocsListPage() {
 
   return (
     <TooltipProvider>
-      <PageHeader title="รายการซื้อสินค้า" description="สร้างและจัดการเอกสารการจัดซื้อ">
-        <Button asChild>
-          <Link href="/app/office/parts/purchases/new">
-            <PlusCircle className="mr-2 h-4 w-4" />
-            สร้างรายการซื้อใหม่
-          </Link>
+      <PageHeader title="รายการซื้อสินค้า/บริการ" description="สร้างและจัดการเอกสารการจัดซื้อและงานจ้าง">
+        <Button onClick={() => setIsCreateDialogOpen(true)}>
+          <PlusCircle className="mr-2 h-4 w-4" />
+          สร้างรายการซื้อใหม่
         </Button>
       </PageHeader>
 
@@ -234,6 +236,50 @@ export default function PurchaseDocsListPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Creation Type Selection Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>เลือกประเภทรายการซื้อ</DialogTitle>
+            <DialogDescription>คุณต้องการสร้างรายการซื้อสินค้า หรือรายการซื้องานบริการ (งานจ้าง)?</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 py-4">
+            <Button 
+              size="lg" 
+              className="h-20 flex flex-col items-center justify-center gap-2"
+              onClick={() => {
+                setIsCreateDialogOpen(false);
+                router.push("/app/office/parts/purchases/new");
+              }}
+            >
+              <Package className="h-6 w-6" />
+              <div className="flex flex-col">
+                <span className="font-bold">สร้างรายการซื้อสินค้า</span>
+                <span className="text-[10px] font-normal opacity-80">อะไหล่, วัสดุสิ้นเปลือง (ตัดเข้าสต็อก)</span>
+              </div>
+            </Button>
+            <Button 
+              size="lg" 
+              variant="outline"
+              className="h-20 flex flex-col items-center justify-center gap-2 border-primary text-primary hover:bg-primary/5"
+              onClick={() => {
+                setIsCreateDialogOpen(false);
+                router.push("/app/office/parts/purchases/service/new");
+              }}
+            >
+              <Wrench className="h-6 w-6" />
+              <div className="flex flex-col">
+                <span className="font-bold">สร้างรายการซื้องานบริการ (งานจ้าง)</span>
+                <span className="text-[10px] font-normal opacity-80">งานโรงกลึง, ค่าจ้างภายนอก, อื่นๆ (ไม่ตัดสต็อก)</span>
+              </div>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsCreateDialogOpen(false)}>ยกเลิก</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!docToDelete} onOpenChange={(open) => !open && setDocToDelete(null)}>
           <AlertDialogContent>
