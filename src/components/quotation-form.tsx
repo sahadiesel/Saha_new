@@ -48,7 +48,7 @@ const quotationFormSchema = z.object({
   subtotal: z.coerce.number().default(0),
   discountAmount: z.coerce.number().min(0, "ส่วนลดห้ามติดลบ").optional().default(0),
   net: z.coerce.number().default(0),
-  isVat: z.boolean().default(true),
+  isVat: z.boolean().default(false),
   vatAmount: z.coerce.number().default(0),
   grandTotal: z.coerce.number().min(0.01, "ยอดรวมสุทธิไม่ถูกต้อง").default(0),
   notes: z.string().optional().default(""),
@@ -98,7 +98,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
       issueDate: "", // Set in useEffect
       expiryDate: "", // Set in useEffect
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
-      isVat: true,
+      isVat: false,
       subtotal: 0,
       discountAmount: 0,
       net: 0,
@@ -180,7 +180,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
         expiryDate: 'expiryDate' in dataToLoad && (dataToLoad as any).expiryDate ? (dataToLoad as any).expiryDate : format(new Date(new Date().setDate(new Date().getDate() + 30)), 'yyyy-MM-dd'),
         items: items,
         notes: 'notes' in dataToLoad ? dataToLoad.notes : '',
-        isVat: 'withTax' in dataToLoad ? dataToLoad.withTax : true,
+        isVat: 'withTax' in dataToLoad ? dataToLoad.withTax : false,
         discountAmount: 'discountAmount' in dataToLoad ? Number(dataToLoad.discountAmount) || 0 : 0,
         subtotal: 'subtotal' in dataToLoad ? Number(dataToLoad.subtotal) || 0 : 0,
         net: 'net' in dataToLoad ? Number(dataToLoad.net) || 0 : 0,
@@ -308,41 +308,27 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     } catch(e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); setIsProcessing(false); }
   };
 
-  const applyTemplate = (template: QuotationTemplate) => {
-    form.setValue("items", template.items.map(i => ({ ...i })), { shouldValidate: true });
-    form.setValue("notes", template.notes || "", { shouldValidate: true });
-    form.setValue("discountAmount", template.discountAmount || 0, { shouldValidate: true });
-    form.setValue("isVat", template.withTax ?? true, { shouldValidate: true });
-    setIsTemplatePopoverOpen(false);
-    toast({ title: "ดึงข้อมูลจาก Template สำเร็จ" });
+  const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
+    const itemsFromDoc = (sourceDoc.items || []).map((item: any) => ({ description: String(item.description ?? ''), quantity: Number(item.quantity ?? 1), unitPrice: Number(item.unitPrice ?? 0), total: Math.round((Number(item.quantity ?? 1) * Number(item.unitPrice ?? 0)) * 100) / 100 }));
+    if (itemsFromDoc.length === 0) return;
+    replace(itemsFromDoc);
+    if (sourceDoc.docType === 'QUOTATION') setReferencedQuotationId(sourceDoc.id);
+    form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
+    form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
+    form.setValue('receiverName', sourceDoc.customerSnapshot?.taxName || sourceDoc.customerSnapshot?.name || "");
+    setIsQtSearchOpen(false);
   };
 
-  const handleSaveAsTemplate = async () => {
-    if (!db || !profile || isProcessing) return;
-    const items = form.getValues('items');
-    if (items.length === 0 || (items.length === 1 && !items[0].description)) {
-      toast({ variant: 'destructive', title: "ไม่สามารถบันทึกได้", description: "กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการก่อนค่ะ" });
-      return;
+  const loadAllDocs = async (type: DocType | 'BILLS') => {
+    if (!db) return;
+    if (type === 'QUOTATION') {
+        setIsSearchingQt(true);
+        try {
+            const snap = await getDocs(query(collection(db, "documents"), where("docType", "==", "QUOTATION"), limit(500)));
+            const getTime = (v: any) => v?.toMillis?.() || v?.seconds * 1000 || 0;
+            setAllQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentType)).filter(d => d.status !== 'CANCELLED').sort((a,b) => getTime(b.createdAt) - getTime(a.createdAt)));
+        } finally { setIsSearchingQt(false); }
     }
-    const templateName = prompt("กรุณาระบุชื่อ Template ที่ต้องการบันทึก:");
-    if (!templateName) return;
-    setIsProcessing(true);
-    try {
-      const newRef = doc(collection(db, "quotationTemplates"));
-      await setDoc(newRef, sanitizeForFirestore({
-        id: newRef.id,
-        name: templateName,
-        items,
-        notes: form.getValues('notes'),
-        discountAmount: form.getValues('discountAmount'),
-        withTax: form.getValues('isVat'),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        createdByUid: profile.uid,
-        createdByName: profile.displayName,
-      }));
-      toast({ title: "บันทึกเป็น Template สำเร็จ" });
-    } catch (e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); } finally { setIsProcessing(false); }
   };
 
   const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
