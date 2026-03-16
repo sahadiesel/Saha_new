@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -90,7 +90,7 @@ export default function ManagementAccountingAccountsPage() {
       }
     });
 
-    // 2. Listen to Entries for Balance Calculation (Get all needed for current calculation)
+    // 2. Listen to Entries for Balance Calculation
     const unsubEntries = onSnapshot(query(collection(db, "accountingEntries")), (snapshot) => {
       setEntries(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<AccountingEntry>)));
       setLoading(false);
@@ -102,34 +102,38 @@ export default function ManagementAccountingAccountsPage() {
     return () => { unsubAccounts(); unsubEntries(); };
   }, [db, hasPermission, authLoading]);
 
-  // Calculate current balances for all accounts using the SAME logic as Ledger page
+  // Calculate current balances for all accounts using the EXACT same logic as Ledger page
   const accountsWithBalances = useMemo(() => {
     return accounts.map(acc => {
-      const openingDate = acc.openingBalanceDate || "1900-01-01";
-      const openingBalance = Number(acc.openingBalance || 0);
+      const openingBalanceDateStr = acc.openingBalanceDate || "1970-01-01";
+      const openingBalanceValue = Number(acc.openingBalance ?? 0);
       
-      // Filter and sort entries exactly as the Ledger view does
-      const accEntries = entries
-        .filter(e => e.accountId === acc.id && e.entryDate >= openingDate)
-        .sort((a, b) => {
-            const dateCompare = a.entryDate.localeCompare(b.entryDate);
-            if (dateCompare !== 0) return dateCompare;
-            
-            // Secondary sort by createdAt to match the sequence of transactions
-            const timeA = (a as any).createdAt?.toMillis?.() || 0;
-            const timeB = (b as any).createdAt?.toMillis?.() || 0;
-            return timeA - timeB;
-        });
+      // 1. Filter entries for this account
+      const accEntries = entries.filter(e => e.accountId === acc.id);
       
-      // Step-by-step rounding to ensure perfect match with the ledger view
-      let currentBalance = openingBalance;
-      accEntries.forEach(e => {
-        const amount = Number(e.amount || 0);
-        if (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') {
-          currentBalance = Math.round((currentBalance + amount) * 100) / 100;
-        } else if (e.entryType === 'CASH_OUT') {
-          currentBalance = Math.round((currentBalance - amount) * 100) / 100;
-        }
+      // 2. Sort EXACTLY like Ledger page (Date -> CreatedAt)
+      const sortedEntries = [...accEntries].sort((a, b) => {
+          const dateA = parseISO(a.entryDate).getTime();
+          const dateB = parseISO(b.entryDate).getTime();
+          if (dateA !== dateB) return dateA - dateB;
+          
+          const timeA = (a as any).createdAt?.toMillis?.() || 0;
+          const timeB = (b as any).createdAt?.toMillis?.() || 0;
+          return timeA - timeB;
+      });
+      
+      // 3. Sequential Calculation with step-by-step rounding
+      let currentBalance = openingBalanceValue;
+      
+      sortedEntries.forEach(e => {
+          // Process only entries starting from the opening balance point
+          if (e.entryDate >= openingBalanceDateStr) {
+              const income = (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') ? Number(e.amount || 0) : 0;
+              const expense = (e.entryType === 'CASH_OUT') ? Number(e.amount || 0) : 0;
+              
+              // Apply rounding at each step to match Ledger's precision exactly
+              currentBalance = Math.round((currentBalance + income - expense) * 100) / 100;
+          }
       });
       
       return { ...acc, currentBalance };
