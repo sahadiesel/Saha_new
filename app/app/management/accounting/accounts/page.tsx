@@ -50,7 +50,7 @@ export default function ManagementAccountingAccountsPage() {
   const { toast } = useToast();
 
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
-  const [entries, setEntries] = useState<AccountingEntry[]>([]);
+  const [entries, setEntries] = useState<WithId<AccountingEntry>[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [accountToAction, setAccountToAction] = useState<WithId<AccountingAccount> | null>(null);
@@ -90,9 +90,9 @@ export default function ManagementAccountingAccountsPage() {
       }
     });
 
-    // 2. Listen to Entries for Balance Calculation
+    // 2. Listen to Entries for Balance Calculation (Get all needed for current calculation)
     const unsubEntries = onSnapshot(query(collection(db, "accountingEntries")), (snapshot) => {
-      setEntries(snapshot.docs.map(doc => doc.data() as AccountingEntry));
+      setEntries(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<AccountingEntry>)));
       setLoading(false);
     }, (error: any) => {
       console.error("Entries listener error:", error);
@@ -102,21 +102,37 @@ export default function ManagementAccountingAccountsPage() {
     return () => { unsubAccounts(); unsubEntries(); };
   }, [db, hasPermission, authLoading]);
 
-  // Calculate current balances for all accounts
+  // Calculate current balances for all accounts using the SAME logic as Ledger page
   const accountsWithBalances = useMemo(() => {
     return accounts.map(acc => {
       const openingDate = acc.openingBalanceDate || "1900-01-01";
-      // IMPORTANT: Only count entries that occurred on or after the opening balance date
-      // to match the calculation logic in the detailed ledger.
-      const accEntries = entries.filter(e => e.accountId === acc.id && e.entryDate >= openingDate);
+      const openingBalance = Number(acc.openingBalance || 0);
       
-      const balance = accEntries.reduce((sum, e) => {
-        if (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') return sum + e.amount;
-        if (e.entryType === 'CASH_OUT') return sum - e.amount;
-        return sum;
-      }, acc.openingBalance || 0);
+      // Filter and sort entries exactly as the Ledger view does
+      const accEntries = entries
+        .filter(e => e.accountId === acc.id && e.entryDate >= openingDate)
+        .sort((a, b) => {
+            const dateCompare = a.entryDate.localeCompare(b.entryDate);
+            if (dateCompare !== 0) return dateCompare;
+            
+            // Secondary sort by createdAt to match the sequence of transactions
+            const timeA = (a as any).createdAt?.toMillis?.() || 0;
+            const timeB = (b as any).createdAt?.toMillis?.() || 0;
+            return timeA - timeB;
+        });
       
-      return { ...acc, currentBalance: Math.round(balance * 100) / 100 };
+      // Step-by-step rounding to ensure perfect match with the ledger view
+      let currentBalance = openingBalance;
+      accEntries.forEach(e => {
+        const amount = Number(e.amount || 0);
+        if (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') {
+          currentBalance = Math.round((currentBalance + amount) * 100) / 100;
+        } else if (e.entryType === 'CASH_OUT') {
+          currentBalance = Math.round((currentBalance - amount) * 100) / 100;
+        }
+      });
+      
+      return { ...acc, currentBalance };
     });
   }, [accounts, entries]);
 
