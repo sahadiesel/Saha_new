@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { format as dfFormat, parseISO } from "date-fns";
+import { format as dfFormat, parseISO, startOfMonth, endOfMonth, getYear } from "date-fns";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays } from "lucide-react";
+import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -890,9 +890,8 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
     )
 }
 
-function ObligationList({ type, searchTerm, accounts, vendors }: { type: 'AR' | 'AP', searchTerm: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[] }) {
+function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[] }) {
     const { db } = useFirebase();
-    const { toast } = useToast();
     const router = useRouter();
     
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
@@ -964,16 +963,27 @@ function ObligationList({ type, searchTerm, accounts, vendors }: { type: 'AR' | 
     }, [obligations, type, db]);
 
     const filteredObligations = useMemo(() => {
-        if (!searchTerm) return obligations;
-        const lowerSearch = searchTerm.toLowerCase();
-        return obligations.filter(ob =>
-            ob.customerNameSnapshot?.toLowerCase().includes(lowerSearch) ||
-            ob.vendorShortNameSnapshot?.toLowerCase().includes(lowerSearch) ||
-            ob.vendorNameSnapshot?.toLowerCase().includes(lowerSearch) ||
-            ob.sourceDocNo.toLowerCase().includes(lowerSearch) ||
-            ob.invoiceNo?.toLowerCase().includes(lowerSearch)
-        );
-    }, [obligations, searchTerm]);
+        let result = [...obligations];
+        
+        if (monthFilter && monthFilter !== 'ALL') {
+            result = result.filter(ob => {
+                const docDate = ob.docDate || (ob as any).createdAt?.toDate?.()?.toISOString()?.split('T')[0];
+                return docDate?.startsWith(monthFilter);
+            });
+        }
+
+        if (searchTerm) {
+            const lowerSearch = searchTerm.toLowerCase();
+            result = result.filter(ob =>
+                ob.customerNameSnapshot?.toLowerCase().includes(lowerSearch) ||
+                ob.vendorShortNameSnapshot?.toLowerCase().includes(lowerSearch) ||
+                ob.vendorNameSnapshot?.toLowerCase().includes(lowerSearch) ||
+                ob.sourceDocNo.toLowerCase().includes(lowerSearch) ||
+                ob.invoiceNo?.toLowerCase().includes(lowerSearch)
+            );
+        }
+        return result;
+    }, [obligations, searchTerm, monthFilter]);
 
     if (loading) {
         return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
@@ -982,84 +992,85 @@ function ObligationList({ type, searchTerm, accounts, vendors }: { type: 'AR' | 
         return <div className="text-center p-8 text-destructive"><AlertCircle className="mx-auto mb-2" />{error.message}</div>;
     }
 
-    const renderTable = () => (
-      <Table>
-          <TableHeader>
-              <TableRow>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead>{type === 'AR' ? 'Doc No.' : 'Invoice No.'}</TableHead>
-                  <TableHead>{type === 'AR' ? 'Customer' : 'Vendor'}</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-              </TableRow>
-          </TableHeader>
-          <TableBody>
-              {filteredObligations.length > 0 ? filteredObligations.map(ob => {
-                  const details = docDetails[ob.sourceDocId || ''];
-                  const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
-                  
-                  return (
-                    <TableRow key={ob.id}>
-                        <TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell>
-                        <TableCell>
-                            <div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
-                            {details?.billingNoteNo && (
-                                <Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">
-                                    <FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}
-                                </Badge>
-                            )}
-                        </TableCell>
-                        <TableCell className="text-sm">{type === 'AR' ? ob.customerNameSnapshot : (ob.vendorShortNameSnapshot || ob.vendorNameSnapshot)}</TableCell>
-                        <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
-                        <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
-                        <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>
-                        <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                                {type === 'AR' && ob.sourceDocType === 'TAX_INVOICE' && (
-                                    <TooltipProvider>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <span>
-                                                    <Button 
-                                                        size="sm" 
-                                                        variant={isReceiptIssued ? "secondary" : "default"} 
-                                                        disabled={isReceiptIssued}
-                                                        onClick={() => router.push(`/app/management/accounting/documents/receipt?customerId=${ob.customerId}&sourceDocId=${ob.sourceDocId}`)}
-                                                    >
-                                                        <Receipt className="mr-2 h-4 w-4" />
-                                                        ออกใบเสร็จ
-                                                    </Button>
-                                                </span>
-                                            </TooltipTrigger>
-                                            {isReceiptIssued && <TooltipContent>ออกใบเสร็จไปแล้ว ({details?.receiptStatus})</TooltipContent>}
-                                        </Tooltip>
-                                    </TooltipProvider>
-                                )}
-                                {type === 'AR' ? (
-                                    <Button size="sm" variant="outline" onClick={() => setPayingAR(ob)}>
-                                        <HandCoins className="mr-2 h-4 w-4" /> รับชำระ
-                                    </Button>
-                                ) : (
-                                    <Button size="sm" variant="outline" onClick={() => setPayingAP(ob)}>
-                                        <HandCoins className="mr-2 h-4 w-4" /> จ่ายบิล
-                                    </Button>
-                                )}
-                            </div>
-                        </TableCell>
-                    </TableRow>
-                  );
-              }) : (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center">{type === 'AR' ? 'ไม่พบรายการลูกหนี้คงค้าง' : 'ไม่พบรายการเจ้าหนี้คงค้าง'}</TableCell></TableRow>
-              )}
-          </TableBody>
-      </Table>
-    );
-
     return (
         <>
-            {renderTable()}
+            <div className="border rounded-md overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow className="bg-muted/50">
+                            <TableHead>Bill Date</TableHead>
+                            <TableHead>Due Date</TableHead>
+                            <TableHead>{type === 'AR' ? 'Doc No.' : 'Invoice No.'}</TableHead>
+                            <TableHead>{type === 'AR' ? 'Customer' : 'Vendor'}</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                            <TableHead className="text-right">Paid</TableHead>
+                            <TableHead className="text-right">Balance</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {filteredObligations.length > 0 ? filteredObligations.map(ob => {
+                            const details = docDetails[ob.sourceDocId || ''];
+                            const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
+                            const billDateRaw = ob.docDate || (ob as any).createdAt?.toDate?.();
+                            
+                            return (
+                                <TableRow key={ob.id} className="hover:bg-muted/30">
+                                    <TableCell className="text-xs">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
+                                    <TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell>
+                                    <TableCell>
+                                        <div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
+                                        {details?.billingNoteNo && (
+                                            <Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">
+                                                <FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}
+                                            </Badge>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-sm">{type === 'AR' ? ob.customerNameSnapshot : (ob.vendorShortNameSnapshot || ob.vendorNameSnapshot)}</TableCell>
+                                    <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
+                                    <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
+                                    <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>
+                                    <TableCell className="text-right">
+                                        <div className="flex justify-end gap-2">
+                                            {type === 'AR' && ob.sourceDocType === 'TAX_INVOICE' && (
+                                                <TooltipProvider>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <span>
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    variant={isReceiptIssued ? "secondary" : "default"} 
+                                                                    disabled={isReceiptIssued}
+                                                                    onClick={() => router.push(`/app/management/accounting/documents/receipt?customerId=${ob.customerId}&sourceDocId=${ob.sourceDocId}`)}
+                                                                >
+                                                                    <Receipt className="mr-2 h-4 w-4" />
+                                                                    ออกใบเสร็จ
+                                                                </Button>
+                                                            </span>
+                                                        </TooltipTrigger>
+                                                        {isReceiptIssued && <TooltipContent>ออกใบเสร็จไปแล้ว ({details?.receiptStatus})</TooltipContent>}
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                            )}
+                                            {type === 'AR' ? (
+                                                <Button size="sm" variant="outline" onClick={() => setPayingAR(ob)}>
+                                                    <HandCoins className="mr-2 h-4 w-4" /> รับชำระ
+                                                </Button>
+                                            ) : (
+                                                <Button size="sm" variant="outline" onClick={() => setPayingAP(ob)}>
+                                                    <HandCoins className="mr-2 h-4 w-4" /> จ่ายบิล
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        }) : (
+                            <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ค้างชำระ</TableCell></TableRow>
+                        )}
+                    </TableBody>
+                </Table>
+            </div>
             {payingAR && (
                 <ReceivePaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />
             )}
@@ -1075,6 +1086,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
     const defaultTab = searchParams.get('tab') === 'creditors' ? 'creditors' : 'debtors';
     const [activeTab, setActiveTab] = useState(defaultTab);
     const [searchTerm, setSearchTerm] = useState("");
+    const [monthFilter, setMonthFilter] = useState<string>("ALL");
     const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
     const [vendors, setVendors] = useState<WithId<Vendor>[]>([]);
     const [isAddingCreditor, setIsAddingCreditor] = useState(false);
@@ -1097,6 +1109,35 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         return () => { unsubAccounts(); unsubVendors(); };
     }, [db]);
 
+    const monthOptions = useMemo(() => {
+        const options = [{ value: 'ALL', label: 'ทุกเดือน' }];
+        const now = new Date();
+        const year = now.getFullYear();
+        
+        const months = [
+            'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+            'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+        ];
+
+        for (let i = 0; i < 12; i++) {
+            const m = String(i + 1).padStart(2, '0');
+            options.push({
+                value: `${year}-${m}`,
+                label: `${months[i]} ${year}`
+            });
+        }
+        // Add previous year
+        const prevYear = year - 1;
+        for (let i = 11; i >= 0; i--) {
+            const m = String(i + 1).padStart(2, '0');
+            options.push({
+                value: `${prevYear}-${m}`,
+                label: `${months[i]} ${prevYear}`
+            });
+        }
+
+        return options;
+    }, []);
 
     return (
         <>
@@ -1106,23 +1147,38 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
                     <TabsTrigger value="debtors">ลูกหนี้ (Debtors)</TabsTrigger>
                     <TabsTrigger value="creditors">เจ้าหนี้ (Creditors)</TabsTrigger>
                 </TabsList>
-                <div className="flex w-full md:w-auto items-center gap-2">
+                <div className="flex flex-wrap w-full md:w-auto items-center gap-2">
                     {activeTab === 'creditors' && (
                         <Button onClick={() => setIsAddingCreditor(true)}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มเจ้าหนี้</Button>
                     )}
-                    <div className="w-full md:w-80 relative flex-1">
+                    
+                    <Select value={monthFilter} onValueChange={setMonthFilter}>
+                        <SelectTrigger className="w-full sm:w-[180px] bg-background">
+                            <div className="flex items-center gap-2">
+                                <Filter className="h-4 w-4 text-muted-foreground" />
+                                <SelectValue placeholder="กรองตามเดือนบิล" />
+                            </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                            {monthOptions.map(opt => (
+                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+
+                    <div className="w-full md:w-64 relative flex-1">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input placeholder="ค้นหาจากชื่อ, เลขที่เอกสาร..." className="pl-10" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                        <Input placeholder="ค้นหาชื่อ, เลขที่บิล..." className="pl-10" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                     </div>
                 </div>
             </div>
             <Card>
               <CardContent className="pt-6">
                 <TabsContent value="debtors" className="mt-0">
-                    <ObligationList type="AR" searchTerm={searchTerm} accounts={accounts} vendors={vendors} />
+                    <ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} />
                 </TabsContent>
                 <TabsContent value="creditors" className="mt-0">
-                    <ObligationList type="AP" searchTerm={searchTerm} accounts={accounts} vendors={vendors} />
+                    <ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} />
                 </TabsContent>
               </CardContent>
             </Card>

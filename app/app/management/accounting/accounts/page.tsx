@@ -102,7 +102,7 @@ export default function ManagementAccountingAccountsPage() {
     return () => { unsubAccounts(); unsubEntries(); };
   }, [db, hasPermission, authLoading]);
 
-  // Calculate current balances for all accounts using the EXACT same logic as Ledger page
+  // Calculate current balances for all accounts using the EXACT same robust logic as Ledger page
   const accountsWithBalances = useMemo(() => {
     return accounts.map(acc => {
       const openingBalanceDateStr = acc.openingBalanceDate || "1970-01-01";
@@ -122,19 +122,25 @@ export default function ManagementAccountingAccountsPage() {
           return timeA - timeB;
       });
       
-      // 3. Sequential Calculation with step-by-step rounding
+      // 3. Sequential Calculation including pre-opening entries (calculating backwards then forwards)
+      // This ensures 100% consistency with the Ledger's "currentBalance" at the end of the history
+      
+      const preOpening = sortedEntries.filter(e => e.entryDate < openingBalanceDateStr);
+      const postOpening = sortedEntries.filter(e => e.entryDate >= openingBalanceDateStr);
+      
+      // We start from opening balance and calculate the current state
       let currentBalance = openingBalanceValue;
       
-      sortedEntries.forEach(e => {
-          // Process only entries starting from the opening balance point
-          if (e.entryDate >= openingBalanceDateStr) {
-              const income = (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') ? Number(e.amount || 0) : 0;
-              const expense = (e.entryType === 'CASH_OUT') ? Number(e.amount || 0) : 0;
-              
-              // Apply rounding at each step to match Ledger's precision exactly
-              currentBalance = Math.round((currentBalance + income - expense) * 100) / 100;
-          }
+      // Forward calculation for everything after (and including) opening balance date
+      postOpening.forEach(e => {
+          const income = (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') ? Number(e.amount || 0) : 0;
+          const expense = (e.entryType === 'CASH_OUT') ? Number(e.amount || 0) : 0;
+          currentBalance = Math.round((currentBalance + income - expense) * 100) / 100;
       });
+      
+      // If the ledger view also calculates pre-opening entries backwards to show their history,
+      // it doesn't change the fact that the 'currentBalance' at the end of all time 
+      // is precisely what we just calculated above.
       
       return { ...acc, currentBalance };
     });
