@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter } from "lucide-react";
+import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -246,7 +246,7 @@ function ReceivePaymentDialog({
                         <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
                             <SelectContent>
-                                {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
+                                {accounts.map(a => <SelectItem key={acc.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
                             </SelectContent>
                         </Select>
                         <FormMessage/>
@@ -673,7 +673,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
                   </div>
               )}
 
-              <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
+              <FormField control={form.control} name="notes" render={({ field }) => (FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
             </form>
           </Form>
         </div>
@@ -804,8 +804,8 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
                                   <FormMessage />
                               </FormItem>
                           )} />
-                          <FormField name="invoiceNo" control={form.control} render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)} />
-                          <FormField name="amountTotal" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
+                          <FormField name="invoiceNo" control={form.control} render={({ field }) => (FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)} />
+                          <FormField name="amountTotal" control={form.control} render={({ field }) => (FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
                           <div className="grid grid-cols-2 gap-4">
                               <FormField
                                 control={form.control}
@@ -876,7 +876,7 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
                                 )}
                               />
                           </div>
-                          <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
+                          <FormField control={form.control} name="notes" render={({ field }) => (FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
                       </form>
                   </Form>
                 </div>
@@ -985,6 +985,10 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { 
         return result;
     }, [obligations, searchTerm, monthFilter]);
 
+    const totalBalance = useMemo(() => {
+        return filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);
+    }, [filteredObligations]);
+
     if (loading) {
         return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
     }
@@ -994,6 +998,16 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { 
 
     return (
         <>
+            <div className="flex justify-end mb-4 animate-in fade-in slide-in-from-top-1 duration-500">
+                <div className="bg-primary/5 border border-primary/20 rounded-xl px-6 py-3 flex items-center gap-6 shadow-sm">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                        <Calculator className="h-4 w-4" />
+                        <span className="text-xs font-bold uppercase tracking-wider">ยอดเงินค้างรวม ({filteredObligations.length} รายการ):</span>
+                    </div>
+                    <span className="text-2xl font-black text-primary">฿{formatCurrency(totalBalance)}</span>
+                </div>
+            </div>
+
             <div className="border rounded-md overflow-x-auto">
                 <Table>
                     <TableHeader>
