@@ -30,7 +30,7 @@ export default function AppHomePage() {
     // Redirection Logic
     let targetPath = '/app/jobs'; // Default fallback
 
-    if (role === 'ADMIN' || department === 'MANAGEMENT') {
+    if (role === 'ADMIN' || department === 'MANAGEMENT' || department === 'ACCOUNTING_HR') {
       targetPath = '/app/management/dashboard';
     } else if (role === 'OFFICER' && department === 'CAR_SERVICE') {
       targetPath = '/app/kiosk';
@@ -41,9 +41,6 @@ export default function AppHomePage() {
           break;
         case 'PURCHASING':
           targetPath = '/app/office/jobs/management/by-status?status=pending-parts';
-          break;
-        case 'ACCOUNTING_HR':
-          targetPath = '/app/management/accounting/inbox';
           break;
         case 'CAR_SERVICE':
           targetPath = '/app/car-service/jobs/all';

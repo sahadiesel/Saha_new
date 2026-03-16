@@ -7,7 +7,7 @@ import { useFirebase, type WithId } from "@/firebase";
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { DateRange } from "react-day-picker";
-import { format, startOfMonth, endOfMonth, isBefore, parseISO, isAfter } from 'date-fns';
+import { format, startOfMonth, endOfMonth, isBefore, parseISO, isAfter, startOfDay, endOfDay } from 'date-fns';
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,7 +46,7 @@ export default function AccountLedgerPage() {
 
     const hasPermission = useMemo(() => {
         if (!profile) return false;
-        return (profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT') && profile.role !== 'WORKER';
+        return (profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'ACCOUNTING_HR') && profile.role !== 'WORKER';
     }, [profile]);
 
     useEffect(() => {
@@ -90,6 +90,7 @@ export default function AccountLedgerPage() {
     const processedData = useMemo(() => {
         if (!account) return { items: [], totals: { totalIncome: 0, totalExpense: 0, periodEndBalance: 0 }, periodStartingBalance: 0 };
     
+        // 1. Sort ALL entries by date and time
         const sortedAllEntries = [...entries].sort((a, b) => {
             const dateA = parseISO(a.entryDate).getTime();
             const dateB = parseISO(b.entryDate).getTime();
@@ -99,25 +100,41 @@ export default function AccountLedgerPage() {
             return timeA - timeB;
         });
     
-        const openingBalanceDate = account.openingBalanceDate ? parseISO(account.openingBalanceDate) : new Date(0);
-        let periodStartingBalance = account.openingBalance ?? 0;
+        const openingBalanceDateStr = account.openingBalanceDate || "1970-01-01";
+        const openingBalanceValue = account.openingBalance ?? 0;
         
-        if (dateRange?.from) {
-             sortedAllEntries.forEach(entry => {
-                const entryDate = parseISO(entry.entryDate);
-                if (isAfter(entryDate, openingBalanceDate) && isBefore(entryDate, dateRange.from!)) {
-                    if (entry.entryType === 'RECEIPT' || entry.entryType === 'CASH_IN') {
-                        periodStartingBalance += entry.amount;
-                    } else if (entry.entryType === 'CASH_OUT') {
-                        periodStartingBalance -= entry.amount;
-                    }
-                }
-            });
-        }
-    
-        const visibleEntries = sortedAllEntries.filter(entry => {
+        // 2. Calculate balance for every transaction relative to Opening Balance anchor
+        // We calculate for the entire history to ensure absolute consistency
+        let runningBalance = openingBalanceValue;
+        
+        const preOpening = sortedAllEntries.filter(e => e.entryDate < openingBalanceDateStr);
+        const postOpening = sortedAllEntries.filter(e => e.entryDate >= openingBalanceDateStr);
+        
+        // Items AFTER opening balance date
+        let currentBalance = openingBalanceValue;
+        const processedPost = postOpening.map(entry => {
+            const income = (entry.entryType === 'RECEIPT' || entry.entryType === 'CASH_IN') ? entry.amount : 0;
+            const expense = (entry.entryType === 'CASH_OUT') ? entry.amount : 0;
+            currentBalance = Math.round((currentBalance + income - expense) * 100) / 100;
+            return { ...entry, income, expense, balance: currentBalance };
+        });
+        
+        // Items BEFORE opening balance date (calculated backwards)
+        let backBalance = openingBalanceValue;
+        const processedPre = [...preOpening].reverse().map(entry => {
+            const income = (entry.entryType === 'RECEIPT' || entry.entryType === 'CASH_IN') ? entry.amount : 0;
+            const expense = (entry.entryType === 'CASH_OUT') ? entry.amount : 0;
+            const itemBalance = backBalance;
+            backBalance = Math.round((backBalance - (income - expense)) * 100) / 100;
+            return { ...entry, income, expense, balance: itemBalance };
+        }).reverse();
+        
+        const allProcessed = [...processedPre, ...processedPost];
+        
+        // 3. Filter for visibility based on user range and search
+        const visibleItems = allProcessed.filter(entry => {
             const entryDate = parseISO(entry.entryDate);
-            const isInRange = dateRange?.from && dateRange?.to ? (entryDate >= dateRange.from && entryDate <= dateRange.to) : true;
+            const isInRange = dateRange?.from && dateRange?.to ? (entryDate >= startOfDay(dateRange.from) && entryDate <= endOfDay(dateRange.to)) : true;
             if (!isInRange) return false;
     
             if (searchTerm) {
@@ -130,42 +147,30 @@ export default function AccountLedgerPage() {
             }
             return true;
         });
-    
-        let runningBalance = periodStartingBalance;
-        let totalIncome = 0;
-        let totalExpense = 0;
-    
-        const itemsWithBalance = visibleEntries.map(entry => {
-            let income = 0;
-            let expense = 0;
-            let description = entry.description || '';
-
-            if (entry.entryType === 'RECEIPT' || entry.entryType === 'CASH_IN') {
-                income = entry.amount;
-            } else if (entry.entryType === 'CASH_OUT') {
-                expense = entry.amount;
+        
+        // 4. Summaries
+        const totalIncome = visibleItems.reduce((sum, i) => sum + i.income, 0);
+        const totalExpense = visibleItems.reduce((sum, i) => sum + i.expense, 0);
+        
+        let periodStartingBalance = openingBalanceValue;
+        if (dateRange?.from) {
+            const fromStr = format(dateRange.from, 'yyyy-MM-dd');
+            const firstInRangeIdx = allProcessed.findIndex(item => item.entryDate >= fromStr);
+            if (firstInRangeIdx !== -1) {
+                const firstItem = allProcessed[firstInRangeIdx];
+                periodStartingBalance = Math.round((firstItem.balance - (firstItem.income - firstItem.expense)) * 100) / 100;
+            } else if (allProcessed.length > 0 && allProcessed[allProcessed.length-1].entryDate < fromStr) {
+                periodStartingBalance = allProcessed[allProcessed.length-1].balance;
             }
-    
-            runningBalance += income - expense;
-            totalIncome += income;
-            totalExpense += expense;
-    
-            return {
-                ...entry,
-                income,
-                expense,
-                balance: runningBalance,
-                displayDescription: description,
-            };
-        });
-    
+        }
+
         return {
             periodStartingBalance,
-            items: itemsWithBalance,
+            items: visibleItems,
             totals: {
                 totalIncome,
                 totalExpense,
-                periodEndBalance: runningBalance,
+                periodEndBalance: visibleItems.length > 0 ? visibleItems[visibleItems.length - 1].balance : periodStartingBalance,
             },
         };
     }, [account, entries, dateRange, searchTerm]);
@@ -208,7 +213,7 @@ export default function AccountLedgerPage() {
                 <CardHeader>
                     <div className="flex flex-col md:flex-row justify-between gap-4">
                         <div className="space-y-1">
-                            <CardTitle>ยอดยกมา: {formatCurrency(account.openingBalance ?? 0)} บาท</CardTitle>
+                            <CardTitle>ยอดยกมาหลัก: {formatCurrency(account.openingBalance ?? 0)} บาท</CardTitle>
                             <CardDescription>ณ วันที่: {safeFormat(account.openingBalanceDate ? parseISO(account.openingBalanceDate) : null, APP_DATE_FORMAT)}</CardDescription>
                         </div>
                         <div className="flex flex-col md:flex-row gap-2">
@@ -261,15 +266,15 @@ export default function AccountLedgerPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            <TableRow className="font-semibold bg-muted/20">
-                                <TableCell colSpan={5} className="pl-6">ยอดยกมาสะสม (ณ วันที่ {dateRange?.from ? format(dateRange.from, APP_DATE_FORMAT) : '...'})</TableCell>
-                                <TableCell className="text-right pr-6">{formatCurrency(processedData.periodStartingBalance)}</TableCell>
+                            <TableRow className="font-semibold bg-muted/20 italic">
+                                <TableCell colSpan={5} className="pl-6">ยอดยกมาสะสม (Balance Brought Forward)</TableCell>
+                                <TableCell className="text-right pr-6 text-primary">{formatCurrency(processedData.periodStartingBalance)}</TableCell>
                             </TableRow>
                             {processedData.items.length > 0 ? (
                                 processedData.items.map(item => (
                                     <TableRow key={item.id} className="hover:bg-muted/10">
                                         <TableCell className="pl-6 text-muted-foreground text-xs">{safeFormat(parseISO(item.entryDate), APP_DATE_FORMAT)}</TableCell>
-                                        <TableCell className="text-sm">{item.displayDescription}</TableCell>
+                                        <TableCell className="text-sm">{item.description}</TableCell>
                                         <TableCell className="text-xs font-mono">{item.sourceDocNo || '-'}</TableCell>
                                         <TableCell className="text-right text-green-600 font-medium">{item.income > 0 ? formatCurrency(item.income) : ''}</TableCell>
                                         <TableCell className="text-right text-destructive font-medium">{item.expense > 0 ? formatCurrency(item.expense) : ''}</TableCell>

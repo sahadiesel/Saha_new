@@ -434,7 +434,6 @@ function AppDashboardPage() {
         </div>
       </PageHeader>
 
-      {/* KPI Cards and Charts remain same... */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.kpis.map((kpi, i) => (
           <Card key={i} className="h-[130px] flex flex-col hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => router.push(kpi.link)}>
@@ -658,7 +657,7 @@ function AppDashboardPage() {
 // Wrapper with Auth Guard
 export default function ManagementDashboardPage() {
   const { profile, loading } = useAuth();
-  const isAllowed = profile?.department === "MANAGEMENT" || profile?.role === "ADMIN" || profile?.role === "MANAGER";
+  const isAllowed = profile?.department === "MANAGEMENT" || profile?.department === "ACCOUNTING_HR" || profile?.role === "ADMIN" || profile?.role === "MANAGER";
 
   if (loading) return <div className="flex h-screen w-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>;
 
