@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, Suspense, useState, useEffect } from "react";
@@ -246,7 +245,7 @@ function ReceivePaymentDialog({
                         <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
                             <SelectContent>
-                                {accounts.map(a => <SelectItem key={acc.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
+                                {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}
                             </SelectContent>
                         </Select>
                         <FormMessage/>
@@ -673,7 +672,12 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
                   </div>
               )}
 
-              <FormField control={form.control} name="notes" render={({ field }) => (FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
+              <FormField control={form.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>หมายเหตุ</FormLabel>
+                  <FormControl><Textarea {...field}/></FormControl>
+                </FormItem>
+              )} />
             </form>
           </Form>
         </div>
@@ -804,8 +808,8 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
                                   <FormMessage />
                               </FormItem>
                           )} />
-                          <FormField name="invoiceNo" control={form.control} render={({ field }) => (FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)} />
-                          <FormField name="amountTotal" control={form.control} render={({ field }) => (FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
+                          <FormField name="invoiceNo" control={form.control} render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)} />
+                          <FormField name="amountTotal" control={form.control} render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
                           <div className="grid grid-cols-2 gap-4">
                               <FormField
                                 control={form.control}
@@ -876,7 +880,7 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
                                 )}
                               />
                           </div>
-                          <FormField control={form.control} name="notes" render={({ field }) => (FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
+                          <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
                       </form>
                   </Form>
                 </div>
@@ -890,7 +894,7 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
     )
 }
 
-function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[] }) {
+function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (total: number, count: number) => void }) {
     const { db } = useFirebase();
     const router = useRouter();
     
@@ -985,9 +989,10 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { 
         return result;
     }, [obligations, searchTerm, monthFilter]);
 
-    const totalBalance = useMemo(() => {
-        return filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);
-    }, [filteredObligations]);
+    useEffect(() => {
+        const total = filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);
+        onSummaryChange(total, filteredObligations.length);
+    }, [filteredObligations, onSummaryChange]);
 
     if (loading) {
         return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
@@ -998,16 +1003,6 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors }: { 
 
     return (
         <>
-            <div className="flex justify-end mb-4 animate-in fade-in slide-in-from-top-1 duration-500">
-                <div className="bg-primary/5 border border-primary/20 rounded-xl px-6 py-3 flex items-center gap-6 shadow-sm">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                        <Calculator className="h-4 w-4" />
-                        <span className="text-xs font-bold uppercase tracking-wider">ยอดเงินค้างรวม ({filteredObligations.length} รายการ):</span>
-                    </div>
-                    <span className="text-2xl font-black text-primary">฿{formatCurrency(totalBalance)}</span>
-                </div>
-            </div>
-
             <div className="border rounded-md overflow-x-auto">
                 <Table>
                     <TableHeader>
@@ -1104,6 +1099,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
     const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
     const [vendors, setVendors] = useState<WithId<Vendor>[]>([]);
     const [isAddingCreditor, setIsAddingCreditor] = useState(false);
+    const [summary, setSummary] = useState({ total: 0, count: 0 });
     const { db } = useFirebase();
 
     useEffect(() => {
@@ -1155,6 +1151,15 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
 
     return (
         <>
+        <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้">
+            <div className="bg-primary/5 border border-primary/20 rounded-xl px-6 py-2 flex items-center gap-4 shadow-sm animate-in fade-in zoom-in-95 duration-500">
+                <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">ยอดเงินค้างรวม ({summary.count} รายการ)</span>
+                    <span className="text-xl font-black text-primary leading-none">฿{formatCurrency(summary.total)}</span>
+                </div>
+            </div>
+        </PageHeader>
+
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <TabsList>
@@ -1189,10 +1194,10 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
             <Card>
               <CardContent className="pt-6">
                 <TabsContent value="debtors" className="mt-0">
-                    <ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} />
+                    <ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={(total, count) => setSummary({ total, count })} />
                 </TabsContent>
                 <TabsContent value="creditors" className="mt-0">
-                    <ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} />
+                    <ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={(total, count) => setSummary({ total, count })} />
                 </TabsContent>
               </CardContent>
             </Card>
@@ -1209,6 +1214,8 @@ export default function ReceivablesPayablesPage() {
         profile?.role === 'MANAGER' || 
         profile?.department === 'MANAGEMENT' ||
         profile?.department === 'ACCOUNTING_HR'
+     Bird,
+    profile?.department === 'ACCOUNTING_HR'
     , [profile]);
 
     if (loading) {
@@ -1231,7 +1238,6 @@ export default function ReceivablesPayablesPage() {
 
     return (
         <Suspense fallback={<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>}>
-            <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้" />
             <ReceivablesPayablesContent profile={profile} />
         </Suspense>
     );
