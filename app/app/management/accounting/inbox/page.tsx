@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
@@ -81,7 +80,6 @@ function AccountingInboxPageContent() {
     return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'OFFICE' || profile.department === 'ACCOUNTING_HR';
   }, [profile]);
 
-  // Sync activeTab if URL changes
   useEffect(() => {
     const tab = searchParams.get('tab') as "receive" | "ar" | "receipts";
     if (tab && tab !== activeTab) {
@@ -310,14 +308,13 @@ function AccountingInboxPageContent() {
             });
 
             if (jobId && jobSnap && jobSnap.exists()) {
-                const jobRef = doc(db, 'jobs', jobId);
-                transaction.update(jobRef, {
+                transaction.update(doc(db, 'jobs', jobId), {
                     status: 'CLOSED',
                     updatedAt: serverTimestamp(),
                     lastActivityAt: serverTimestamp()
                 });
 
-                const activityRef = doc(collection(jobRef, 'activities'));
+                const activityRef = doc(collection(doc(db, 'jobs', jobId), 'activities'));
                 transaction.set(activityRef, {
                     text: `ฝ่ายบัญชียืนยันรับเงินสด/โอน เลขที่บิล: ${confirmingDoc.docNo} และปิดงานเรียบร้อยค่ะ`,
                     userName: profile.displayName,
@@ -357,16 +354,11 @@ function AccountingInboxPageContent() {
 
             if (jobId && jobSnap && jobSnap.exists()) {
                 const jobRef = doc(db, 'jobs', jobId);
-                const jData = jobSnap.data();
-                
-                // Safety: move to PICKED_UP if not already there or closed
-                if (['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(jData.status)) {
-                    transaction.update(jobRef, { 
-                        status: 'PICKED_UP',
-                        updatedAt: serverTimestamp(),
-                        lastActivityAt: serverTimestamp()
-                    });
-                }
+                transaction.update(jobRef, { 
+                    status: 'PICKED_UP',
+                    updatedAt: serverTimestamp(),
+                    lastActivityAt: serverTimestamp()
+                });
 
                 const activityRef = doc(collection(jobRef, 'activities'));
                 transaction.set(activityRef, {
@@ -450,10 +442,19 @@ function AccountingInboxPageContent() {
         const docSnap = await transaction.get(docRef);
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
 
-        let jobSnap = null;
         if (docObj.jobId) {
-            const jobRef = doc(db, 'jobs', docObj.jobId);
-            jobSnap = await transaction.get(jobRef);
+            transaction.update(doc(db, 'jobs', docObj.jobId), {
+                status: isDeliveryNote ? 'CLOSED' : 'PICKED_UP',
+                updatedAt: serverTimestamp(),
+                lastActivityAt: serverTimestamp()
+            });
+            const activityRef = doc(collection(doc(db, 'jobs', docObj.jobId), 'activities'));
+            transaction.set(activityRef, {
+                text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
+                userName: profile.displayName,
+                userId: profile.uid,
+                createdAt: serverTimestamp()
+            });
         }
 
         transaction.set(arRef, sanitizeForFirestore({
@@ -480,35 +481,6 @@ function AccountingInboxPageContent() {
           arObligationId: arId,
           updatedAt: serverTimestamp()
         });
-
-        if (docObj.jobId && jobSnap && jobSnap.exists()) {
-            const jobRef = doc(db, 'jobs', docObj.jobId);
-            const jData = jobSnap.data();
-            const activityRef = doc(collection(jobRef, 'activities'));
-            transaction.set(activityRef, {
-                text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
-                userName: profile.displayName,
-                userId: profile.uid,
-                createdAt: serverTimestamp()
-            });
-
-            if (isDeliveryNote) {
-                transaction.update(jobRef, {
-                    status: 'CLOSED',
-                    updatedAt: serverTimestamp(),
-                    lastActivityAt: serverTimestamp()
-                });
-            } else {
-                // Safety: move Tax Invoice linked job to PICKED_UP (Wait for Payment)
-                if (['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(jData.status)) {
-                    transaction.update(jobRef, { 
-                        status: 'PICKED_UP',
-                        updatedAt: serverTimestamp(),
-                        lastActivityAt: serverTimestamp()
-                    });
-                }
-            }
-        }
       });
       toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ใบส่งของเครดิตเรียบร้อย ระบบกำลังปิดงานให้ค่ะ" : "" });
       if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
@@ -527,8 +499,6 @@ function AccountingInboxPageContent() {
     setIsSubmitting(true);
     try {
         const batch = writeBatch(db);
-        
-        // 1. Clean up references in source documents (bills/billing notes)
         if (receipt.referencesDocIds && receipt.referencesDocIds.length > 0) {
             for (const docId of receipt.referencesDocIds) {
                 batch.update(doc(db, 'documents', docId), {
@@ -539,10 +509,7 @@ function AccountingInboxPageContent() {
                 });
             }
         }
-        
-        // 2. Delete the receipt document
         batch.delete(doc(db, 'documents', receipt.id));
-        
         await batch.commit();
         toast({ title: "ลบใบเสร็จเรียบร้อยแล้ว" });
     } catch (e: any) {
@@ -552,18 +519,8 @@ function AccountingInboxPageContent() {
     }
   };
 
-  if (authLoading) {
-    return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
-  }
-
-  if (!hasPermission) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-4">
-        <AlertCircle className="h-12 w-12 text-destructive/50" />
-        <p className="text-lg">ไม่มีสิทธิ์เข้าถึง</p>
-      </div>
-    );
-  }
+  if (authLoading) return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
+  if (!hasPermission) return <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-4"><AlertCircle className="h-12 w-12 text-destructive/50" /><p className="text-lg">ไม่มีสิทธิ์เข้าถึง</p></div>;
 
   return (
     <div className="space-y-6">

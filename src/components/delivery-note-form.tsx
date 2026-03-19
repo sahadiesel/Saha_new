@@ -78,8 +78,6 @@ const formatCurrency = (value: number | null | undefined) => {
 export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocIdProp }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
-  // FIXED: Correctly derive IDs from search params OR props
   const effectiveJobId = useMemo(() => searchParams.get("jobId") || jobIdProp, [searchParams, jobIdProp]);
   const effectiveEditDocId = useMemo(() => searchParams.get("editDocId") || editDocIdProp, [searchParams, editDocIdProp]);
   
@@ -145,7 +143,6 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     },
   });
 
-  // Register jobId so it is included in the submit data
   useEffect(() => {
     form.register("jobId");
   }, [form]);
@@ -243,14 +240,12 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     const customerSnapshot = customers.find(c => c.id === data.customerId) || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
-    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
     
-    // REQUIREMENT: If submitting for review, job moves to PICKED_UP (Taken car, waiting payment confirmation)
-    // If just saving draft, job stays at WAITING_CUSTOMER_PICKUP
+    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
-    const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
+    const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     
     const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
@@ -398,7 +393,9 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     }
   };
 
-  if (isLoading && !effectiveJobId && !effectiveEditDocId) return <Skeleton className="h-96" />;
+  const isFormLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit;
+
+  if (isFormLoading) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
 
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
 

@@ -76,8 +76,6 @@ const formatCurrency = (value: number | null | undefined) => {
 export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
-  // Correctly derive IDs
   const effectiveJobId = useMemo(() => searchParams.get("jobId") || jobIdProp, [searchParams, jobIdProp]);
   const effectiveEditDocId = useMemo(() => searchParams.get("editDocId") || editDocIdProp, [searchParams, editDocIdProp]);
   
@@ -144,7 +142,6 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     },
   });
 
-  // Register jobId so it is included in the submit data
   useEffect(() => {
     form.register("jobId");
   }, [form]);
@@ -245,14 +242,12 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     const customerSnapshot = currentCustomer || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
-    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
     
-    // REQUIREMENT: If submitting for review, job moves to PICKED_UP (Waiting payment)
-    // and effectively disappears from "Waiting for Customer Pickup" list.
+    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
-    const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
+    const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     
     const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
@@ -532,7 +527,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                     <PopoverTrigger asChild>
                       <FormControl>
                         <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!effectiveJobId}>
-                          {currentCustomer?.name || "เลือกลูกค้า..."}
+                          <span>{currentCustomer?.name || "เลือกลูกค้า..."}</span>
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                       </FormControl>
@@ -567,7 +562,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               <CardHeader><CardTitle className="text-base">หมายเหตุ</CardTitle></CardHeader>
               <CardContent>
                 <FormField control={form.control} name="notes" render={({ field }) => (
-                  <Textarea {...field} value={field.value || ""} rows={5} disabled={isLocked} placeholder="ระบุหมายเหตุเพิ่มเติม (ถ้ามี)..." />
+                  <Textarea {...field} value={field.value || ""} rows={5} disabled={isCancelled || isProcessing} placeholder="ระบุหมายเหตุเพิ่มเติม (ถ้ามี)..." />
                 )} />
               </CardContent>
             </Card>
