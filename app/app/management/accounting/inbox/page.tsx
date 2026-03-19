@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
@@ -356,6 +357,17 @@ function AccountingInboxPageContent() {
 
             if (jobId && jobSnap && jobSnap.exists()) {
                 const jobRef = doc(db, 'jobs', jobId);
+                const jData = jobSnap.data();
+                
+                // Safety: move to PICKED_UP if not already there or closed
+                if (['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(jData.status)) {
+                    transaction.update(jobRef, { 
+                        status: 'PICKED_UP',
+                        updatedAt: serverTimestamp(),
+                        lastActivityAt: serverTimestamp()
+                    });
+                }
+
                 const activityRef = doc(collection(jobRef, 'activities'));
                 transaction.set(activityRef, {
                     text: `ฝ่ายบัญชีตรวจสอบใบกำกับภาษีเลขที่: ${confirmingDoc.docNo} ถูกต้องแล้ว (รอการออกใบเสร็จ)`,
@@ -471,6 +483,7 @@ function AccountingInboxPageContent() {
 
         if (docObj.jobId && jobSnap && jobSnap.exists()) {
             const jobRef = doc(db, 'jobs', docObj.jobId);
+            const jData = jobSnap.data();
             const activityRef = doc(collection(jobRef, 'activities'));
             transaction.set(activityRef, {
                 text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
@@ -485,6 +498,15 @@ function AccountingInboxPageContent() {
                     updatedAt: serverTimestamp(),
                     lastActivityAt: serverTimestamp()
                 });
+            } else {
+                // Safety: move Tax Invoice linked job to PICKED_UP (Wait for Payment)
+                if (['DONE', 'WAITING_CUSTOMER_PICKUP'].includes(jData.status)) {
+                    transaction.update(jobRef, { 
+                        status: 'PICKED_UP',
+                        updatedAt: serverTimestamp(),
+                        lastActivityAt: serverTimestamp()
+                    });
+                }
             }
         }
       });

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
@@ -363,6 +364,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     if (itemsFromDoc.length === 0) return;
     replace(itemsFromDoc);
     if (sourceDoc.docType === 'QUOTATION') setReferencedQuotationId(sourceDoc.id);
+    if (sourceDoc.jobId) form.setValue('jobId', sourceDoc.jobId);
     form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
     form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
     form.setValue('receiverName', sourceDoc.customerSnapshot?.name || "");

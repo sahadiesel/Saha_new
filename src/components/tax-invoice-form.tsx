@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,10 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink, CalendarDays } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn, sanitizeForFirestore } from "@/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -373,6 +370,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     if (itemsFromDoc.length === 0) return;
     replace(itemsFromDoc);
     if (sourceDoc.docType === 'QUOTATION') setReferencedQuotationId(sourceDoc.id);
+    if (sourceDoc.jobId) form.setValue('jobId', sourceDoc.jobId);
     form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
     form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
     form.setValue('receiverName', sourceDoc.customerSnapshot?.taxName || sourceDoc.customerSnapshot?.name || "");
@@ -546,7 +544,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
                   <TableBody>{fields.map((field, index) => (<TableRow key={field.id}><TableCell><FormField control={form.control} name={`items.${index}.description`} render={({ field }) => (<Input {...field} value={field.value ?? ''} disabled={isLocked}/>)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" className="text-right" {...field} value={field.value || ''} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, Math.round((v * form.getValues(`items.${index}.unitPrice`)) * 100) / 100); }} />)}/></TableCell><TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" className="text-right" {...field} value={field.value || ''} disabled={isLocked} onChange={(e) => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, Math.round((v * form.getValues(`items.${index}.quantity`)) * 100) / 100); }} />)}/></TableCell><TableCell className="text-right">{formatCurrency(form.watch(`items.${index}.total`))}</TableCell><TableCell><Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={isLocked}><Trash2 className="h-4 w-4"/></Button></TableCell></TableRow>))}</TableBody>
                 </Table>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
+              <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => append({description: '', quantity: 1, unitPrice: 0, total: 0})} disabled={isLocked}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
             </CardContent>
           </Card>
 
