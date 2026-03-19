@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
@@ -76,13 +75,19 @@ const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string | null, editDocId: string | null }) {
+export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocIdProp }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // FIXED: Correctly derive IDs from search params OR props
+  const effectiveJobId = useMemo(() => searchParams.get("jobId") || jobIdProp, [searchParams, jobIdProp]);
+  const effectiveEditDocId = useMemo(() => searchParams.get("editDocId") || editDocIdProp, [searchParams, editDocIdProp]);
+  
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
   
-  const isEditing = !!editDocId;
+  const isEditing = !!effectiveEditDocId;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
@@ -111,8 +116,8 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   const [isQtSearchOpen, setIsQtSearchOpen] = useState(false);
   const [qtSearchQuery, setQtSearchQuery] = useState("");
 
-  const jobDocRef = useMemo(() => (db && jobId ? doc(db, "jobs", jobId) : null), [db, jobId]);
-  const docToEditRef = useMemo(() => (db && editDocId ? doc(db, "documents", editDocId) : null), [db, editDocId]);
+  const jobDocRef = useMemo(() => (db && effectiveJobId ? doc(db, "jobs", effectiveJobId) : null), [db, effectiveJobId]);
+  const docToEditRef = useMemo(() => (db && effectiveEditDocId ? doc(db, "documents", effectiveEditDocId) : null), [db, effectiveEditDocId]);
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
 
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
@@ -122,7 +127,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   const form = useForm<DeliveryNoteFormData>({
     resolver: zodResolver(deliveryNoteFormSchema),
     defaultValues: {
-      jobId: jobId || undefined,
+      jobId: effectiveJobId || undefined,
       customerId: "",
       issueDate: "",
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
@@ -190,7 +195,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   useEffect(() => {
     if (docToEdit) {
       form.reset({
-        jobId: docToEdit.jobId || undefined,
+        jobId: docToEdit.jobId || effectiveJobId || undefined,
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
         issueDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         items: docToEdit.items?.map(item => ({...item})) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
@@ -210,13 +215,13 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
       setSubmitDueDate(docToEdit.dueDate || '');
       if (docToEdit.referencesDocIds?.[0]) setReferencedQuotationId(docToEdit.referencesDocIds[0]);
     } else if (job) {
-        form.setValue('jobId', jobId || undefined);
+        form.setValue('jobId', effectiveJobId || undefined);
         form.setValue('customerId', job.customerId);
         form.setValue('items', [{ description: job.description, quantity: 1, unitPrice: 0, total: 0 }]);
         form.setValue('receiverName', job.customerSnapshot?.name || '');
     }
     if (profile) form.setValue('senderName', profile.displayName || '');
-  }, [job, docToEdit, profile, form, jobId]);
+  }, [job, docToEdit, profile, form, effectiveJobId]);
 
   const { fields, append, remove, replace } = useFieldArray({ control: form.control, name: "items" });
   const watchedItems = useWatch({ control: form.control, name: "items" });
@@ -239,10 +244,13 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
+    
+    // REQUIREMENT: If submitting for review, job moves to PICKED_UP (Taken car, waiting payment confirmation)
+    // If just saving draft, job stays at WAITING_CUSTOMER_PICKUP
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
-    const linkedJobId = data.jobId || docToEdit?.jobId || jobId;
+    const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     
     const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
@@ -267,9 +275,9 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
         
-        if (isEditing && editDocId) {
+        if (isEditing && effectiveEditDocId) {
             const batch = writeBatch(db);
-            const docRef = doc(db, 'documents', editDocId);
+            const docRef = doc(db, 'documents', effectiveEditDocId);
             const finalDocNo = docToEdit?.docNo || "Unknown";
             
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
@@ -278,7 +286,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
                     status: targetJobStatus,
-                    salesDocId: editDocId,
+                    salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'DELIVERY_NOTE',
                     lastActivityAt: serverTimestamp(),
@@ -317,7 +325,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   const handleSaveWrapper = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
     if (isProcessing) return;
-    const currentJobId = data.jobId || jobId || docToEdit?.jobId;
+    const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
       if (currentJobId) {
         const ok = await checkUniqueness(currentJobId);
@@ -390,8 +398,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     }
   };
 
-  const isLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit;
-  if (isLoading && !jobId && !editDocId) return <Skeleton className="h-96" />;
+  if (isLoading && !effectiveJobId && !effectiveEditDocId) return <Skeleton className="h-96" />;
 
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
 
@@ -413,7 +420,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
       <Form {...form}>
         <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
           <div className="flex justify-between items-center">
-            <Button type="button" variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
+            <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             <div className="flex gap-2">
               <Button type="button" variant="secondary" onClick={form.handleSubmit((d) => handleSaveWrapper(d, false))} disabled={isLocked || isProcessing}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
@@ -518,7 +525,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
                   <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
                     <PopoverTrigger asChild>
                       <FormControl>
-                        <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!jobId}>
+                        <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!effectiveJobId}>
                           {currentCustomer?.name || "เลือกลูกค้า..."}
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>

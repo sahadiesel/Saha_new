@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -11,7 +10,7 @@ import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink, CalendarDays } from "lucide-react";
@@ -74,15 +73,19 @@ const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, editDocId: string | null }) {
+export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const editDocIdParam = searchParams.get("editDocId") || editDocId;
+  
+  // Correctly derive IDs
+  const effectiveJobId = useMemo(() => searchParams.get("jobId") || jobIdProp, [searchParams, jobIdProp]);
+  const effectiveEditDocId = useMemo(() => searchParams.get("editDocId") || editDocIdProp, [searchParams, editDocIdProp]);
+  
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
   
-  const isEditing = !!editDocIdParam;
+  const isEditing = !!effectiveEditDocId;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
@@ -111,8 +114,8 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   const [isQtSearchOpen, setIsQtSearchOpen] = useState(false);
   const [qtSearchQuery, setQtSearchQuery] = useState("");
 
-  const jobDocRef = useMemo(() => (db && jobId ? doc(db, "jobs", jobId) : null), [db, jobId]);
-  const docToEditRef = useMemo(() => (db && editDocIdParam ? doc(db, "documents", editDocIdParam) : null), [db, editDocIdParam]);
+  const jobDocRef = useMemo(() => (db && effectiveJobId ? doc(db, "jobs", effectiveJobId) : null), [db, effectiveJobId]);
+  const docToEditRef = useMemo(() => (db && effectiveEditDocId ? doc(db, "documents", effectiveEditDocId) : null), [db, effectiveEditDocId]);
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
 
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
@@ -122,7 +125,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   const form = useForm<TaxInvoiceFormData>({
     resolver: zodResolver(taxInvoiceFormSchema),
     defaultValues: {
-      jobId: jobId || undefined,
+      jobId: effectiveJobId || undefined,
       customerId: "",
       issueDate: "", 
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
@@ -141,7 +144,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     },
   });
 
-  // CRITICAL: Register jobId so it's included in form data even if not a visible field
+  // Register jobId so it is included in the submit data
   useEffect(() => {
     form.register("jobId");
   }, [form]);
@@ -191,7 +194,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   useEffect(() => {
     if (docToEdit) {
       form.reset({
-        jobId: docToEdit.jobId || undefined,
+        jobId: docToEdit.jobId || effectiveJobId || undefined,
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
         issueDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         items: docToEdit.items?.map(item => ({...item})) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
@@ -212,13 +215,13 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
       setSubmitDueDate(docToEdit.dueDate || '');
       if (docToEdit.referencesDocIds?.[0]) setReferencedQuotationId(docToEdit.referencesDocIds[0]);
     } else if (job) {
-        form.setValue('jobId', jobId || undefined);
+        form.setValue('jobId', effectiveJobId || undefined);
         form.setValue('customerId', job.customerId);
         form.setValue('items', [{ description: job.description, quantity: 1, unitPrice: 0, total: 0 }]);
         form.setValue('receiverName', job.customerSnapshot?.taxName || job.customerSnapshot?.name || '');
     }
     if (profile) form.setValue('senderName', profile.displayName || '');
-  }, [job, docToEdit, profile, form, jobId]);
+  }, [job, docToEdit, profile, form, effectiveJobId]);
 
   const { fields, append, remove, replace } = useFieldArray({ control: form.control, name: "items" });
   const watchedItems = useWatch({ control: form.control, name: "items" });
@@ -243,10 +246,13 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
+    
+    // REQUIREMENT: If submitting for review, job moves to PICKED_UP (Waiting payment)
+    // and effectively disappears from "Waiting for Customer Pickup" list.
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
-    const linkedJobId = data.jobId || docToEdit?.jobId || jobId;
+    const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     
     const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
@@ -271,9 +277,9 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
         
-        if (isEditing && editDocIdParam) {
+        if (isEditing && effectiveEditDocId) {
             const batch = writeBatch(db);
-            const docRef = doc(db, 'documents', editDocIdParam);
+            const docRef = doc(db, 'documents', effectiveEditDocId);
             const finalDocNo = docToEdit?.docNo || "Unknown";
 
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
@@ -282,7 +288,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
                     status: targetJobStatus,
-                    salesDocId: editDocIdParam,
+                    salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'TAX_INVOICE',
                     lastActivityAt: serverTimestamp(),
@@ -323,7 +329,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
 
   const handleSaveWrapper = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
     if (isProcessing) return; 
-    const currentJobId = data.jobId || jobId || docToEdit?.jobId;
+    const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
       if (currentJobId) {
         const ok = await checkUniqueness(currentJobId);
@@ -396,9 +402,9 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     }
   };
 
-  const isFormLoading = isLoading || (editDocIdParam && isLoadingDoc);
+  const isFormLoading = isLoading || (effectiveEditDocId && isLoadingDoc);
 
-  if (isFormLoading) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
+  if (isFormLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
 
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
 
@@ -525,7 +531,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
                   <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
                     <PopoverTrigger asChild>
                       <FormControl>
-                        <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!jobId}>
+                        <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!effectiveJobId}>
                           {currentCustomer?.name || "เลือกลูกค้า..."}
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
