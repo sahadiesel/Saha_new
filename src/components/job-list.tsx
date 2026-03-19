@@ -15,6 +15,7 @@ import {
   serverTimestamp,
   getDocs,
   getDoc,
+  or,
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
@@ -176,7 +177,15 @@ export function JobList({
     setLoading(true);
     setError(null);
     const qConstraints: QueryConstraint[] = [];
-    if (department) qConstraints.push(where('department', '==', department));
+    
+    // Updated Logic: If department filter is active, show jobs where it's EITHER the main department OR the current one.
+    if (department) {
+      qConstraints.push(or(
+        where('department', '==', department),
+        where('mainDepartment', '==', department)
+      ));
+    }
+    
     if (assigneeUid) qConstraints.push(where('assigneeUid', '==', assigneeUid));
     if (statusConfig.inStatus.length > 0) qConstraints.push(where('status', 'in', statusConfig.inStatus));
     qConstraints.push(orderBy('lastActivityAt', 'desc'));

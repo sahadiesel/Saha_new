@@ -9,6 +9,7 @@ import {
   getDocs, 
   orderBy, 
   limit, 
+  or,
   type OrderByDirection, 
   type QueryConstraint, 
   type FirestoreError 
@@ -96,7 +97,15 @@ export function JobTableList({
     try {
       const collectionName = source === 'archive' ? `jobsArchive_${year}` : 'jobs';
       const qConstraints: QueryConstraint[] = [];
-      if (department) qConstraints.push(where('department', '==', department));
+      
+      // Updated Logic: If department filter is active, show jobs where it's EITHER the main department OR the current one.
+      if (department) {
+        qConstraints.push(or(
+          where('department', '==', department),
+          where('mainDepartment', '==', department)
+        ));
+      }
+
       if (filterConfig.inStatus.length > 0) {
         qConstraints.push(where('status', 'in', filterConfig.inStatus));
       }
