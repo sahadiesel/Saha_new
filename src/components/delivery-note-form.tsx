@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -38,7 +38,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
-import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
+import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { DATA_LIMITS } from "@/lib/constants";
 
@@ -123,7 +123,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     defaultValues: {
       jobId: jobId || undefined,
       customerId: "",
-      issueDate: "", // Set in useEffect to avoid hydration error
+      issueDate: "",
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       subtotal: 0,
       discountAmount: 0,
@@ -146,7 +146,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
   
   const isLocked = isEditing && (docToEdit?.status === 'PAID' || docToEdit?.status === 'PENDING_REVIEW') && profile?.role !== 'ADMIN' && profile?.role !== 'MANAGER';
 
-  // Client-side initialization for issueDate
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
       form.setValue("issueDate", format(new Date(), "yyyy-MM-dd"));
@@ -234,6 +233,8 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
+    const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
+    
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     
     const carSnapshot = (data.jobId || docToEdit?.jobId) ? { 
@@ -269,7 +270,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
-                    status: 'WAITING_CUSTOMER_PICKUP',
+                    status: targetJobStatus,
                     salesDocId: editDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'DELIVERY_NOTE',
@@ -279,7 +280,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             }
             await batch.commit();
         } else {
-            await createDocument(db, 'DELIVERY_NOTE', payload, profile, data.jobId ? 'WAITING_CUSTOMER_PICKUP' : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
+            await createDocument(db, 'DELIVERY_NOTE', payload, profile, data.jobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
         toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ" });
         router.push('/app/office/documents/delivery-note');

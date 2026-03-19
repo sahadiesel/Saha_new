@@ -39,7 +39,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
-import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType } from "@/lib/types";
+import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 
 const lineItemSchema = z.object({
@@ -79,11 +79,13 @@ const formatCurrency = (value: number | null | undefined) => {
 
 export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editDocIdParam = searchParams.get("editDocId") || editDocId;
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
   
-  const isEditing = !!editDocId;
+  const isEditing = !!editDocIdParam;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
@@ -113,7 +115,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   const [qtSearchQuery, setQtSearchQuery] = useState("");
 
   const jobDocRef = useMemo(() => (db && jobId ? doc(db, "jobs", jobId) : null), [db, jobId]);
-  const docToEditRef = useMemo(() => (db && editDocId ? doc(db, "documents", editDocId) : null), [db, editDocId]);
+  const docToEditRef = useMemo(() => (db && editDocIdParam ? doc(db, "documents", editDocIdParam) : null), [db, editDocIdParam]);
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
 
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
@@ -125,7 +127,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     defaultValues: {
       jobId: jobId || undefined,
       customerId: "",
-      issueDate: "", // Set in useEffect
+      issueDate: "", 
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       isVat: true,
       subtotal: 0,
@@ -149,14 +151,12 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   
   const isLocked = isEditing && (docToEdit?.status === 'PAID' || docToEdit?.status === 'PENDING_REVIEW') && profile?.role !== 'ADMIN' && profile?.role !== 'MANAGER';
 
-  // Client-side initialization for issueDate
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
       form.setValue("issueDate", format(new Date(), "yyyy-MM-dd"));
     }
   }, [isEditing, form]);
 
-  // Preview Document Number
   useEffect(() => {
     if (!db || isEditing || !watchedIssueDate) return;
     
@@ -170,7 +170,6 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
           setPreviewDocNo(result.docNo);
         }
       } catch (e: any) {
-        // Silently handle
       }
     };
     fetchPreview();
@@ -242,6 +241,8 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     setIsProcessing(true);
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
+    const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
+    
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
     
     const carSnapshot = (data.jobId || docToEdit?.jobId) ? { 
@@ -266,20 +267,19 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
         
-        if (isEditing && editDocId) {
+        if (isEditing && editDocIdParam) {
             const batch = writeBatch(db);
-            const docRef = doc(db, 'documents', editDocId);
+            const docRef = doc(db, 'documents', editDocIdParam);
             const finalDocNo = docToEdit?.docNo || "Unknown";
 
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
             
-            // CRITICAL SYNC: Ensure Job record always has the latest doc info
             const linkedJobId = data.jobId || docToEdit?.jobId;
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
-                    status: 'WAITING_CUSTOMER_PICKUP',
-                    salesDocId: editDocId,
+                    status: targetJobStatus,
+                    salesDocId: editDocIdParam,
                     salesDocNo: finalDocNo,
                     salesDocType: 'TAX_INVOICE',
                     lastActivityAt: serverTimestamp(),
@@ -288,7 +288,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
             }
             await batch.commit();
         } else {
-            await createDocument(db, 'TAX_INVOICE', payload, profile, data.jobId ? 'WAITING_CUSTOMER_PICKUP' : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
+            await createDocument(db, 'TAX_INVOICE', payload, profile, data.jobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
         toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ" });
         router.push('/app/office/documents/tax-invoice');
@@ -392,7 +392,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
   };
 
   const isLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit;
-  if (isLoading && !jobId && !editDocId) return <Skeleton className="h-96" />;
+  if (isLoading && !jobId && !editDocIdParam) return <Skeleton className="h-96" />;
 
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
 
