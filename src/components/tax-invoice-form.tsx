@@ -141,6 +141,11 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     },
   });
 
+  // CRITICAL: Register jobId so it's included in form data even if not a visible field
+  useEffect(() => {
+    form.register("jobId");
+  }, [form]);
+
   const selectedCustomerId = form.watch('customerId');
   const watchedIssueDate = form.watch('issueDate');
   const currentCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
@@ -241,8 +246,9 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
+    const linkedJobId = data.jobId || docToEdit?.jobId || jobId;
     
-    const carSnapshot = (data.jobId || docToEdit?.jobId) ? { 
+    const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
       brand: (jobDetails as any)?.carServiceDetails?.brand || (jobDetails as any)?.commonrailDetails?.brand || (jobDetails as any)?.mechanicDetails?.brand || (jobDetails as any)?.brand || docToEdit?.carSnapshot?.brand,
       model: (jobDetails as any)?.carServiceDetails?.model || (jobDetails as any)?.model || docToEdit?.carSnapshot?.model,
@@ -254,6 +260,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     try {
         const payload = { 
           ...data, 
+          jobId: linkedJobId || undefined,
           docDate: data.issueDate, 
           customerSnapshot, 
           carSnapshot, 
@@ -271,7 +278,6 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
 
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
             
-            const linkedJobId = data.jobId || docToEdit?.jobId;
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
@@ -285,7 +291,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
             }
             await batch.commit();
         } else {
-            await createDocument(db, 'TAX_INVOICE', payload, profile, data.jobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
+            await createDocument(db, 'TAX_INVOICE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
         toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ" });
         router.push('/app/office/documents/tax-invoice');
@@ -317,18 +323,19 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
 
   const handleSaveWrapper = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
     if (isProcessing) return; 
+    const currentJobId = data.jobId || jobId || docToEdit?.jobId;
     try {
-      if (data.jobId) {
-        const ok = await checkUniqueness(data.jobId);
+      if (currentJobId) {
+        const ok = await checkUniqueness(currentJobId);
         if (!ok) {
-          setPendingData(data);
+          setPendingData({ ...data, jobId: currentJobId });
           setIsReviewSubmission(submitForReview);
           setShowDuplicateDialog(true);
           return;
         }
       }
       if (submitForReview) { 
-          setPendingData(data); 
+          setPendingData({ ...data, jobId: currentJobId }); 
           setIsReviewSubmission(true); 
           if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
               setSuggestedPayments([{accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
@@ -336,7 +343,7 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
           setShowReviewConfirm(true); 
           return; 
       }
-      await executeSave(data, false);
+      await executeSave({ ...data, jobId: currentJobId }, false);
     } catch (e) {}
   };
 
@@ -389,8 +396,9 @@ export function TaxInvoiceForm({ jobId, editDocId }: { jobId: string | null, edi
     }
   };
 
-  const isLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit;
-  if (isLoading && !jobId && !editDocIdParam) return <Skeleton className="h-96" />;
+  const isFormLoading = isLoading || (editDocIdParam && isLoadingDoc);
+
+  if (isFormLoading) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
 
   const filteredCustomers = customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
 

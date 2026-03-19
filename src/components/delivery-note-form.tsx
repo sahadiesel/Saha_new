@@ -140,6 +140,11 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     },
   });
 
+  // Register jobId so it is included in the submit data
+  useEffect(() => {
+    form.register("jobId");
+  }, [form]);
+
   const selectedCustomerId = form.watch('customerId');
   const watchedIssueDate = form.watch('issueDate');
   const currentCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
@@ -237,8 +242,9 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
     
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
+    const linkedJobId = data.jobId || docToEdit?.jobId || jobId;
     
-    const carSnapshot = (data.jobId || docToEdit?.jobId) ? { 
+    const carSnapshot = linkedJobId ? { 
       licensePlate: (jobDetails as any)?.carServiceDetails?.licensePlate || (jobDetails as any)?.licensePlate || docToEdit?.carSnapshot?.licensePlate,
       brand: (jobDetails as any)?.carServiceDetails?.brand || (jobDetails as any)?.commonrailDetails?.brand || (jobDetails as any)?.mechanicDetails?.brand || (jobDetails as any)?.brand || docToEdit?.carSnapshot?.brand,
       model: (jobDetails as any)?.carServiceDetails?.model || (jobDetails as any)?.model || docToEdit?.carSnapshot?.model,
@@ -250,6 +256,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
     try {
         const payload = { 
           ...data, 
+          jobId: linkedJobId || undefined,
           docDate: data.issueDate, 
           customerSnapshot, 
           carSnapshot, 
@@ -267,7 +274,6 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
             
-            const linkedJobId = data.jobId || docToEdit?.jobId;
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
                 batch.update(jobRef, {
@@ -281,7 +287,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
             }
             await batch.commit();
         } else {
-            await createDocument(db, 'DELIVERY_NOTE', payload, profile, data.jobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
+            await createDocument(db, 'DELIVERY_NOTE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
         toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ" });
         router.push('/app/office/documents/delivery-note');
@@ -311,18 +317,19 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
 
   const handleSaveWrapper = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
     if (isProcessing) return;
+    const currentJobId = data.jobId || jobId || docToEdit?.jobId;
     try {
-      if (data.jobId) {
-        const ok = await checkUniqueness(data.jobId);
+      if (currentJobId) {
+        const ok = await checkUniqueness(currentJobId);
         if (!ok) {
-          setPendingFormData(data);
+          setPendingFormData({ ...data, jobId: currentJobId });
           setIsReviewSubmission(submitForReview);
           setShowDuplicateDialog(true);
           return;
         }
       }
       if (submitForReview) { 
-          setPendingFormData(data); 
+          setPendingFormData({ ...data, jobId: currentJobId }); 
           setIsReviewSubmission(true); 
           if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
               setSuggestedPayments([{accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
@@ -330,7 +337,7 @@ export default function DeliveryNoteForm({ jobId, editDocId }: { jobId: string |
           setShowReviewConfirm(true); 
           return; 
       }
-      await executeSave(data, false);
+      await executeSave({ ...data, jobId: currentJobId }, false);
     } catch (e) {}
   };
 
