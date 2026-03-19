@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
@@ -284,6 +285,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
                     salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'DELIVERY_NOTE',
+                    salesDocStatus: targetStatus,
                     lastActivityAt: serverTimestamp(),
                     updatedAt: serverTimestamp()
                 });

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -286,6 +287,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                     salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'TAX_INVOICE',
+                    salesDocStatus: targetStatus,
                     lastActivityAt: serverTimestamp(),
                     updatedAt: serverTimestamp()
                 });

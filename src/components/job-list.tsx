@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -194,6 +195,13 @@ export function JobList({
     const q = query(collection(db, "jobs"), ...qConstraints);
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
+      
+      // Strict filtering for WAITING_CUSTOMER_PICKUP: Exclude jobs that have bills in review/approved/paid
+      const isPickupView = status === 'WAITING_CUSTOMER_PICKUP' || (Array.isArray(status) && status.includes('WAITING_CUSTOMER_PICKUP'));
+      if (isPickupView) {
+          jobsData = jobsData.filter(j => !['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(j.salesDocStatus || ""));
+      }
+
       const term = searchTerm.toLowerCase().trim();
       if (term) {
         jobsData = jobsData.filter(j => 
@@ -215,7 +223,7 @@ export function JobList({
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm]);
+  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status]);
 
   useEffect(() => {
     if (!db) return;
@@ -358,6 +366,7 @@ export function JobList({
         // 2. Update Job Status
         batch.update(jobRef, { 
             status: 'PICKED_UP', 
+            salesDocStatus: 'PENDING_REVIEW',
             lastActivityAt: serverTimestamp(), 
             updatedAt: serverTimestamp() 
         });
@@ -395,7 +404,7 @@ export function JobList({
       return Math.round((paymentConfirmDoc.grandTotal - currentSuggestedTotal) * 100) / 100;
   }, [paymentConfirmDoc, currentSuggestedTotal]);
 
-  if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />สร้าง Index</a></Button></div>);
+  if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md"><ExternalLink className="h-4 w-4" />สร้าง Index</a></Button></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
   if (jobs.length === 0) return (<Card className="text-center py-12"><CardHeader><CardTitle className="text-muted-foreground">{emptyTitle}</CardTitle><CardDescription>{emptyDescription}</CardDescription></CardHeader></Card>);
 

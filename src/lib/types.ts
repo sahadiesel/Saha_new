@@ -120,6 +120,7 @@ export interface Job {
   salesDocType?: 'DELIVERY_NOTE' | 'TAX_INVOICE';
   salesDocId?: string;
   salesDocNo?: string;
+  salesDocStatus?: string; // TRACKS: DRAFT, PENDING_REVIEW, APPROVED, PAID
   paymentStatusAtClose?: 'PAID' | 'UNPAID';
   carServiceDetails?: {
     brand?: string;

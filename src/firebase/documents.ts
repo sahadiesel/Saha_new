@@ -202,13 +202,15 @@ export async function createDocument(
       }, { merge: true });
     }
 
+    const docStatus = options?.initialStatus ?? (docType === 'WITHDRAWAL' ? 'ISSUED' : 'DRAFT');
+
     const docData = sanitizeForFirestore({
       ...data,
       docDate: dateInput || new Date().toISOString().split('T')[0],
       id: docId,
       docNo: finalDocNo,
       docType,
-      status: options?.initialStatus ?? (docType === 'WITHDRAWAL' ? 'ISSUED' : 'DRAFT'),
+      status: docStatus,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -235,6 +237,7 @@ export async function createDocument(
           salesDocId: docId,
           salesDocNo: finalDocNo,
           salesDocType: docType,
+          salesDocStatus: docStatus, // Sync status to Job
           lastActivityAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
