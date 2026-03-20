@@ -21,6 +21,8 @@ import type { Document, DocType } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 interface DocumentListProps {
   docType: DocType;
@@ -88,7 +90,6 @@ export function DocumentList({
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
-  // Management access check
   const canManageDocs = (isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT') && 
                         profile?.department !== 'PURCHASING';
 
@@ -98,7 +99,6 @@ export function DocumentList({
     return base;
   }, [docType]);
 
-  // Extract unique prefixes from docNo (e.g. DN, INV, DN3)
   const availablePrefixes = useMemo(() => {
     const prefixes = new Set<string>();
     allDocuments.forEach(doc => {
@@ -128,6 +128,11 @@ export function DocumentList({
         if (err.message?.includes('requires an index')) {
             const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
             if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        } else if (err.code === 'permission-denied') {
+            errorEmitter.emit('permission-error', new FirestorePermissionError({
+                path: 'documents',
+                operation: 'list',
+            }));
         }
         setLoading(false);
     });
@@ -136,18 +141,8 @@ export function DocumentList({
 
   const processedDocuments = useMemo(() => {
     let filtered = [...allDocuments];
-    
-    // Filter by Prefix
-    if (prefixFilter !== "ALL") {
-      filtered = filtered.filter(doc => doc.docNo.startsWith(prefixFilter));
-    }
-
-    // Filter by Status
-    if (statusFilter !== "ALL") {
-      filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
-    }
-
-    // Search by text
+    if (prefixFilter !== "ALL") filtered = filtered.filter(doc => doc.docNo.startsWith(prefixFilter));
+    if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       filtered = filtered.filter(doc =>
@@ -194,12 +189,7 @@ export function DocumentList({
     const monthId = docObj.billingRunId || docObj.docDate.substring(0, 7);
     const customerId = docObj.customerId || docObj.customerSnapshot?.id;
     if (monthId && customerId) {
-      try {
-        await updateDoc(doc(db, 'billingRuns', monthId), {
-          [`createdBillingNotes.${customerId}`]: deleteField(),
-          updatedAt: serverTimestamp()
-        });
-      } catch (e) {}
+      try { await updateDoc(doc(db, 'billingRuns', monthId), { [`createdBillingNotes.${customerId}`]: deleteField(), updatedAt: serverTimestamp() }); } catch (e) {}
     }
   };
 
@@ -209,22 +199,12 @@ export function DocumentList({
     try {
       const batch = writeBatch(db);
       const docRef = doc(db, 'documents', docToAction.id);
-      batch.update(docRef, {
-        status: 'CANCELLED',
-        updatedAt: serverTimestamp(),
-        notes: (docToAction.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), APP_DATE_FORMAT + ' HH:mm')} โดย ${profile.displayName}`
-      });
+      batch.update(docRef, { status: 'CANCELLED', updatedAt: serverTimestamp(), notes: (docToAction.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), APP_DATE_FORMAT + ' HH:mm')} โดย ${profile.displayName}` });
       await unlinkJob(batch, docToAction);
       await batch.commit();
       await cleanBillingRun(docToAction);
       toast({ title: "ยกเลิกเอกสารเรียบร้อย" });
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: "Error", description: err.message });
-    } finally {
-      setIsActionLoading(false);
-      setIsCancelAlertOpen(false);
-      setDocToAction(null);
-    }
+    } catch (err: any) { toast({ variant: 'destructive', title: "Error", description: err.message }); } finally { setIsActionLoading(false); setIsCancelAlertOpen(false); setDocToAction(null); }
   };
 
   const confirmDelete = async () => {
@@ -237,13 +217,7 @@ export function DocumentList({
       await batch.commit();
       await cleanBillingRun(docToAction);
       toast({ title: "ลบเอกสารสำเร็จ" });
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: "Error", description: err.message });
-    } finally {
-      setIsActionLoading(false);
-      setIsDeleteAlertOpen(false);
-      setDocToAction(null);
-    }
+    } catch (err: any) { toast({ variant: 'destructive', title: "Error", description: err.message }); } finally { setIsActionLoading(false); setIsDeleteAlertOpen(false); setDocToAction(null); }
   };
 
   const confirmRevertPayment = async () => {
@@ -252,22 +226,10 @@ export function DocumentList({
     try {
       const batch = writeBatch(db);
       if (docToAction.accountingEntryId) batch.delete(doc(db, 'accountingEntries', docToAction.accountingEntryId));
-      batch.update(doc(db, 'documents', docToAction.id), {
-        status: 'APPROVED', 
-        paymentSummary: { paidTotal: 0, balance: docToAction.grandTotal, paymentStatus: 'UNPAID' },
-        receiptStatus: deleteField(),
-        accountingEntryId: deleteField(),
-        updatedAt: serverTimestamp()
-      });
+      batch.update(doc(db, 'documents', docToAction.id), { status: 'APPROVED', paymentSummary: { paidTotal: 0, balance: docToAction.grandTotal, paymentStatus: 'UNPAID' }, receiptStatus: deleteField(), accountingEntryId: deleteField(), updatedAt: serverTimestamp() });
       await batch.commit();
       toast({ title: "กู้คืนสถานะสำเร็จ" });
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: "Error", description: err.message });
-    } finally {
-      setIsActionLoading(false);
-      setIsRevertAlertOpen(false);
-      setDocToAction(null);
-    }
+    } catch (err: any) { toast({ variant: 'destructive', title: "Error", description: err.message }); } finally { setIsActionLoading(false); setIsRevertAlertOpen(false); setDocToAction(null); }
   };
 
   return (
@@ -277,160 +239,26 @@ export function DocumentList({
           {indexErrorUrl && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>ต้องสร้าง Index ก่อน</AlertTitle>
-              <Button asChild variant="outline" size="sm" className="mt-2">
-                <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> สร้าง Index</a>
-              </Button>
+              <AlertTitle>ต้องสร้างดัชนี (Index) ก่อน</AlertTitle>
+              <Button asChild variant="outline" size="sm" className="mt-2"><a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> สร้าง Index</a></Button>
             </Alert>
           )}
-
           <div className="flex flex-col md:flex-row gap-3">
-            {/* 1. Prefix Filter */}
-            <div className="w-full md:w-48">
-              <Select value={prefixFilter} onValueChange={setPrefixFilter}>
-                <SelectTrigger className="bg-background">
-                  <div className="flex items-center gap-2">
-                    <Hash className="h-3.5 w-3.5 text-muted-foreground" />
-                    <SelectValue placeholder="Prefix..." />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">ทุก Prefix</SelectItem>
-                  {availablePrefixes.map(p => (
-                    <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* 2. Search Input */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล..." 
-                value={searchTerm} 
-                onChange={(e) => setSearchTerm(e.target.value)} 
-                className="pl-10 bg-background" 
-              />
-            </div>
-
-            {/* 3. Status Filter */}
-            <div className="w-full md:w-56">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="bg-background">
-                  <div className="flex items-center gap-2">
-                    <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-                    <SelectValue placeholder="สถานะ..." />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueStatuses.map(status => (
-                      <SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <div className="w-full md:w-48"><Select value={prefixFilter} onValueChange={setPrefixFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Hash className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="Prefix..." /></div></SelectTrigger><SelectContent><SelectItem value="ALL">ทุก Prefix</SelectItem>{availablePrefixes.map(p => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent></Select></div>
+            <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 bg-background" /></div>
+            <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
-          
-          {loading ? (
-            <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>
-          ) : (
-            <div className="border rounded-md">
-              <Table>
-                <TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">ยอดสุทธิ</TableHead><TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
+          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">ยอดสุทธิ</TableHead><TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
-                    
-                    const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office')
-                      ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}`
-                      : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
-
-                    return (
-                    <TableRow key={docItem.id}>
-                      <TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell>
-                      <TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell>
-                      <TableCell className="text-sm font-medium">{docItem.customerSnapshot?.name || "-"}</TableCell>
-                      <TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell>
-                      <TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>
-                            
-                            {editPath && canManageDocs && (
-                                <DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}> 
-                                    <Edit className="mr-2 h-4 w-4"/> แก้ไข
-                                </DropdownMenuItem>
-                            )}
-
-                            {isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (
-                              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>
-                            )}
-
-                            {canManageDocs && docType !== 'QUOTATION' && (
-                                <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}> 
-                                    <XCircle className="mr-2 h-4 w-4"/> ยกเลิก
-                                </DropdownMenuItem>
-                            )}
-
-                            {isUserAdmin && (
-                                <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"> 
-                                    <Trash2 className="mr-2 h-4 w-4" /> ลบ
-                                </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  )}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+                    const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office') ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}` : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
+                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm font-medium">{docItem.customerSnapshot?.name || "-"}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
         </CardContent>
-        {totalPages > 1 && (
-          <CardFooter className="justify-between">
-            <span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button>
-              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button>
-            </div>
-          </CardFooter>
-        )}
+        {totalPages > 1 && (<CardFooter className="justify-between"><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>
-
-      <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </>
   );
 }

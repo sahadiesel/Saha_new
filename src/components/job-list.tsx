@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -86,6 +85,8 @@ import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -173,13 +174,17 @@ export function JobList({
   const isWorker = profile?.role === 'WORKER';
   const canDoBilling = isMgmtOrOffice;
 
+  const canSeeAccounts = useMemo(() => {
+    if (!profile) return false;
+    return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'OFFICE' || profile.department === 'MANAGEMENT' || profile.department === 'ACCOUNTING_HR';
+  }, [profile]);
+
   useEffect(() => {
     if (!db) return;
     setLoading(true);
     setError(null);
     const qConstraints: QueryConstraint[] = [];
     
-    // Updated Logic: If department filter is active, show jobs where it's EITHER the main department OR the current one.
     if (department) {
       qConstraints.push(or(
         where('department', '==', department),
@@ -196,7 +201,6 @@ export function JobList({
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
-      // Strict filtering for WAITING_CUSTOMER_PICKUP: Exclude jobs that have bills in review/approved/paid
       const isPickupView = status === 'WAITING_CUSTOMER_PICKUP' || (Array.isArray(status) && status.includes('WAITING_CUSTOMER_PICKUP'));
       if (isPickupView) {
           jobsData = jobsData.filter(j => !['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(j.salesDocStatus || ""));
@@ -220,17 +224,27 @@ export function JobList({
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) setIndexUrl(urlMatch[0]);
       }
+      setError(err);
       setLoading(false);
     });
     return () => unsubscribe();
   }, [db, department, assigneeUid, statusConfig.key, searchTerm, status]);
 
   useEffect(() => {
-    if (!db) return;
-    onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
+    if (!db || !canSeeAccounts) return;
+    const q = query(collection(db, "accountingAccounts"), where("isActive", "==", true));
+    const unsubscribe = onSnapshot(q, (snap) => {
         setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
+    }, async (err) => {
+        if (err.code === 'permission-denied') {
+            errorEmitter.emit('permission-error', new FirestorePermissionError({
+                path: 'accountingAccounts',
+                operation: 'list',
+            }));
+        }
     });
-  }, [db]);
+    return () => unsubscribe();
+  }, [db, canSeeAccounts]);
 
   const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
     if (!db || !profile || isProcessing) return;
@@ -352,7 +366,6 @@ export function JobList({
             return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
         });
 
-        // 1. Update Document
         batch.update(docRef, sanitizeForFirestore({
             status: 'PENDING_REVIEW',
             paymentTerms: recordRemainingAsCredit ? 'CREDIT' : 'CASH',
@@ -363,7 +376,6 @@ export function JobList({
             dispute: { isDisputed: false, reason: "" }
         }));
 
-        // 2. Update Job Status
         batch.update(jobRef, { 
             status: 'PICKED_UP', 
             salesDocStatus: 'PENDING_REVIEW',
@@ -371,7 +383,6 @@ export function JobList({
             updatedAt: serverTimestamp() 
         });
 
-        // 3. Log Activity
         batch.set(doc(collection(jobRef, "activities")), { 
             text: `ลูกค้ารับสินค้าแล้ว - ระบุเงื่อนไขการรับเงิน: ${recordRemainingAsCredit ? 'ขายเชื่อ (Credit)' : 'รับเงินสด/โอน'} ยอดรวม ฿${formatCurrency(paymentConfirmDoc.grandTotal)}`, 
             userName: profile.displayName, 
@@ -563,46 +574,12 @@ export function JobList({
                 </Button>
 
                 <div className="pt-4 border-t">
-                    <div className={cn("flex justify-between items-center p-3 rounded-md border", remainingInDialog > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}>
-                        <span className="text-sm font-bold">ยอดเงินที่ยังไม่ได้รับ:</span>
-                        <span className={cn("text-lg font-black", remainingInDialog > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingInDialog)}</span>
-                    </div>
-                    
-                    {remainingInDialog > 0.01 && (
-                        <div className="mt-4 space-y-4 animate-in fade-in">
-                            <div className="flex items-center space-x-2">
-                                <Checkbox id="r-credit-list" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} />
-                                <Label htmlFor="r-credit-list" className="font-bold text-amber-700 cursor-pointer">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label>
-                            </div>
-                            {recordRemainingAsCredit && (
-                                <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
-                                    <div className="space-y-2">
-                                        <Label className="text-xs">วันครบกำหนดชำระ</Label>
-                                        <Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} className="h-9" />
-                                    </div>
-                                    <div className="flex items-center space-x-2 pt-6">
-                                        <Checkbox id="r-billing-list" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} />
-                                        <Label htmlFor="r-billing-list" className="text-xs cursor-pointer">ต้องวางบิลรวม</Label>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                    <div className={cn("flex justify-between items-center p-3 rounded-md border", remainingInDialog > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}><span className="text-sm font-bold">ยอดเงินที่ยังไม่ได้รับ:</span><span className={cn("text-lg font-black", remainingInDialog > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingInDialog)}</span></div>
+                    {remainingInDialog > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit-list" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit-list" className="font-bold text-amber-700 cursor-pointer">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนดชำระ</Label><Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} className="h-9" /></div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing-list" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing-list" className="text-xs cursor-pointer">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
               </div>
           </div>
           
-          <DialogFooter className="bg-muted/30 p-6 border-t gap-2">
-            <Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button>
-            <Button 
-                onClick={handleFinalPaymentConfirm} 
-                disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || suggestedPayments.some(p => p.amount > 0 && !p.accountId)}
-                className="bg-green-600 hover:bg-green-700 font-bold"
-            >
-                {isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} 
-                ยืนยันและส่งให้บัญชี
-            </Button>
-          </DialogFooter>
+          <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
