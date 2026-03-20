@@ -14,10 +14,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink, CalendarDays } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft, FileSearch, Eye, ExternalLink } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -399,7 +400,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
   };
 
-  const isFormLoading = isLoading || (effectiveEditDocId && isLoadingDoc);
+  const isFormLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit;
 
   if (isFormLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
 
@@ -564,7 +565,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               <CardHeader><CardTitle className="text-base">หมายเหตุ</CardTitle></CardHeader>
               <CardContent>
                 <FormField control={form.control} name="notes" render={({ field }) => (
-                  <Textarea {...field} value={field.value || ""} rows={5} disabled={isCancelled || isProcessing} placeholder="ระบุหมายเหตุเพิ่มเติม (ถ้ามี)..." />
+                  <Textarea {...field} value={field.value || ""} rows={5} disabled={isLocked} placeholder="ระบุหมายเหตุเพิ่มเติม (ถ้ามี)..." />
                 )} />
               </CardContent>
             </Card>
