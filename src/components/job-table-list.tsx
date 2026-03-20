@@ -98,7 +98,6 @@ export function JobTableList({
     try {
       const collectionName = source === 'archive' ? `jobsArchive_${year}` : 'jobs';
       const filters: QueryConstraint[] = [];
-      const modifiers: QueryConstraint[] = [];
       
       if (department) {
         filters.push(or(
@@ -111,13 +110,13 @@ export function JobTableList({
         filters.push(where('status', 'in', filterConfig.inStatus));
       }
       
-      modifiers.push(orderBy(orderByField, orderByDirection));
-      modifiers.push(limit(500)); 
+      const q = query(
+        collection(db, collectionName), 
+        ...filters,
+        orderBy(orderByField, orderByDirection),
+        limit(500)
+      );
 
-      // If we have multiple filters, one of which is or(), wrap them in and()
-      const finalConstraints = filters.length > 1 ? [and(...filters), ...modifiers] : [...filters, ...modifiers];
-
-      const q = query(collection(db, collectionName), ...finalConstraints);
       const snapshot = await getDocs(q);
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       

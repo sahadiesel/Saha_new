@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { 
@@ -78,16 +78,13 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { format, parseISO } from "date-fns";
-import { useRouter } from "next/navigation";
-import type { Job, JobStatus, JobDepartment, UserProfile, AccountingAccount, Document as DocumentType } from "@/lib/types";
-import { JOB_STATUSES } from "@/lib/constants";
-import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
-import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { JOB_STATUSES } from "@/lib/constants";
+import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
+import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -186,7 +183,6 @@ export function JobList({
     setError(null);
     
     const filters: QueryConstraint[] = [];
-    const modifiers: QueryConstraint[] = [];
     
     if (department) {
       filters.push(or(
@@ -198,14 +194,15 @@ export function JobList({
     if (assigneeUid) filters.push(where('assigneeUid', '==', assigneeUid));
     if (statusConfig.inStatus.length > 0) filters.push(where('status', 'in', statusConfig.inStatus));
     
-    modifiers.push(orderBy('lastActivityAt', 'desc'));
-    modifiers.push(limit(200));
+    // Construct the query
+    // Multiple top-level constraints are implicitly AND-ed.
+    const q = query(
+      collection(db, "jobs"), 
+      ...filters,
+      orderBy('lastActivityAt', 'desc'),
+      limit(200)
+    );
 
-    // When using multiple filters including a logical filter like or(),
-    // we must wrap all filters in an and() statement.
-    const finalConstraints = filters.length > 1 ? [and(...filters), ...modifiers] : [...filters, ...modifiers];
-
-    const q = query(collection(db, "jobs"), ...finalConstraints);
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
@@ -236,7 +233,7 @@ export function JobList({
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status]);
+  }, [db, department, assigneeUid, statusConfig.key, searchTerm]); // Use statusConfig.key instead of status array object
 
   useEffect(() => {
     if (!db || !canSeeAccounts) return;
