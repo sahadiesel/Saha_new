@@ -13,17 +13,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft, FileSearch, Eye, ExternalLink, PlusCircle, Wallet } from "lucide-react";
+import { 
+  Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, 
+  CalendarDays, ArrowLeft, FileSearch, Eye, ExternalLink, PlusCircle, Wallet, 
+  RotateCcw, Check, Ban
+} from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
   DialogContent,
@@ -34,7 +39,6 @@ import {
 } from "@/components/ui/dialog";
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
@@ -182,13 +186,14 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
 
   useEffect(() => {
     if (!db) return;
-    onSnapshot(collection(db, "customers"), (snap) => {
+    const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
       setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
       setIsLoadingCustomers(false);
     });
-    onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
+    const unsubAccounts = onSnapshot(query(collection(db, "accountingAccounts"), where("isActive", "==", true)), (snap) => {
         setAccounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingAccount)));
     });
+    return () => { unsubCustomers(); unsubAccounts(); };
   }, [db]);
 
   useEffect(() => {
