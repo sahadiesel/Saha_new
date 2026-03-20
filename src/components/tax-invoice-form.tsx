@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
@@ -399,7 +400,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
   };
 
-  const isFormLoading = isLoadingCustomers || isLoadingStore || isLoadingJob || isLoadingDocToEdit;
+  const isFormLoading = isLoadingCustomers || isLoadingStore || isLoadingJob || (effectiveEditDocId && isLoadingDocToEdit);
 
   if (isFormLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
 
