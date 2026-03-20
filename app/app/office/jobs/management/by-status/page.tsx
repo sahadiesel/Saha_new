@@ -13,6 +13,16 @@ import { cn } from "@/lib/utils";
 
 type TabValue = "quotation" | "waiting-approve" | "pending-parts" | "in-repair" | "done" | "pickup" | "waiting-payment";
 
+const tabLabels: Record<TabValue, string> = {
+    "quotation": "รอเสนอราคา",
+    "waiting-approve": "รอลูกค้าอนุมัติ",
+    "pending-parts": "รอจัดอะไหล่",
+    "in-repair": "กำลังดำเนินการซ่อม",
+    "done": "รอทำบิล",
+    "pickup": "รอลูกค้ารับสินค้า",
+    "waiting-payment": "รอรับเงิน"
+};
+
 function ByStatusContent() {
   const { profile, loading: authLoading } = useAuth();
   const searchParams = useSearchParams();
@@ -35,10 +45,13 @@ function ByStatusContent() {
     // Department-based restrictions
     switch (userDept) {
       case 'OFFICE':
-        return ["quotation", "waiting-approve", "in-repair", "done", "pickup", "waiting-payment"];
+        // REMOVED "waiting-payment" for OFFICE as requested. 
+        // Only see up to pickup.
+        return ["quotation", "waiting-approve", "in-repair", "done", "pickup"];
       case 'PURCHASING':
         return ["pending-parts"];
       case 'ACCOUNTING_HR':
+        // Accounting sees the financial-related steps
         return ["done", "pickup", "waiting-payment"];
       default:
         return [];
@@ -47,7 +60,7 @@ function ByStatusContent() {
 
   const activeTab = (searchParams.get("status") as TabValue) || allowedTabs[0] || "quotation";
 
-  // Security Redirect
+  // Security Redirect: If user is on a tab they are not allowed to see, redirect them.
   useEffect(() => {
     if (!authLoading && allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
       const params = new URLSearchParams(searchParams.toString());
@@ -68,8 +81,6 @@ function ByStatusContent() {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
-  const isTabDisabled = (value: TabValue) => !allowedTabs.includes(value);
-
   return (
     <div className="space-y-6">
       <PageHeader title="จัดการงานซ่อม - ตามสถานะ" description="แสดงงานทั้งหมดที่ยังไม่ปิด แยกตามสถานะปัจจุบัน">
@@ -86,130 +97,70 @@ function ByStatusContent() {
       
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-1 h-auto">
-            <TabsTrigger 
-              value="quotation" 
-              disabled={isTabDisabled("quotation")}
-              className={cn("text-[10px] sm:text-xs", isTabDisabled("quotation") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอเสนอราคา
-            </TabsTrigger>
-            <TabsTrigger 
-              value="waiting-approve" 
-              disabled={isTabDisabled("waiting-approve")}
-              className={cn("text-[10px] sm:text-xs", isTabDisabled("waiting-approve") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอลูกค้าอนุมัติ
-            </TabsTrigger>
-            <TabsTrigger 
-              value="pending-parts" 
-              disabled={isTabDisabled("pending-parts")}
-              className={cn("text-[10px] sm:text-xs", isTabDisabled("pending-parts") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอจัดอะไหล่
-            </TabsTrigger>
-            <TabsTrigger 
-              value="in-repair" 
-              disabled={isTabDisabled("in-repair")}
-              className={cn("text-[10px] sm:text-xs font-bold text-primary", isTabDisabled("in-repair") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              กำลังดำเนินการซ่อม
-            </TabsTrigger>
-            <TabsTrigger 
-              value="done" 
-              disabled={isTabDisabled("done")}
-              className={cn("text-[10px] sm:text-xs", isTabDisabled("done") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอทำบิล
-            </TabsTrigger>
-            <TabsTrigger 
-              value="pickup" 
-              disabled={isTabDisabled("pickup")}
-              className={cn("text-[10px] sm:text-xs", isTabDisabled("pickup") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอลูกค้ารับสินค้า
-            </TabsTrigger>
-            <TabsTrigger 
-              value="waiting-payment" 
-              disabled={isTabDisabled("waiting-payment")}
-              className={cn("text-[10px] sm:text-xs font-bold text-blue-600", isTabDisabled("waiting-payment") && "opacity-40 grayscale cursor-not-allowed pointer-events-none")}
-            >
-              รอรับเงิน
-            </TabsTrigger>
+          <TabsList 
+            className={cn(
+                "grid w-full gap-1 h-auto bg-muted/50 p-1",
+                allowedTabs.length === 7 ? "grid-cols-2 sm:grid-cols-4 md:grid-cols-7" : 
+                allowedTabs.length === 6 ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-6" :
+                allowedTabs.length === 5 ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-5" :
+                "grid-cols-2 sm:grid-cols-4"
+            )}
+          >
+            {allowedTabs.map(tab => (
+                <TabsTrigger 
+                    key={tab}
+                    value={tab} 
+                    className={cn(
+                        "text-xs sm:text-sm transition-all h-10 px-2",
+                        // Active state styling: Larger font, black weight
+                        "data-[state=active]:text-sm sm:data-[state=active]:text-base data-[state=active]:font-black data-[state=active]:shadow-sm data-[state=active]:bg-background",
+                        tab === "in-repair" && "text-primary",
+                        tab === "waiting-payment" && "text-blue-600"
+                    )}
+                >
+                    {tabLabels[tab]}
+                </TabsTrigger>
+            ))}
           </TabsList>
         </div>
         <Card>
             <CardContent className="p-0">
-                <TabsContent value="quotation" className="mt-0">
-                    {activeTab === 'quotation' && allowedTabs.includes('quotation') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status='WAITING_QUOTATION'
-                            emptyTitle="ไม่มีงานที่รอเสนอราคา"
-                            emptyDescription="ไม่มีงานที่อยู่ในสถานะ WAITING_QUOTATION ในขณะนี้"
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="waiting-approve" className="mt-0">
-                    {activeTab === 'waiting-approve' && allowedTabs.includes('waiting-approve') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status={["PENDING_CUSTOMER_INFORM", "WAITING_APPROVE"]}
-                            emptyTitle="ไม่มีงานที่รอลูกค้าอนุมัติ"
-                            emptyDescription="ไม่มีงานที่อยู่ในสถานะ 'รอแจ้งลูกค้า' หรือ 'รอลูกค้าอนุมัติ' ในขณะนี้"
-                        />
-                    )}
-                </TabsContent>
-                 <TabsContent value="pending-parts" className="mt-0">
-                    {activeTab === 'pending-parts' && allowedTabs.includes('pending-parts') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status="PENDING_PARTS"
-                            emptyTitle="ไม่มีงานที่รอจัดอะไหล่"
-                            emptyDescription="ไม่มีงานที่อยู่ในสถานะ PENDING_PARTS ในขณะนี้"
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="in-repair" className="mt-0">
-                    {activeTab === 'in-repair' && allowedTabs.includes('in-repair') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status="IN_REPAIR_PROCESS"
-                            emptyTitle="ไม่มีงานที่กำลังซ่อม"
-                            emptyDescription="ยังไม่มีงานที่อยู่ในสถานะ 'กำลังดำเนินการซ่อม' ในขณะนี้"
-                        />
-                    )}
-                </TabsContent>
-                 <TabsContent value="done" className="mt-0">
-                    {activeTab === 'done' && allowedTabs.includes('done') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status="DONE"
-                            emptyTitle="ไม่มีงานที่เสร็จแล้ว"
-                            emptyDescription="ยังไม่มีงานที่อยู่ในสถานะ 'DONE' รอทำบิล"
-                        />
-                    )}
-                </TabsContent>
-                 <TabsContent value="pickup" className="mt-0">
-                    {activeTab === 'pickup' && allowedTabs.includes('pickup') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status="WAITING_CUSTOMER_PICKUP"
-                            emptyTitle="ไม่มีงานที่รอลูกค้ารับของ"
-                            emptyDescription="ไม่มีงานที่อยู่ในสถานะ WAITING_CUSTOMER_PICKUP"
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="waiting-payment" className="mt-0">
-                    {activeTab === 'waiting-payment' && allowedTabs.includes('waiting-payment') && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            status="PICKED_UP"
-                            emptyTitle="ไม่มีงานที่รอรับเงิน"
-                            emptyDescription="ยังไม่มีงานที่ลูกค้าได้รับของไปแล้วและอยู่ระหว่างรอรับเงินจริงค่ะ"
-                        />
-                    )}
-                </TabsContent>
+                {allowedTabs.map(tab => (
+                    <TabsContent key={tab} value={tab} className="mt-0">
+                        {activeTab === tab && (
+                            <JobList 
+                                searchTerm={searchTerm}
+                                status={
+                                    tab === "waiting-approve" ? ["PENDING_CUSTOMER_INFORM", "WAITING_APPROVE"] :
+                                    tab === "quotation" ? "WAITING_QUOTATION" :
+                                    tab === "pending-parts" ? "PENDING_PARTS" :
+                                    tab === "in-repair" ? "IN_REPAIR_PROCESS" :
+                                    tab === "done" ? "DONE" :
+                                    tab === "pickup" ? "WAITING_CUSTOMER_PICKUP" :
+                                    "PICKED_UP" // waiting-payment
+                                }
+                                emptyTitle={
+                                    tab === "quotation" ? "ไม่มีงานที่รอเสนอราคา" :
+                                    tab === "waiting-approve" ? "ไม่มีงานที่รอลูกค้าอนุมัติ" :
+                                    tab === "pending-parts" ? "ไม่มีงานที่รอจัดอะไหล่" :
+                                    tab === "in-repair" ? "ไม่มีงานที่กำลังซ่อม" :
+                                    tab === "done" ? "ไม่มีงานที่เสร็จแล้ว" :
+                                    tab === "pickup" ? "ไม่มีงานที่รอลูกค้ารับของ" :
+                                    "ไม่มีงานที่รอรับเงิน"
+                                }
+                                emptyDescription={
+                                    tab === "quotation" ? "ไม่มีงานที่อยู่ในสถานะ WAITING_QUOTATION ในขณะนี้" :
+                                    tab === "waiting-approve" ? "ไม่มีงานที่อยู่ในสถานะ 'รอแจ้งลูกค้า' หรือ 'รอลูกค้าอนุมัติ' ในขณะนี้" :
+                                    tab === "pending-parts" ? "ไม่มีงานที่อยู่ในสถานะ PENDING_PARTS ในขณะนี้" :
+                                    tab === "in-repair" ? "ยังไม่มีงานที่อยู่ในสถานะ 'กำลังดำเนินการซ่อม' ในขณะนี้" :
+                                    tab === "done" ? "ยังไม่มีงานที่อยู่ในสถานะ 'DONE' รอทำบิล" :
+                                    tab === "pickup" ? "ไม่มีงานที่อยู่ในสถานะ WAITING_CUSTOMER_PICKUP" :
+                                    "ยังไม่มีงานที่ลูกค้าได้รับของไปแล้วและอยู่ระหว่างรอรับเงินจริงค่ะ"
+                                }
+                            />
+                        )}
+                    </TabsContent>
+                ))}
             </CardContent>
         </Card>
       </Tabs>
