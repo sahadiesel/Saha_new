@@ -45,13 +45,11 @@ function ByStatusContent() {
     // Department-based restrictions
     switch (userDept) {
       case 'OFFICE':
-        // REMOVED "waiting-payment" for OFFICE as requested. 
-        // Only see up to pickup.
+        // Hide "waiting-payment" for office department
         return ["quotation", "waiting-approve", "in-repair", "done", "pickup"];
       case 'PURCHASING':
         return ["pending-parts"];
       case 'ACCOUNTING_HR':
-        // Accounting sees the financial-related steps
         return ["done", "pickup", "waiting-payment"];
       default:
         return [];
@@ -60,7 +58,6 @@ function ByStatusContent() {
 
   const activeTab = (searchParams.get("status") as TabValue) || allowedTabs[0] || "quotation";
 
-  // Security Redirect: If user is on a tab they are not allowed to see, redirect them.
   useEffect(() => {
     if (!authLoading && allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
       const params = new URLSearchParams(searchParams.toString());
@@ -112,8 +109,7 @@ function ByStatusContent() {
                     value={tab} 
                     className={cn(
                         "text-xs sm:text-sm transition-all h-10 px-2",
-                        // Active state styling: Larger font, black weight
-                        "data-[state=active]:text-sm sm:data-[state=active]:text-base data-[state=active]:font-black data-[state=active]:shadow-sm data-[state=active]:bg-background",
+                        "data-[state=active]:text-base sm:data-[state=active]:text-lg data-[state=active]:font-black data-[state=active]:shadow-md data-[state=active]:bg-background",
                         tab === "in-repair" && "text-primary",
                         tab === "waiting-payment" && "text-blue-600"
                     )}
@@ -137,7 +133,7 @@ function ByStatusContent() {
                                     tab === "in-repair" ? "IN_REPAIR_PROCESS" :
                                     tab === "done" ? "DONE" :
                                     tab === "pickup" ? "WAITING_CUSTOMER_PICKUP" :
-                                    "PICKED_UP" // waiting-payment
+                                    "PICKED_UP"
                                 }
                                 emptyTitle={
                                     tab === "quotation" ? "ไม่มีงานที่รอเสนอราคา" :

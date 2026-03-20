@@ -82,7 +82,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
-import { FirestorePermissionError } from '@/firebase/errors';
+import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
@@ -144,7 +144,6 @@ export function JobList({
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>("");
 
-  // Payment Confirmation States
   const [paymentConfirmJob, setPaymentConfirmJob] = useState<Job | null>(null);
   const [paymentConfirmDoc, setPaymentConfirmDoc] = useState<DocumentType | null>(null);
   const [isFetchingDoc, setIsFetchingDoc] = useState(false);
@@ -196,9 +195,10 @@ export function JobList({
     if (assigneeUid) filters.push(where('assigneeUid', '==', assigneeUid));
     if (statusConfig.inStatus.length > 0) filters.push(where('status', 'in', statusConfig.inStatus));
     
+    // FIX: Wrap filters in and() if using composite (or) filters alongside other constraints
     const q = query(
       collection(db, "jobs"), 
-      ...filters,
+      and(...filters),
       orderBy('lastActivityAt', 'desc'),
       limit(200)
     );
@@ -206,6 +206,7 @@ export function JobList({
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
+      // Filter out jobs that have a sales doc under review in the pickup view
       const isPickupView = status === 'WAITING_CUSTOMER_PICKUP' || (Array.isArray(status) && status.includes('WAITING_CUSTOMER_PICKUP'));
       if (isPickupView) {
           jobsData = jobsData.filter(j => !['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(j.salesDocStatus || ""));

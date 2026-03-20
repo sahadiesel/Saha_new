@@ -110,9 +110,10 @@ export function JobTableList({
         filters.push(where('status', 'in', filterConfig.inStatus));
       }
       
+      // FIX: Use and() to wrap multiple filters if composite filters (or) are present
       const q = query(
         collection(db, collectionName), 
-        ...filters,
+        and(...filters),
         orderBy(orderByField, orderByDirection),
         limit(500)
       );

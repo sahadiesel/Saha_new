@@ -327,7 +327,7 @@ export default function PartsInventoryPage() {
     setIsSubmitting(true);
 
     try {
-      // ตรวจสอบรหัสซ้ำหากมีการเปลี่ยนรหัส
+      // Check for duplicate code if changed
       if (!editingPart || values.code !== editingPart.code) {
         const q = query(collection(db, "parts"), where("code", "==", values.code.trim()));
         const snap = await getDocs(q);
@@ -369,7 +369,7 @@ export default function PartsInventoryPage() {
 
       if (editingPart) {
         const partRef = doc(db, "parts", editingPart.id);
-        delete partData.stockQty; // ห้ามแก้ stockQty ผ่านหน้าแก้ไขหลัก (ต้องใช้ปรับปรุงยอด)
+        delete partData.stockQty; // Cannot edit qty directly in edit mode
         await updateDoc(partRef, sanitizeForFirestore(partData));
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         setIsDialogOpen(false);
@@ -824,7 +824,7 @@ export default function PartsInventoryPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isScannerOpen} onOpenChange={(open) => !open && stopScanner()}>
+      <Dialog open={isScannerOpen} onOpenChange={(o) => !o && stopScanner()}>
         <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-black">
           <div className="relative aspect-square">
             <video ref={videoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
