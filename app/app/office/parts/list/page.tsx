@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle, MoreHorizontal, Eye, RefreshCw, TrendingUp, TrendingDown, Filter, ChevronsUpDown } from "lucide-react";
+import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle, MoreHorizontal, Eye, RefreshCw, TrendingUp, TrendingDown, Filter, ChevronsUpDown, QrCode, Barcode } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -36,6 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Image from "next/image";
 import type { Part, PartCategory, PartLocation, StockActivity } from "@/lib/types";
 import type { WithId } from "@/firebase";
@@ -144,6 +145,8 @@ export default function PartsInventoryPage() {
 
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  
+  const [codeType, setCodeType] = useState<"BARCODE" | "QRCODE">("BARCODE");
   
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -324,6 +327,18 @@ export default function PartsInventoryPage() {
     setIsSubmitting(true);
 
     try {
+      // ตรวจสอบรหัสซ้ำหากมีการเปลี่ยนรหัส
+      if (!editingPart || values.code !== editingPart.code) {
+        const q = query(collection(db, "parts"), where("code", "==", values.code.trim()));
+        const snap = await getDocs(q);
+        const duplicate = snap.docs.find(d => d.id !== editingPart?.id);
+        if (duplicate) {
+          toast({ variant: "destructive", title: "รหัสสินค้าซ้ำ", description: `รหัส ${values.code} ถูกใช้ไปแล้วในระบบโดย: ${duplicate.data().name}` });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       let finalImageUrl = "";
       if (photo) {
         const photoRef = ref(storage, `parts/${Date.now()}-${photo.name}`);
@@ -336,13 +351,14 @@ export default function PartsInventoryPage() {
       const category = categories.find(c => c.id === values.categoryId);
       const partData: any = {
         name: values.name,
+        code: values.code.trim(),
         categoryId: values.categoryId,
         categoryNameSnapshot: category?.name || "",
         sellingPrice: values.sellingPrice,
         costPrice: values.costPrice,
-        stockQty: values.stockQty, // Only used for new
+        stockQty: values.stockQty,
         minStock: values.minStock,
-        isOrderRequired: values.minStock === 0 ? values.isOrderRequired : true, // Always required if minStock > 0
+        isOrderRequired: values.minStock === 0 ? values.isOrderRequired : true,
         location: values.location || "",
         details: values.details || "",
         imageUrl: finalImageUrl,
@@ -353,12 +369,12 @@ export default function PartsInventoryPage() {
 
       if (editingPart) {
         const partRef = doc(db, "parts", editingPart.id);
-        delete partData.stockQty;
+        delete partData.stockQty; // ห้ามแก้ stockQty ผ่านหน้าแก้ไขหลัก (ต้องใช้ปรับปรุงยอด)
         await updateDoc(partRef, sanitizeForFirestore(partData));
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         setIsDialogOpen(false);
       } else {
-        const finalData = { ...sanitizeForFirestore(partData), code: values.code, createdAt: serverTimestamp() };
+        const finalData = { ...sanitizeForFirestore(partData), createdAt: serverTimestamp() };
         await addDoc(collection(db, "parts"), finalData);
         toast({ title: "เพิ่มอะไหล่ใหม่สำเร็จ" });
         setIsDialogOpen(false);
@@ -550,10 +566,10 @@ export default function PartsInventoryPage() {
       </Card>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto p-0 flex flex-col">
-          <DialogHeader className="p-6 pb-2"><DialogTitle>{isEditingMode ? "รายละเอียดและแก้ไขอะไหล่" : "เพิ่มอะไหล่ใหม่เข้าระบบ"}</DialogTitle></DialogHeader>
+        <DialogContent className="sm:max-w-[700px] max-h-[95vh] overflow-y-auto p-0 flex flex-col">
+          <DialogHeader className="p-6 pb-2 shrink-0"><DialogTitle>{isEditingMode ? "รายละเอียดและแก้ไขอะไหล่" : "เพิ่มอะไหล่ใหม่เข้าระบบ"}</DialogTitle></DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(data => onSubmit(data))} className="space-y-6 p-6">
+            <form onSubmit={form.handleSubmit(data => onSubmit(data))} className="space-y-6 p-6 pt-2">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <div className="md:col-span-2 space-y-4">
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
@@ -567,16 +583,39 @@ export default function PartsInventoryPage() {
                     <input type="file" ref={cameraInputRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
                     <input type="file" ref={galleryInputRef} className="hidden" accept="image/*" onChange={handlePhotoChange} />
                   </div>
+                  
                   <FormField name="code" control={form.control} render={({ field }) => (
                     <FormItem>
-                      <FormLabel>รหัสสินค้า / Barcode <span className="text-destructive">*</span></FormLabel>
+                      <FormLabel>รหัสสินค้า / Barcode / QR <span className="text-destructive">*</span></FormLabel>
                       <div className="flex gap-2">
-                        <FormControl><Input placeholder="รหัสสินค้า..." {...field} disabled={isSubmitting || isEditingMode} className={cn(isEditingMode && "bg-muted font-mono")} /></FormControl>
-                        {!isEditingMode && <Button type="button" variant="secondary" size="icon" onClick={startScanner} disabled={isSubmitting}><ScanBarcode className="h-5 w-5" /></Button>}
+                        <FormControl><Input placeholder="รหัสสินค้า..." {...field} disabled={isSubmitting} className="font-mono" /></FormControl>
+                        <Button type="button" variant="secondary" size="icon" onClick={() => startScanner()} disabled={isSubmitting}><ScanBarcode className="h-5 w-5" /></Button>
                       </div>
-                      {(watchedCode || editingPart?.code) && (
-                        <div className="mt-2 flex flex-col items-center p-2 border rounded-lg bg-white shadow-sm overflow-hidden h-14">
-                          <img src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode || editingPart?.code || '')}&scale=4&rotate=N&includetext&barheight=10&textsize=7`} alt="Barcode" className="w-full h-14 block" />
+                      
+                      {(watchedCode) && (
+                        <div className="mt-4 space-y-3 p-4 border rounded-xl bg-white shadow-sm">
+                          <Tabs value={codeType} onValueChange={(v: any) => setCodeType(v)} className="w-full">
+                            <TabsList className="grid grid-cols-2 h-8 w-full">
+                              <TabsTrigger value="BARCODE" className="text-[10px] gap-1"><Barcode className="h-3 w-3" /> Barcode</TabsTrigger>
+                              <TabsTrigger value="QRCODE" className="text-[10px] gap-1"><QrCode className="h-3 w-3" /> QR Code</TabsTrigger>
+                            </TabsList>
+                          </Tabs>
+                          
+                          <div className="flex items-center justify-center min-h-[80px] bg-white p-2">
+                            {codeType === "BARCODE" ? (
+                              <img 
+                                src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(watchedCode)}&scale=4&rotate=N&includetext&barheight=10&textsize=7`} 
+                                alt="Barcode" 
+                                className="max-w-full h-auto object-contain" 
+                              />
+                            ) : (
+                              <img 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(watchedCode)}`} 
+                                alt="QR Code" 
+                                className="w-32 h-32 object-contain" 
+                              />
+                            )}
+                          </div>
                         </div>
                       )}
                       <FormMessage />
@@ -607,7 +646,7 @@ export default function PartsInventoryPage() {
                     <FormField name="stockQty" control={form.control} render={({ field }) => (
                       <FormItem>
                         <FormLabel>{isEditingMode ? "สต็อกปัจจุบัน" : "สต็อกเริ่มต้น"}</FormLabel>
-                        <FormControl><Input type="number" {...field} disabled={isSubmitting || isEditingMode} className={cn(isEditingMode && "bg-muted")} /></FormControl>
+                        <FormControl><Input type="number" {...field} disabled={isSubmitting || isEditingMode} className={cn(isEditingMode && "bg-muted font-bold")} /></FormControl>
                         {isEditingMode && <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] w-full mt-1 border-dashed" onClick={() => setIsAdjustingStock(true)}><RefreshCw className="mr-1 h-3 w-3" /> ปรับปรุงยอด</Button>}
                       </FormItem>
                     )} />
@@ -733,7 +772,7 @@ export default function PartsInventoryPage() {
                     <FormItem>
                       <FormLabel>รายละเอียดเพิ่มเติม</FormLabel>
                       <FormControl>
-                        <Input placeholder="ระบุข้อมูลแจ้งไว้..." {...field} disabled={isSubmitting} className="h-10 text-sm" />
+                        <Textarea placeholder="ระบุข้อมูลแจ้งไว้..." {...field} disabled={isSubmitting} className="h-20 text-sm" />
                       </FormControl>
                     </FormItem>
                   )} />
