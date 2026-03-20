@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { 
   collection, 
   query, 
@@ -85,6 +86,7 @@ import { FirestorePermissionError } from '@/firebase/errors';
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
+import type { Job, JobStatus, JobDepartment, Document as DocumentType, AccountingAccount, UserProfile } from "@/lib/types";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -194,8 +196,6 @@ export function JobList({
     if (assigneeUid) filters.push(where('assigneeUid', '==', assigneeUid));
     if (statusConfig.inStatus.length > 0) filters.push(where('status', 'in', statusConfig.inStatus));
     
-    // Construct the query
-    // Multiple top-level constraints are implicitly AND-ed.
     const q = query(
       collection(db, "jobs"), 
       ...filters,
@@ -233,7 +233,7 @@ export function JobList({
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm]); // Use statusConfig.key instead of status array object
+  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status]);
 
   useEffect(() => {
     if (!db || !canSeeAccounts) return;
@@ -525,7 +525,6 @@ export function JobList({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Payment Condition Dialog (Customer Pickup) */}
       <Dialog open={!!paymentConfirmJob} onOpenChange={(o) => !o && !isProcessing && setPaymentConfirmJob(null)}>
         <DialogContent className="sm:max-w-xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
           <DialogHeader className="p-6 pb-0">
@@ -584,7 +583,7 @@ export function JobList({
               </div>
           </div>
           
-          <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+          <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
