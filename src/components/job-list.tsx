@@ -16,6 +16,7 @@ import {
   getDocs,
   getDoc,
   or,
+  and,
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
@@ -183,21 +184,28 @@ export function JobList({
     if (!db) return;
     setLoading(true);
     setError(null);
-    const qConstraints: QueryConstraint[] = [];
+    
+    const filters: QueryConstraint[] = [];
+    const modifiers: QueryConstraint[] = [];
     
     if (department) {
-      qConstraints.push(or(
+      filters.push(or(
         where('department', '==', department),
         where('mainDepartment', '==', department)
       ));
     }
     
-    if (assigneeUid) qConstraints.push(where('assigneeUid', '==', assigneeUid));
-    if (statusConfig.inStatus.length > 0) qConstraints.push(where('status', 'in', statusConfig.inStatus));
-    qConstraints.push(orderBy('lastActivityAt', 'desc'));
-    qConstraints.push(limit(200));
+    if (assigneeUid) filters.push(where('assigneeUid', '==', assigneeUid));
+    if (statusConfig.inStatus.length > 0) filters.push(where('status', 'in', statusConfig.inStatus));
+    
+    modifiers.push(orderBy('lastActivityAt', 'desc'));
+    modifiers.push(limit(200));
 
-    const q = query(collection(db, "jobs"), ...qConstraints);
+    // When using multiple filters including a logical filter like or(),
+    // we must wrap all filters in an and() statement.
+    const finalConstraints = filters.length > 1 ? [and(...filters), ...modifiers] : [...filters, ...modifiers];
+
+    const q = query(collection(db, "jobs"), ...finalConstraints);
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
@@ -363,7 +371,7 @@ export function JobList({
 
         const finalPayments = validPayments.map(p => {
             const acc = accounts.find(a => a.id === p.accountId);
-            return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
+            return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
         });
 
         batch.update(docRef, sanitizeForFirestore({
@@ -579,7 +587,7 @@ export function JobList({
               </div>
           </div>
           
-          <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+          <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

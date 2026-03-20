@@ -10,6 +10,7 @@ import {
   orderBy, 
   limit, 
   or,
+  and,
   type OrderByDirection, 
   type QueryConstraint, 
   type FirestoreError 
@@ -96,23 +97,27 @@ export function JobTableList({
 
     try {
       const collectionName = source === 'archive' ? `jobsArchive_${year}` : 'jobs';
-      const qConstraints: QueryConstraint[] = [];
+      const filters: QueryConstraint[] = [];
+      const modifiers: QueryConstraint[] = [];
       
-      // Updated Logic: If department filter is active, show jobs where it's EITHER the main department OR the current one.
       if (department) {
-        qConstraints.push(or(
+        filters.push(or(
           where('department', '==', department),
           where('mainDepartment', '==', department)
         ));
       }
 
       if (filterConfig.inStatus.length > 0) {
-        qConstraints.push(where('status', 'in', filterConfig.inStatus));
+        filters.push(where('status', 'in', filterConfig.inStatus));
       }
-      qConstraints.push(orderBy(orderByField, orderByDirection));
-      qConstraints.push(limit(500)); 
+      
+      modifiers.push(orderBy(orderByField, orderByDirection));
+      modifiers.push(limit(500)); 
 
-      const q = query(collection(db, collectionName), ...qConstraints);
+      // If we have multiple filters, one of which is or(), wrap them in and()
+      const finalConstraints = filters.length > 1 ? [and(...filters), ...modifiers] : [...filters, ...modifiers];
+
+      const q = query(collection(db, collectionName), ...finalConstraints);
       const snapshot = await getDocs(q);
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
