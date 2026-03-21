@@ -443,7 +443,7 @@ export default function IntakePage() {
                         <Button type="button" variant="outline" className="h-24 flex-col gap-2 border-2 border-dashed border-primary/20 hover:border-primary hover:bg-primary/5" disabled={photos.length >= DATA_LIMITS.MAX_INTAKE_PHOTOS || isSubmitting || isCompressing} onClick={() => galleryInputRef.current?.click()}>
                             <ImageIcon className="h-8 w-8 text-primary" />
                             <span className="text-xs font-bold uppercase tracking-wider">อัลบั้ม</span>
-                            <input type="file" ref={galleryInputRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
+                            <input type="file" galleryInputRef={galleryInputRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
                         </Button>
                     </div>
 
