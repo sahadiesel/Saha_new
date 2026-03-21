@@ -26,7 +26,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog";
-import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt } from "lucide-react";
+import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt, Settings2, Sparkles, RefreshCw } from "lucide-react";
 import { jobStatusLabel, deptLabel, docTypeLabel, docStatusLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
 import type { Job, Document as DocumentType, DocType } from "@/lib/types";
@@ -55,13 +55,6 @@ export default function AdminUsersPage() {
   const [foundDocs, setFoundDocs] = useState<DocumentType[]>([]);
   const [isSearchingDocs, setIsSearchingDocs] = useState(false);
   const [targetDoc, setTargetDoc] = useState<DocumentType | null>(null);
-
-  // Link Doc States
-  const [linkSearchTerm, setLinkSearchTerm] = useState("");
-  const [linkSearchType, setLinkSearchType] = useState<string>("DELIVERY_NOTE");
-  const [docSearchResults, setDocSearchResults] = useState<DocumentType[]>([]);
-  const [isSearchingDoc, setIsSearchingDoc] = useState(false);
-  const [foundDoc, setFoundDoc] = useState<DocumentType | null>(null);
 
   // Migration & Cleanup States
   const [isMigrating, setIsMigrating] = useState(false);
@@ -222,10 +215,13 @@ export default function AdminUsersPage() {
     }
   };
 
+  // --- Database Maintenance Functions ---
+
   const fetchUnusedTokenCount = useCallback(async () => {
     if (!db || !isUserAdmin) return;
     setIsLoadingCount(true);
     try {
+      // Find tokens that are still active (not yet cleared by scan)
       const q = query(collection(db, "kioskTokens"), where("isActive", "==", true));
       const snap = await getCountFromServer(q);
       setUnusedTokenCount(snap.data().count);
@@ -236,14 +232,50 @@ export default function AdminUsersPage() {
     if (isUserAdmin) fetchUnusedTokenCount();
   }, [isUserAdmin, fetchUnusedTokenCount]);
 
+  const handleCleanupTokens = async () => {
+    if (!db || !isUserAdmin) return;
+    setIsCleaningUp(true);
+    try {
+      const q = query(collection(db, "kioskTokens"), limit(500));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      toast({ title: "ล้าง Token สำเร็จ", description: `ลบไปทั้งหมด ${snap.size} รายการ` });
+      fetchUnusedTokenCount();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ล้มเหลว", description: e.message });
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  const handleRunMigration = async () => {
+    if (!firebaseApp || !isUserAdmin) return;
+    setIsMigrating(true);
+    setMigrationResult(null);
+    try {
+      const functions = getFunctions(firebaseApp, 'us-central1');
+      const migrateFn = httpsCallable(functions, 'migrateClosedJobsToArchive2026');
+      const result = await migrateFn({ limit: 40 });
+      setMigrationResult(result.data);
+      toast({ title: "ดำเนินการ Migration สำเร็จ" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Migration ล้มเหลว", description: e.message });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-20">
       <PageHeader title="การดูแลรักษาระบบ" description="เครื่องมือสำหรับ Admin เพื่อจัดการข้อมูลและแก้ไขปัญหาเคสพิเศษ" />
       
       <Tabs defaultValue="jobs" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 max-w-md">
+        <TabsList className="grid w-full grid-cols-3 max-w-xl">
           <TabsTrigger value="jobs">แก้ไขงานซ่อม</TabsTrigger>
           <TabsTrigger value="docs">แก้ไขเอกสาร/บัญชี</TabsTrigger>
+          <TabsTrigger value="maintenance">จัดการระบบ</TabsTrigger>
         </TabsList>
 
         <TabsContent value="jobs" className="mt-6 space-y-6">
@@ -345,6 +377,79 @@ export default function AdminUsersPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="maintenance" className="mt-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Migration Tool */}
+            <Card className="border-purple-200">
+              <CardHeader>
+                <div className="flex items-center gap-2 text-purple-700">
+                  <Database className="h-5 w-5" />
+                  <CardTitle className="text-lg">Migration: เก็บงานซ่อมลงประวัติ</CardTitle>
+                </div>
+                <CardDescription>ย้ายงานที่มีสถานะ CLOSED ออกจากฐานข้อมูลหลักไปยังคลังประวัติ 2026</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert variant="secondary" className="bg-purple-50 border-purple-100 text-purple-800">
+                  <Info className="h-4 w-4 text-purple-600" />
+                  <AlertTitle className="text-xs font-bold">คำแนะนำ</AlertTitle>
+                  <AlertDescription className="text-xs">ใช้สำหรับงานที่ปิดไปแล้วแต่ยังค้างอยู่ในฐานข้อมูลหลัก เพื่อเพิ่มประสิทธิภาพในการโหลดหน้า JobList ค่ะ</AlertDescription>
+                </Alert>
+                
+                {migrationResult && (
+                  <div className="p-3 bg-muted rounded-md text-xs font-mono space-y-1 border">
+                    <p className="text-green-600 font-bold">✓ ย้ายสำเร็จ: {migrationResult.migrated} รายการ</p>
+                    <p className="text-muted-foreground">→ ข้าม (ซ้ำ): {migrationResult.skipped} รายการ</p>
+                    {migrationResult.errors?.length > 0 && (
+                      <p className="text-destructive font-bold">! ผิดพลาด: {migrationResult.errors.length} รายการ</p>
+                    )}
+                  </div>
+                )}
+
+                <Button 
+                  onClick={handleRunMigration} 
+                  disabled={isMigrating} 
+                  className="w-full bg-purple-600 hover:bg-purple-700 font-bold"
+                >
+                  {isMigrating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                  เริ่ม Migration (Max 40 เคส)
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Token Cleanup Tool */}
+            <Card className="border-red-200">
+              <CardHeader>
+                <div className="flex items-center gap-2 text-red-700">
+                  <RefreshCw className="h-5 w-5" />
+                  <CardTitle className="text-lg">ล้าง Token QR ลงเวลา</CardTitle>
+                </div>
+                <CardDescription>ทำความสะอาดข้อมูล QR Code เก่าที่ค้างอยู่ในระบบ</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex justify-between items-center p-4 bg-red-50 rounded-lg border border-red-100">
+                  <div>
+                    <p className="text-xs text-red-600 font-bold uppercase tracking-wider">Token ที่ค้างอยู่</p>
+                    <p className="text-3xl font-black text-red-700">{isLoadingCount ? "..." : (unusedTokenCount ?? 0)}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={fetchUnusedTokenCount} disabled={isLoadingCount}>
+                    <RefreshCw className={cn("h-4 w-4", isLoadingCount && "animate-spin")} />
+                  </Button>
+                </div>
+
+                <Button 
+                  variant="destructive" 
+                  onClick={handleCleanupTokens} 
+                  disabled={isCleaningUp || (unusedTokenCount === 0)}
+                  className="w-full font-bold"
+                >
+                  {isCleaningUp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  ล้าง Token ทั้งหมด
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
 
