@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -58,7 +59,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.createElement("canvas").getContext("2d");
         if (!ctx) {
           resolve(file);
           return;
@@ -183,6 +184,15 @@ export function PurchaseDocForm() {
       suggestedPaymentMethod: "CASH",
     },
   });
+
+  // LOCK LOGIC: Hard lock if not Draft or rejected
+  const isLocked = useMemo(() => {
+    if (!editDocId || !docToEdit) return false;
+    const adminOrManager = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT';
+    if (adminOrManager) return false;
+    
+    return !['DRAFT', 'REJECTED'].includes(docToEdit.status);
+  }, [editDocId, docToEdit, profile]);
 
   useEffect(() => {
     if (!editDocId && !form.getValues("docDate")) {
@@ -436,7 +446,7 @@ export function PurchaseDocForm() {
         
         if (!editDocId) {
             const dateObj = new Date(data.docDate);
-            const year = dateObj.getFullYear() > 2400 ? dateObj.getFullYear() - 543 : dateObj.getFullYear();
+            const year = dateObj.getFullYear();
             const counterRef = doc(db, 'documentCounters', String(year));
             const prefix = (docSettingsSnap.exists() ? (docSettingsSnap.data() as any).purchasePrefix : 'PUR') || 'PUR';
             
@@ -472,13 +482,11 @@ export function PurchaseDocForm() {
 
   return (
     <div className="flex flex-col gap-6">
-      {indexErrorUrl && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>ต้องสร้างดัชนี (Index) ก่อน</AlertTitle>
-          <Button asChild variant="outline" size="sm" className="mt-2 bg-white text-destructive">
-            <a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4"/>สร้าง Index</a>
-          </Button>
+      {isLocked && (
+        <Alert variant="secondary" className="bg-amber-50 border-amber-200">
+          <Info className="h-4 w-4 text-amber-600" />
+          <AlertTitle className="text-amber-800">เอกสารรอดำเนินการตรวจสอบ</AlertTitle>
+          <AlertDescription className="text-amber-700 text-xs">เอกสารนี้ถูกส่งให้ฝ่ายบัญชีแล้ว คุณไม่สามารถแก้ไขได้จนกว่าบัญชีจะตีกลับมาค่ะ</AlertDescription>
         </Alert>
       )}
 
@@ -493,7 +501,7 @@ export function PurchaseDocForm() {
                       type="button" 
                       variant="secondary" 
                       className="flex-1 sm:flex-none"
-                      disabled={isSubmitting || isCompressing} 
+                      disabled={isSubmitting || isCompressing || isLocked} 
                       onClick={form.handleSubmit(data => onSubmit(data, false))}
                   >
                       {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4"/>}
@@ -502,7 +510,7 @@ export function PurchaseDocForm() {
                   <Button 
                       type="button" 
                       className="flex-1 sm:flex-none"
-                      disabled={isSubmitting || isCompressing} 
+                      disabled={isSubmitting || isCompressing || isLocked} 
                       onClick={form.handleSubmit(data => onSubmit(data, true))}
                   >
                       {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
@@ -523,7 +531,7 @@ export function PurchaseDocForm() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <FormItem>
                           <FormLabel>ชนิดร้านค้า</FormLabel>
-                          <Select value={selectedVendorType} onValueChange={handleVendorTypeChange} disabled={isSubmitting}>
+                          <Select value={selectedVendorType} onValueChange={handleVendorTypeChange} disabled={isSubmitting || isLocked}>
                             <FormControl><SelectTrigger><SelectValue placeholder="เลือกชนิดร้านค้า" /></SelectTrigger></FormControl>
                             <SelectContent>{VENDOR_TYPES.map(type => (<SelectItem key={type} value={type}>{vendorTypeLabel(type)}</SelectItem>))}</SelectContent>
                           </Select>
@@ -535,7 +543,7 @@ export function PurchaseDocForm() {
                                 <Popover open={isVendorPopoverOpen} onOpenChange={setIsVendorPopoverOpen}>
                                     <PopoverTrigger asChild>
                                         <FormControl>
-                                          <Button variant="outline" className="w-full justify-between" disabled={isSubmitting}>
+                                          <Button variant="outline" className="w-full justify-between" disabled={isSubmitting || isLocked}>
                                             <span className="truncate">{field.value ? vendors.find(v=>v.id===field.value)?.companyName : "เลือกล้านค้า..."}</span>
                                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
                                           </Button>
@@ -558,12 +566,12 @@ export function PurchaseDocForm() {
                       </div>
                       
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล</FormLabel><FormControl><Input {...field} value={field.value ?? ''} disabled={isSubmitting} /></FormControl><FormMessage/></FormItem>)} />
+                        <FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล</FormLabel><FormControl><Input {...field} value={field.value ?? ''} disabled={isSubmitting || isLocked} /></FormControl><FormMessage/></FormItem>)} />
                         <FormField control={form.control} name="docDate" render={({ field }) => (
                             <FormItem className="flex flex-col">
                               <FormLabel>วันที่ในบิล</FormLabel>
                               <Popover>
-                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
                                 <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
                               </Popover>
                               <FormMessage />
@@ -580,7 +588,7 @@ export function PurchaseDocForm() {
                       <FormField name="paymentMode" render={({ field }) => (
                           <FormItem>
                             <FormLabel>รูปแบบ</FormLabel>
-                            <RadioGroup onValueChange={field.onChange} value={field.value} className="flex gap-4 pt-2" disabled={isSubmitting}>
+                            <RadioGroup onValueChange={field.onChange} value={field.value} className="flex gap-4 pt-2" disabled={isSubmitting || isLocked}>
                               <div className="flex items-center space-x-2"><RadioGroupItem value="CASH" id="p-cash"/><Label htmlFor="p-cash">เงินสด/โอน</Label></div>
                               <div className="flex items-center space-x-2"><RadioGroupItem value="CREDIT" id="p-credit"/><Label htmlFor="p-credit">เครดิต</Label></div>
                             </RadioGroup>
@@ -591,7 +599,7 @@ export function PurchaseDocForm() {
                               <FormItem className="flex flex-col">
                                 <FormLabel>วันครบกำหนด</FormLabel>
                                 <Popover>
-                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
                                   <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
                                 </Popover>
                                 <FormMessage />
@@ -603,7 +611,7 @@ export function PurchaseDocForm() {
                               <FormField name="suggestedPaymentMethod" render={({ field }) => (
                                 <FormItem>
                                   <FormLabel>จ่ายโดย</FormLabel>
-                                  <Select onValueChange={field.onChange} value={field.value}>
+                                  <Select onValueChange={field.onChange} value={field.value} disabled={isLocked}>
                                     <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
                                     <SelectContent>
                                       <SelectItem value="CASH">เงินสด</SelectItem>
@@ -615,7 +623,7 @@ export function PurchaseDocForm() {
                               <FormField name="suggestedAccountId" render={({ field }) => (
                                 <FormItem>
                                   <FormLabel>บัญชีที่จ่าย</FormLabel>
-                                  <Select onValueChange={field.onChange} value={field.value}>
+                                  <Select onValueChange={field.onChange} value={field.value} disabled={isLocked}>
                                     <FormControl><SelectTrigger><SelectValue placeholder="เลือก..."/></SelectTrigger></FormControl>
                                     <SelectContent>
                                       {accounts.map(a=><SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
@@ -632,7 +640,7 @@ export function PurchaseDocForm() {
           <Card>
               <CardHeader className="flex flex-row items-center justify-between py-3">
                 <CardTitle className="text-base">3. รายการสินค้า/อะไหล่</CardTitle>
-                <Button asChild variant="outline" size="sm" className="h-8 border-dashed border-primary text-primary hover:bg-primary/5">
+                <Button asChild variant="outline" size="sm" className="h-8 border-dashed border-primary text-primary hover:bg-primary/5" disabled={isLocked}>
                   <Link href="/app/office/parts/list">
                     <PackagePlus className="mr-2 h-4 w-4" /> สร้างอะไหล่ใหม่
                   </Link>
@@ -656,7 +664,7 @@ export function PurchaseDocForm() {
                                       <TableCell>
                                           <div className="flex gap-2">
                                               <Popover open={activePartSearchIdx === index} onOpenChange={(o)=>setActivePartSearchIdx(o ? index : null)}>
-                                                  <PopoverTrigger asChild><Button variant="outline" size="icon" className="shrink-0" disabled={isSubmitting}><Search className="h-4 w-4"/></Button></PopoverTrigger>
+                                                  <PopoverTrigger asChild><Button variant="outline" size="icon" className="shrink-0" disabled={isSubmitting || isLocked}><Search className="h-4 w-4"/></Button></PopoverTrigger>
                                                   <PopoverContent className="w-80 p-0" align="start">
                                                       <div className="p-2 border-b"><Input placeholder="ค้นหาอะไหล่..." value={partSearch} onChange={e=>setPartSearch(e.target.value)} /></div>
                                                       <ScrollArea className="h-64">
@@ -672,7 +680,7 @@ export function PurchaseDocForm() {
                                                 <Input 
                                                   {...field} 
                                                   value={field.value ?? ''} 
-                                                  disabled={isSubmitting} 
+                                                  disabled={isSubmitting || isLocked} 
                                                   readOnly 
                                                   placeholder="คลิกแว่นขยายเพื่อเลือกอะไหล่..." 
                                                   className="bg-muted/50 cursor-not-allowed text-xs" 
@@ -681,16 +689,16 @@ export function PurchaseDocForm() {
                                           </div>
                                           {form.watch(`items.${index}.code`) && <p className="text-[10px] text-primary font-bold mt-1 px-10">รหัสสต็อก: {form.watch(`items.${index}.code`)}</p>}
                                       </TableCell>
-                                      <TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell>
-                                      <TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell>
+                                      <TableCell><FormField control={form.control} name={`items.${index}.quantity`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting || isLocked} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.unitPrice`)); }} />)}/></TableCell>
+                                      <TableCell><FormField control={form.control} name={`items.${index}.unitPrice`} render={({ field }) => (<Input type="number" step="any" className="text-right" {...field} value={field.value || ''} disabled={isSubmitting || isLocked} onChange={e => { const v = parseFloat(e.target.value) || 0; field.onChange(v); form.setValue(`items.${index}.total`, v * form.getValues(`items.${index}.quantity`)); }} />)}/></TableCell>
                                       <TableCell className="text-right font-medium">{(form.watch(`items.${index}.total`) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                                      <TableCell><Button type="button" variant="ghost" size="icon" disabled={isSubmitting} onClick={()=>remove(index)}><Trash2 className="h-4 w-4 text-destructive"/></Button></TableCell>
+                                      <TableCell><Button type="button" variant="ghost" size="icon" disabled={isSubmitting || isLocked} onClick={()=>remove(index)}><Trash2 className="h-4 w-4 text-destructive"/></Button></TableCell>
                                   </TableRow>
                               ))}
                           </TableBody>
                       </Table>
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isSubmitting || fields.length >= 50} onClick={()=>append({description:'', quantity:1, unitPrice:0, total:0})}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
+                  <Button type="button" variant="outline" size="sm" className="mt-4" disabled={isSubmitting || isLocked || fields.length >= 50} onClick={()=>append({description:'', quantity:1, unitPrice:0, total:0})}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มรายการ</Button>
               </CardContent>
           </Card>
 
@@ -699,7 +707,7 @@ export function PurchaseDocForm() {
                   <CardHeader><CardTitle className="text-base">4. แนบรูปบิล</CardTitle></CardHeader>
                   <CardContent className="space-y-4">
                       <div className="flex items-center gap-4">
-                          <Input type="file" multiple accept="image/*" disabled={isSubmitting || isCompressing} onChange={handlePhotoChange} className="max-w-[300px]" />
+                          <Input type="file" multiple accept="image/*" disabled={isSubmitting || isCompressing || isLocked} onChange={handlePhotoChange} className="max-w-[300px]" />
                           {isCompressing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -714,7 +722,7 @@ export function PurchaseDocForm() {
                         <FormItem>
                           <FormLabel>หมายเหตุ</FormLabel>
                           <FormControl>
-                            <Textarea {...field} value={field.value ?? ''} disabled={isSubmitting} />
+                            <Textarea {...field} value={field.value ?? ''} disabled={isSubmitting || isLocked} />
                           </FormControl>
                         </FormItem>
                       )} />
@@ -722,10 +730,10 @@ export function PurchaseDocForm() {
               </Card>
               <div className="space-y-4 p-6 border rounded-lg bg-muted/30 h-fit">
                   <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">รวมเป็นเงิน</span><span className="font-medium">{(form.watch('subtotal') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-                  <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">ส่วนลด (บาท)</span><FormField name="discountAmount" render={({ field }) => (<Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} value={field.value || ''} disabled={isSubmitting}/>)} /></div>
+                  <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">ส่วนลด (บาท)</span><FormField name="discountAmount" render={({ field }) => (<Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} value={field.value || ''} disabled={isSubmitting || isLocked}/>)} /></div>
                   <div className="flex justify-between items-center py-2"><FormField name="withTax" render={({ field }) => (
                     <div className="flex items-center space-x-2">
-                      <Checkbox checked={field.value} onCheckedChange={field.onChange} disabled={isSubmitting}/>
+                      <Checkbox checked={field.value} onCheckedChange={field.onChange} disabled={isSubmitting || isLocked}/>
                       <Label className="text-sm font-normal cursor-pointer">ภาษีมูลค่าเพิ่ม 7%</Label>
                     </div>
                   )} /><span className="text-sm">{(form.watch('vatAmount') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>

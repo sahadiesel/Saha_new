@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -195,7 +196,6 @@ export function JobList({
     if (assigneeUid) filters.push(where('assigneeUid', '==', assigneeUid));
     if (statusConfig.inStatus.length > 0) filters.push(where('status', 'in', statusConfig.inStatus));
     
-    // FIX: Wrap filters in and() if using composite (or) filters alongside other constraints
     const q = query(
       collection(db, "jobs"), 
       and(...filters),
@@ -206,7 +206,6 @@ export function JobList({
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let jobsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
       
-      // Filter out jobs that have a sales doc under review in the pickup view
       const isPickupView = status === 'WAITING_CUSTOMER_PICKUP' || (Array.isArray(status) && status.includes('WAITING_CUSTOMER_PICKUP'));
       if (isPickupView) {
           jobsData = jobsData.filter(j => !['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(j.salesDocStatus || ""));
@@ -326,6 +325,14 @@ export function JobList({
         const docSnap = await getDoc(doc(db, "documents", job.salesDocId));
         if (docSnap.exists()) {
             const document = { id: docSnap.id, ...docSnap.data() } as DocumentType;
+            
+            // SECURITY: If bill is already being reviewed, prevent this dialog
+            if (['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(document.status)) {
+                toast({ variant: 'destructive', title: 'ไม่สามารถดำเนินการได้', description: 'บิลชุดนี้อยู่ระหว่างตรวจสอบหรือจ่ายเงินแล้ว งานซ่อมควรย้ายหน้าไปที่รอรับเงินค่ะ' });
+                setIsFetchingDoc(false);
+                return;
+            }
+
             setPaymentConfirmJob(job);
             setPaymentConfirmDoc(document);
             setRecordRemainingAsCredit(document.paymentTerms === 'CREDIT');
@@ -453,7 +460,7 @@ export function JobList({
                   {isMgmtOrOffice && job.status === 'PENDING_CUSTOMER_INFORM' && (
                     <Button asChild className="w-full h-9 bg-pink-600 hover:bg-pink-700 text-white font-bold">
                       <Link href={`/app/office/documents/${job.salesDocId}`}>
-                        <Send className="mr-2 h-4 w-4" /> แจ้งเสนอราคาลูกค้า
+                        <Send className="mr-2 h-4 w-4" /> แจ้งราคาลูกค้า
                       </Link>
                     </Button>
                   )}
@@ -481,7 +488,7 @@ export function JobList({
                       {isWaitingPickup ? (
                         <Button 
                           onClick={() => handleOpenPaymentConfirm(job)}
-                          disabled={isProcessing === job.id || isFetchingDoc}
+                          disabled={isProcessing === job.id || isFetchingDoc || ['PENDING_REVIEW', 'APPROVED', 'PAID'].includes(job.salesDocStatus || "")}
                           className="w-full h-9 bg-primary hover:bg-primary/90 text-white font-bold"
                         >
                           {isProcessing === job.id || isFetchingDoc ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <CheckCircle2 className="h-4 w-4 mr-2" />}
@@ -492,7 +499,7 @@ export function JobList({
                           <Link href={`/app/jobs/${job.id}`}>
                             <div className="flex items-center justify-center truncate">
                               <Eye className="mr-2 h-4 w-4 shrink-0" />
-                              <span className="truncate">{job.status === 'PICKED_UP' ? 'รอดำเนินการรับเงิน' : (job.status === 'CLOSED' ? 'ดูรายละเอียด' : `ดูบิล ${job.salesDocNo || ""}`)}</span>
+                              <span className="truncate">{job.status === 'PICKED_UP' ? 'รอรับเงิน' : (job.status === 'CLOSED' ? 'ดูรายละเอียด' : `ดูบิล ${job.salesDocNo || ""}`)}</span>
                             </div>
                           </Link>
                         </Button>
