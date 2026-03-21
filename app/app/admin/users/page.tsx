@@ -25,7 +25,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog";
-import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt, Settings2, Sparkles, RefreshCw, Info } from "lucide-react";
+import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt, Settings2, Sparkles, RefreshCw, Info, ShoppingCart } from "lucide-react";
 import { jobStatusLabel, deptLabel, docTypeLabel, docStatusLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
 import type { Job, Document as DocumentType, DocType } from "@/lib/types";
@@ -51,9 +51,10 @@ export default function AdminUsersPage() {
 
   // Document States
   const [docSearchTerm, setDocSearchTerm] = useState("");
-  const [foundDocs, setFoundDocs] = useState<DocumentType[]>([]);
+  const [searchDocCategory, setSearchDocCategory] = useState<'SALES' | 'PURCHASE'>('SALES');
+  const [foundDocs, setFoundDocs] = useState<any[]>([]);
   const [isSearchingDocs, setIsSearchingDocs] = useState(false);
-  const [targetDoc, setTargetDoc] = useState<DocumentType | null>(null);
+  const [targetDoc, setTargetDoc] = useState<any>(null);
 
   // Migration & Cleanup States
   const [isMigrating, setIsMigrating] = useState(false);
@@ -96,12 +97,21 @@ export default function AdminUsersPage() {
   const handleSearchDocs = async () => {
     if (!db || !docSearchTerm.trim()) return;
     setIsSearchingDocs(true);
+    setFoundDocs([]);
     try {
-      const q = query(collection(db, "documents"), where("docNo", "==", docSearchTerm.trim()));
+      const collectionName = searchDocCategory === 'SALES' ? "documents" : "purchaseDocs";
+      const q = query(collection(db, collectionName), where("docNo", "==", docSearchTerm.trim()));
       const snap = await getDocs(q);
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentType));
+      
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       setFoundDocs(docs);
-      if (docs.length === 0) toast({ title: "ไม่พบเอกสารเลขที่นี้" });
+      
+      if (docs.length === 0) {
+        toast({ 
+          title: "ไม่พบเอกสารเลขที่นี้", 
+          description: "กรุณาตรวจสอบว่าระบุประเภทเอกสารและพิมพ์คำนำหน้า (Prefix) ครบถ้วนหรือไม่ เช่น DN2026-0001" 
+        });
+      }
     } catch (e: any) {
       toast({ variant: 'destructive', title: "Error", description: e.message });
     } finally {
@@ -109,25 +119,41 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleRevertDocToDraft = async (docObj: DocumentType) => {
+  const handleRevertDocToDraft = async (docObj: any) => {
     if (!db || !profile || !isUserAdmin) return;
     setIsSaving(true);
     try {
       const batch = writeBatch(db);
-      const docRef = doc(db, 'documents', docObj.id);
+      
+      // Determine collection based on data structure
+      const isPurchase = searchDocCategory === 'PURCHASE' || (docObj.vendorSnapshot && !docObj.docType);
+      const collectionName = isPurchase ? 'purchaseDocs' : 'documents';
+      const docRef = doc(db, collectionName, docObj.id);
       
       // 1. Revert Document Status
-      batch.update(docRef, {
+      const updatePayload: any = {
         status: 'DRAFT',
-        arStatus: deleteField(),
-        receiptStatus: deleteField(),
-        paymentSummary: deleteField(),
-        accountingEntryId: deleteField(),
-        arObligationId: deleteField(),
-        confirmedPayment: deleteField(),
         updatedAt: serverTimestamp(),
-        notes: (docObj.notes || "") + `\n[Admin Fix] Reverted to Draft by ${profile.displayName} on ${new Date().toLocaleString()}`
-      });
+        notes: (docObj.note || docObj.notes || "") + `\n[Admin Fix] Reverted to Draft by ${profile.displayName} on ${new Date().toLocaleString()}`
+      };
+
+      if (!isPurchase) {
+          // Sales Doc specific removals
+          updatePayload.arStatus = deleteField();
+          updatePayload.receiptStatus = deleteField();
+          updatePayload.paymentSummary = deleteField();
+          updatePayload.accountingEntryId = deleteField();
+          updatePayload.arObligationId = deleteField();
+          updatePayload.confirmedPayment = deleteField();
+      } else {
+          // Purchase Doc specific removals
+          updatePayload.apObligationId = deleteField();
+          updatePayload.accountingEntryId = deleteField();
+          updatePayload.isReceived = false; 
+          updatePayload.reviewRejectReason = deleteField();
+      }
+
+      batch.update(docRef, updatePayload);
 
       // 2. Find and delete associated Obligations (AR/AP)
       const obQuery = query(collection(db, 'accountingObligations'), where('sourceDocId', '==', docObj.id));
@@ -337,30 +363,44 @@ export default function AdminUsersPage() {
                 <FileWarning className="h-5 w-5" />
                 <CardTitle className="text-lg">จัดการความถูกต้องของเอกสาร</CardTitle>
               </div>
-              <CardDescription>ใช้กู้คืนบิลที่มีความผิดพลาดเรื่องยอดเงิน ให้กลับมาเป็นฉบับร่างและลบรายการบัญชีที่ผิดออก</CardDescription>
+              <CardDescription>ใช้กู้คืนบิลที่มีความผิดพลาดเรื่องตัวเลข ให้กลับมาเป็นฉบับร่างและลบรายการบัญชีที่ผิดออก</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex gap-2 max-w-md">
-                <Input 
-                  placeholder="ค้นหาเลขที่บิล (เช่น DN2026-0001)" 
-                  value={docSearchTerm}
-                  onChange={e => setDocSearchTerm(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSearchDocs()}
-                />
-                <Button onClick={handleSearchDocs} disabled={isSearchingDocs}>
-                  {isSearchingDocs ? <Loader2 className="animate-spin h-4 w-4"/> : <Search className="h-4 w-4"/>}
-                </Button>
+              <div className="flex flex-col sm:flex-row gap-2 max-w-2xl">
+                <Select value={searchDocCategory} onValueChange={(v: any) => setSearchDocCategory(v)}>
+                  <SelectTrigger className="w-full sm:w-[220px] h-10 bg-background">
+                    <SelectValue placeholder="ประเภทเอกสาร" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SALES">งานขาย (DN/TI/RE/BN/CN)</SelectItem>
+                    <SelectItem value="PURCHASE">งานซื้อ (PUR/รายการซื้อ)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex-1 flex gap-2">
+                  <Input 
+                    placeholder="พิมพ์เลขที่บิลให้ครบถ้วน (เช่น DN2026-0001)..." 
+                    className="h-10 bg-background"
+                    value={docSearchTerm}
+                    onChange={e => setDocSearchTerm(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSearchDocs()}
+                  />
+                  <Button onClick={handleSearchDocs} disabled={isSearchingDocs} className="h-10">
+                    {isSearchingDocs ? <Loader2 className="animate-spin h-4 w-4"/> : <Search className="h-4 w-4"/>}
+                  </Button>
+                </div>
               </div>
 
               {foundDocs.length > 0 && (
                 <div className="border rounded-lg bg-background overflow-hidden">
                   <Table>
-                    <TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead className="text-right">ยอดเงิน</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>{searchDocCategory === 'SALES' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead><TableHead className="text-right">ยอดเงิน</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {foundDocs.map(d => (
                         <TableRow key={d.id}>
                           <TableCell className="font-mono font-bold text-xs">{d.docNo}</TableCell>
-                          <TableCell className="text-sm">{d.customerSnapshot?.name}</TableCell>
+                          <TableCell className="text-sm">
+                            {searchDocCategory === 'SALES' ? d.customerSnapshot?.name : d.vendorSnapshot?.companyName}
+                          </TableCell>
                           <TableCell className="text-right font-bold">฿{d.grandTotal.toLocaleString()}</TableCell>
                           <TableCell><Badge variant="outline">{docStatusLabel(d.status, d.docType)}</Badge></TableCell>
                           <TableCell className="text-right">
