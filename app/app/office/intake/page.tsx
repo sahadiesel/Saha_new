@@ -24,7 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode } from "lucide-react";
+import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode, Building2, User } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { deptLabel } from "@/lib/ui-labels";
@@ -171,10 +171,12 @@ export default function IntakePage() {
 
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
+    const q = customerSearch.toLowerCase().trim();
     return customers.filter(
       (customer) =>
-        customer.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-        customer.phone.includes(customerSearch)
+        customer.name.toLowerCase().includes(q) ||
+        (customer.taxName || "").toLowerCase().includes(q) ||
+        customer.phone.includes(q)
     );
   }, [customers, customerSearch]);
 
@@ -308,34 +310,73 @@ export default function IntakePage() {
                               <Button
                                 variant="outline"
                                 role="combobox"
-                                className={cn("w-full justify-between font-normal text-left", !field.value && "text-muted-foreground")}
+                                className={cn("w-full justify-between font-normal text-left h-12", !field.value && "text-muted-foreground")}
                                 disabled={isViewer || isSubmitting}
                               >
-                                <span className="truncate">{selectedCustomer ? `${selectedCustomer.name} (${selectedCustomer.phone})` : "ค้นหาชื่อ หรือเบอร์โทรลูกค้า..."}</span>
+                                <span className="truncate">
+                                  {selectedCustomer ? (
+                                    <div className="flex flex-col overflow-hidden">
+                                      <span className="font-bold text-sm truncate">{selectedCustomer.name}</span>
+                                      {selectedCustomer.taxName && <span className="text-[10px] text-primary truncate flex items-center gap-1"><Building2 className="h-2.5 w-2.5" /> {selectedCustomer.taxName}</span>}
+                                    </div>
+                                  ) : "ค้นหาชื่อ หรือเบอร์โทรลูกค้า..."}
+                                </span>
                                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                               </Button>
                             </FormControl>
                           </PopoverTrigger>
-                          <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-                            <div className="p-2">
-                              <Input placeholder="พิมพ์ชื่อ หรือเบอร์โทร..." value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} />
+                          <PopoverContent className="w-[--radix-popover-trigger-width] p-0 shadow-2xl">
+                            <div className="p-3 border-b bg-muted/20">
+                              <div className="relative">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input 
+                                  placeholder="พิมพ์ชื่อติดต่อ, ชื่อบริษัท หรือเบอร์โทร..." 
+                                  className="pl-9 h-10"
+                                  value={customerSearch} 
+                                  onChange={(e) => setCustomerSearch(e.target.value)} 
+                                  autoFocus
+                                />
+                              </div>
                             </div>
-                            <ScrollArea className="h-fit max-h-60">
+                            <ScrollArea className="h-fit max-h-80">
                               {filteredCustomers.length > 0 ? (
-                                filteredCustomers.map((customer) => (
-                                  <Button
-                                    variant="ghost"
-                                    key={customer.id}
-                                    type="button"
-                                    onClick={() => { field.onChange(customer.id); setIsCustomerPopoverOpen(false); setCustomerSearch(''); }}
-                                    className="w-full justify-start h-auto py-2 px-3 border-b last:border-0 rounded-none text-left"
-                                  >
-                                    <div className="flex flex-col items-start"><p className="font-medium">{customer.name}</p><p className="text-xs text-muted-foreground">{customer.phone}</p></div>
-                                  </Button>
-                                ))
-                              ) : <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบข้อมูลลูกค้า</div>}
+                                <div className="p-1">
+                                  {filteredCustomers.map((customer) => (
+                                    <Button
+                                      variant="ghost"
+                                      key={customer.id}
+                                      type="button"
+                                      onClick={() => { field.onChange(customer.id); setIsCustomerPopoverOpen(false); setCustomerSearch(''); }}
+                                      className="w-full justify-start h-auto py-3 px-4 border-b last:border-0 rounded-none text-left hover:bg-primary/5 group"
+                                    >
+                                      <div className="flex flex-col items-start w-full">
+                                        <div className="flex items-center justify-between w-full">
+                                          <p className="font-bold text-sm group-hover:text-primary transition-colors">{customer.name}</p>
+                                          <Badge variant="outline" className="text-[9px] h-4 font-normal">{customer.phone}</Badge>
+                                        </div>
+                                        {customer.taxName && (
+                                          <p className="text-[10px] text-primary font-medium mt-1 flex items-center gap-1.5 bg-primary/5 px-1.5 py-0.5 rounded">
+                                            <Building2 className="h-3 w-3" /> {customer.taxName}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </Button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="py-10 text-center flex flex-col items-center gap-2 text-muted-foreground">
+                                  <User className="h-8 w-8 opacity-10" />
+                                  <p className="text-sm">ไม่พบข้อมูลลูกค้า</p>
+                                </div>
+                              )}
                             </ScrollArea>
-                            <div className="border-t p-2"><Button asChild variant="outline" className="w-full"><Link href="/app/office/customers/new"><PlusCircle className="mr-2 h-4 w-4" />เพิ่มลูกค้าใหม่</Link></Button></div>
+                            <div className="border-t p-2 bg-muted/10">
+                              <Button asChild variant="ghost" className="w-full justify-center text-primary font-bold hover:bg-primary/10">
+                                <Link href="/app/office/customers/new">
+                                  <PlusCircle className="mr-2 h-4 w-4" />เพิ่มลูกค้าใหม่
+                                </Link>
+                              </Button>
+                            </div>
                           </PopoverContent>
                         </Popover>
                         <FormMessage />
