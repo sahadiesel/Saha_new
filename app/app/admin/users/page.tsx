@@ -16,6 +16,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { 
+  AlertDialog, 
+  AlertDialogAction, 
+  AlertDialogCancel, 
+  AlertDialogContent, 
+  AlertDialogDescription, 
+  AlertDialogFooter, 
+  AlertDialogHeader, 
+  AlertDialogTitle 
+} from "@/components/ui/alert-dialog";
 import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt } from "lucide-react";
 import { jobStatusLabel, deptLabel, docTypeLabel, docStatusLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
@@ -133,7 +143,6 @@ export default function AdminUsersPage() {
       obSnap.docs.forEach(d => batch.delete(d.ref));
 
       // 3. Find and delete associated Accounting Entries
-      // Usually linked via docId or docNo
       const entryQuery = query(collection(db, 'accountingEntries'), where('sourceDocId', '==', docObj.id));
       const entrySnap = await getDocs(entryQuery);
       entrySnap.docs.forEach(d => batch.delete(d.ref));
@@ -165,34 +174,6 @@ export default function AdminUsersPage() {
       toast({ variant: 'destructive', title: "ล้มเหลว", description: e.message });
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleSearchDocuments = async () => {
-    if (!db || !linkSearchTerm.trim()) return;
-    setIsSearchingDoc(true);
-    setDocSearchResults([]);
-    setFoundDoc(null);
-    try {
-      const q = query(
-        collection(db, "documents"), 
-        where("docType", "==", linkSearchType),
-        limit(100)
-      );
-      const snap = await getDocs(q);
-      const term = linkSearchTerm.toLowerCase();
-      const filtered = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as DocumentType))
-        .filter(d => 
-          d.docNo.toLowerCase().includes(term) || 
-          d.customerSnapshot?.name?.toLowerCase().includes(term) ||
-          d.customerSnapshot?.phone?.includes(term)
-        );
-      setDocSearchResults(filtered);
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: e.message });
-    } finally {
-      setIsSearchingDoc(false);
     }
   };
 
