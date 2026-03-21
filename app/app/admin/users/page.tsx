@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
@@ -26,7 +25,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog";
-import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt, Settings2, Sparkles, RefreshCw } from "lucide-react";
+import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Link2Off, Save, UserCheck, History, Link as LinkIcon, FileText, CheckCircle2, PlusCircle, FileSearch, Check, FileWarning, Receipt, Settings2, Sparkles, RefreshCw, Info } from "lucide-react";
 import { jobStatusLabel, deptLabel, docTypeLabel, docStatusLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
 import type { Job, Document as DocumentType, DocType } from "@/lib/types";
