@@ -100,16 +100,26 @@ export default function AdminUsersPage() {
     setFoundDocs([]);
     try {
       const collectionName = searchDocCategory === 'SALES' ? "documents" : "purchaseDocs";
-      const q = query(collection(db, collectionName), where("docNo", "==", docSearchTerm.trim()));
+      // Fetch latest 1000 docs to allow partial matching client-side for better UX
+      const q = query(collection(db, collectionName), orderBy("createdAt", "desc"), limit(1000));
       const snap = await getDocs(q);
       
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const term = docSearchTerm.toLowerCase().trim();
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(d => 
+          d.docNo.toLowerCase().includes(term) ||
+          (d.customerSnapshot?.name || "").toLowerCase().includes(term) ||
+          (d.vendorSnapshot?.companyName || "").toLowerCase().includes(term) ||
+          (d.invoiceNo || "").toLowerCase().includes(term)
+        );
+
       setFoundDocs(docs);
       
       if (docs.length === 0) {
         toast({ 
-          title: "ไม่พบเอกสารเลขที่นี้", 
-          description: "กรุณาตรวจสอบว่าระบุประเภทเอกสารและพิมพ์คำนำหน้า (Prefix) ครบถ้วนหรือไม่ เช่น DN2026-0001" 
+          title: "ไม่พบเอกสาร", 
+          description: "ไม่พบรายการที่ตรงกับคำค้นหาใน 1,000 รายการล่าสุดค่ะ" 
         });
       }
     } catch (e: any) {
@@ -125,7 +135,7 @@ export default function AdminUsersPage() {
     try {
       const batch = writeBatch(db);
       
-      // Determine collection based on data structure
+      // Determine collection based on data structure or category
       const isPurchase = searchDocCategory === 'PURCHASE' || (docObj.vendorSnapshot && !docObj.docType);
       const collectionName = isPurchase ? 'purchaseDocs' : 'documents';
       const docRef = doc(db, collectionName, docObj.id);
@@ -145,6 +155,7 @@ export default function AdminUsersPage() {
           updatePayload.accountingEntryId = deleteField();
           updatePayload.arObligationId = deleteField();
           updatePayload.confirmedPayment = deleteField();
+          updatePayload.suggestedPayments = deleteField();
       } else {
           // Purchase Doc specific removals
           updatePayload.apObligationId = deleteField();
@@ -165,7 +176,13 @@ export default function AdminUsersPage() {
       const entrySnap = await getDocs(entryQuery);
       entrySnap.docs.forEach(d => batch.delete(d.ref));
 
-      // 4. Reset Job Status if linked
+      // 4. Find and delete associated Claims
+      const claimCollection = isPurchase ? "purchaseClaims" : "paymentClaims";
+      const claimQuery = query(collection(db, claimCollection), where(isPurchase ? "purchaseDocId" : "sourceDocId", "==", docObj.id));
+      const claimSnap = await getDocs(claimQuery);
+      claimSnap.docs.forEach(d => batch.delete(d.ref));
+
+      // 5. Reset Job Status if linked
       if (docObj.jobId) {
         const jobRef = doc(db, 'jobs', docObj.jobId);
         const jobSnap = await getDoc(jobRef);
@@ -372,20 +389,23 @@ export default function AdminUsersPage() {
                     <SelectValue placeholder="ประเภทเอกสาร" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SALES">งานขาย (DN/TI/RE/BN/CN)</SelectItem>
-                    <SelectItem value="PURCHASE">งานซื้อ (PUR/รายการซื้อ)</SelectItem>
+                    <SelectItem value="SALES">งานขาย (ใบส่งของ/ใบกำกับ/ใบเสร็จ)</SelectItem>
+                    <SelectItem value="PURCHASE">งานซื้อ (ใบซื้ออะไหล่/งานจ้าง)</SelectItem>
                   </SelectContent>
                 </Select>
                 <div className="flex-1 flex gap-2">
-                  <Input 
-                    placeholder="พิมพ์เลขที่บิลให้ครบถ้วน (เช่น DN2026-0001)..." 
-                    className="h-10 bg-background"
-                    value={docSearchTerm}
-                    onChange={e => setDocSearchTerm(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSearchDocs()}
-                  />
-                  <Button onClick={handleSearchDocs} disabled={isSearchingDocs} className="h-10">
-                    {isSearchingDocs ? <Loader2 className="animate-spin h-4 w-4"/> : <Search className="h-4 w-4"/>}
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input 
+                      placeholder="พิมพ์เลขที่บิลบางส่วน หรือชื่อลูกค้า..." 
+                      className="h-10 bg-background pl-10"
+                      value={docSearchTerm}
+                      onChange={e => setDocSearchTerm(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSearchDocs()}
+                    />
+                  </div>
+                  <Button onClick={handleSearchDocs} disabled={isSearchingDocs} className="h-10 px-6">
+                    {isSearchingDocs ? <Loader2 className="animate-spin h-4 w-4"/> : "ค้นหา"}
                   </Button>
                 </div>
               </div>
@@ -397,7 +417,12 @@ export default function AdminUsersPage() {
                     <TableBody>
                       {foundDocs.map(d => (
                         <TableRow key={d.id}>
-                          <TableCell className="font-mono font-bold text-xs">{d.docNo}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-mono font-bold text-xs">{d.docNo}</span>
+                              {d.docType && <span className="text-[9px] text-muted-foreground uppercase">{d.docType}</span>}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-sm">
                             {searchDocCategory === 'SALES' ? d.customerSnapshot?.name : d.vendorSnapshot?.companyName}
                           </TableCell>
@@ -503,6 +528,7 @@ export default function AdminUsersPage() {
                 <div className="p-3 bg-destructive/5 border border-destructive/20 rounded-md text-destructive text-xs space-y-1">
                   <p>• ระบบจะ <b>ลบรายการบัญชี</b> (Cashbook) ที่เกี่ยวข้องทิ้ง</p>
                   <p>• ระบบจะ <b>ลบยอดค้าง</b> (AR/AP) ที่เกี่ยวข้องทิ้ง</p>
+                  <p>• ระบบจะ <b>ลบรายการรอรับเงิน/ตรวจสอบ</b> (Claims) ทิ้ง</p>
                   {targetDoc?.jobId && <p>• ระบบจะ <b>คืนสถานะใบงานซ่อม</b> เป็น "รอลูกค้ารับของ" ทันที</p>}
                 </div>
                 <p className="text-[10px] text-muted-foreground italic font-bold">* ระวัง: ข้อมูลรายการรับ/จ่ายเงินที่เคยบันทึกไว้จะหายไป ต้องบันทึกใหม่หลังจากบัญชีตรวจสอบบิลอีกครั้งค่ะ</p>
