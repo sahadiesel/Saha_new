@@ -24,7 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode, Building2, User } from "lucide-react";
+import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode, Building2, User, Search } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { deptLabel } from "@/lib/ui-labels";
