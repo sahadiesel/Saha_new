@@ -10,10 +10,9 @@ import {
   limit, 
   orderBy, 
   doc, 
-  deleteDoc, 
   runTransaction, 
   serverTimestamp,
-  writeBatch
+  collectionGroup
 } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -33,7 +32,8 @@ import {
   Trash2, 
   AlertCircle,
   RotateCcw,
-  XCircle
+  XCircle,
+  History
 } from "lucide-react";
 import { 
   DropdownMenu, 
@@ -79,11 +79,12 @@ export default function OfficePartsWithdrawPage() {
 
   useEffect(() => {
     if (!db) return;
+    // Query only withdrawals
     const q = query(
         collection(db, "documents"), 
         where("docType", "==", "WITHDRAWAL"),
         orderBy("docNo", "desc"), 
-        limit(100)
+        limit(200)
     );
     return onSnapshot(q, (snap) => {
       setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Document)));
@@ -94,6 +95,7 @@ export default function OfficePartsWithdrawPage() {
     });
   }, [db]);
 
+  // Logic to handle deletion (with stock reversal if issued)
   const handleConfirmDelete = async () => {
     if (!db || !docToDelete || !profile) return;
     setIsActionLoading(true);
@@ -106,6 +108,7 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
+        // If it was already issued, we MUST return items to stock
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -121,6 +124,7 @@ export default function OfficePartsWithdrawPage() {
                 updatedAt: serverTimestamp()
               });
 
+              // Log activity
               const actRef = doc(collection(db, "stockActivities"));
               transaction.set(actRef, sanitizeForFirestore({
                 partId: item.partId,
@@ -139,6 +143,7 @@ export default function OfficePartsWithdrawPage() {
           }
         }
 
+        // Delete the document
         transaction.delete(docRef);
       });
 
@@ -154,6 +159,7 @@ export default function OfficePartsWithdrawPage() {
     }
   };
 
+  // Logic to handle cancellation (reverse stock but keep doc)
   const handleConfirmCancel = async () => {
     if (!db || !docToCancel || !profile) return;
     setIsActionLoading(true);
@@ -166,6 +172,7 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
+        // Return items to stock if issued
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -181,6 +188,7 @@ export default function OfficePartsWithdrawPage() {
                 updatedAt: serverTimestamp()
               });
 
+              // Log activity
               const actRef = doc(collection(db, "stockActivities"));
               transaction.set(actRef, sanitizeForFirestore({
                 partId: item.partId,
@@ -199,16 +207,17 @@ export default function OfficePartsWithdrawPage() {
           }
         }
 
+        // Update status to CANCELLED
         transaction.update(docRef, {
           status: 'CANCELLED',
           updatedAt: serverTimestamp(),
-          notes: (docData.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yyyy HH:mm')} โดย ${profile.displayName} (คืนสต็อก/ยกเลิกการผูกบิล)`
+          notes: (docData.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yyyy HH:mm')} โดย ${profile.displayName} (คืนสต็อกแล้ว)`
         });
       });
 
       toast({ 
         title: "ยกเลิกรายการเบิกสำเร็จ", 
-        description: "คืนยอดสต็อกกลับเข้าคลังและปลดการเชื่อมโยงเรียบร้อยแล้วค่ะ" 
+        description: "คืนยอดสต็อกกลับเข้าคลังเรียบร้อยแล้วค่ะ" 
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "ยกเลิกไม่สำเร็จ", description: e.message });
@@ -224,7 +233,6 @@ export default function OfficePartsWithdrawPage() {
     return withdrawals.filter(w => 
       w.docNo.toLowerCase().includes(q) || 
       w.customerSnapshot?.name?.toLowerCase().includes(q) ||
-      w.notes?.toLowerCase().includes(q) ||
       w.jobId?.toLowerCase().includes(q)
     );
   }, [withdrawals, searchTerm]);
@@ -234,7 +242,7 @@ export default function OfficePartsWithdrawPage() {
       <PageHeader title="รายการเบิกสินค้า" description="ตรวจสอบและจัดการเอกสารใบเบิกอะไหล่เพื่อใช้ในการซ่อม">
         <Button asChild className="shadow-md">
           <Link href="/app/office/parts/withdraw/new">
-            <PlusCircle className="mr-2 h-4 w-4" /> สร้างรายการเบิก
+            <PlusCircle className="mr-2 h-4 w-4" /> สร้างรายการเบิกใหม่
           </Link>
         </Button>
       </PageHeader>
@@ -244,13 +252,13 @@ export default function OfficePartsWithdrawPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <CardTitle className="text-lg flex items-center gap-2">
               <ClipboardList className="h-5 w-5 text-primary" />
-              ประวัติใบเบิกอะไหล่
+              รายการเบิกทั้งหมด
             </CardTitle>
             <div className="relative w-full sm:w-80">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
                 placeholder="ค้นหาเลขที่ใบเบิก, ชื่อลูกค้า, เลขใบงาน..." 
-                className="pl-10"
+                className="pl-10 h-10"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
               />
@@ -265,7 +273,7 @@ export default function OfficePartsWithdrawPage() {
                   <TableHead className="w-32">เลขที่ใบเบิก</TableHead>
                   <TableHead className="w-24">วันที่</TableHead>
                   <TableHead>อ้างอิงใบงาน</TableHead>
-                  <TableHead>ลูกค้า</TableHead>
+                  <TableHead>ผู้รับ/ลูกค้า</TableHead>
                   <TableHead className="text-center">สถานะ</TableHead>
                   <TableHead className="text-right">มูลค่ารวม</TableHead>
                   <TableHead className="text-right w-24">จัดการ</TableHead>
@@ -278,9 +286,9 @@ export default function OfficePartsWithdrawPage() {
                   filtered.map(w => {
                     const s = w.status.toUpperCase();
                     return (
-                      <TableRow key={w.id} className={cn("hover:bg-muted/30", s === 'CANCELLED' && "opacity-50 grayscale")}>
+                      <TableRow key={w.id} className={cn("hover:bg-muted/30 transition-colors", s === 'CANCELLED' && "opacity-50 grayscale")}>
                         <TableCell className="font-bold font-mono text-primary text-xs">
-                          <Link href={`/app/documents/${w.id}`} className="hover:underline">{w.docNo}</Link>
+                          {w.docNo}
                         </TableCell>
                         <TableCell className="text-xs">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
                         <TableCell>
@@ -307,7 +315,7 @@ export default function OfficePartsWithdrawPage() {
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" className="w-48">
                               <DropdownMenuItem onClick={() => router.push(`/app/documents/${w.id}`)}>
                                 <Eye className="mr-2 h-4 w-4" /> ดูรายละเอียด
                               </DropdownMenuItem>
@@ -331,6 +339,7 @@ export default function OfficePartsWithdrawPage() {
                               <DropdownMenuItem 
                                 className="text-destructive focus:text-destructive"
                                 onClick={() => setDocToDelete(w)}
+                                disabled={!isAdmin}
                               >
                                 <Trash2 className="mr-2 h-4 w-4" /> ลบถาวร
                               </DropdownMenuItem>
@@ -341,7 +350,7 @@ export default function OfficePartsWithdrawPage() {
                     );
                   })
                 ) : (
-                  <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">ไม่พบรายการเบิก</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">ไม่พบรายการเบิกอะไหล่</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -349,7 +358,7 @@ export default function OfficePartsWithdrawPage() {
         </CardContent>
       </Card>
 
-      {/* Delete Dialog */}
+      {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!docToDelete} onOpenChange={(o) => !o && setDocToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -359,13 +368,13 @@ export default function OfficePartsWithdrawPage() {
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
-                <p>คุณต้องการลบเอกสารเลขที่ <span className="font-bold">{docToDelete?.docNo}</span> ใช่หรือไม่? การลบจะทำให้ข้อมูลหายไปจากระบบอย่างถาวร</p>
+                <p>คุณต้องการลบใบเบิกเลขที่ <span className="font-bold">{docToDelete?.docNo}</span> ใช่หรือไม่? ข้อมูลนี้จะหายไปจากฐานข้อมูลถาวร</p>
                 {docToDelete?.status === 'ISSUED' && (
                   <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 text-destructive">
                     <RotateCcw className="h-4 w-4" />
-                    <AlertTitle className="text-xs font-bold">ข้อมูลการคืนสต็อก</AlertTitle>
+                    <AlertTitle className="text-xs font-bold">ข้อมูลสำคัญ: คืนสต็อกอัตโนมัติ</AlertTitle>
                     <AlertDescription className="text-[10px]">
-                      เนื่องจากรายการนี้เบิกไปแล้ว เมื่อลบระบบจะทำการ **บวกยอดสินค้าคืนเข้าคลัง** ให้โดยอัตโนมัติค่ะ
+                      เนื่องจากใบเบิกนี้มีการตัดสต็อกไปแล้ว เมื่อลบระบบจะทำการ **บวกยอดสินค้าคืนเข้าคลัง** ให้โดยอัตโนมัติเพื่อให้ยอดสต็อกไม่คลาดเคลื่อนค่ะ
                     </AlertDescription>
                   </Alert>
                 )}
@@ -385,7 +394,7 @@ export default function OfficePartsWithdrawPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Cancel Dialog */}
+      {/* Cancellation Confirmation Dialog */}
       <AlertDialog open={!!docToCancel} onOpenChange={(o) => !o && setDocToCancel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -395,14 +404,14 @@ export default function OfficePartsWithdrawPage() {
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
-                <p>ต้องการยกเลิกใบเบิกเลขที่ <span className="font-bold">{docToCancel?.docNo}</span> ใช่หรือไม่? เอกสารจะยังคงอยู่ในประวัติแต่สถานะจะเปลี่ยนเป็นยกเลิก</p>
+                <p>ต้องการยกเลิกใบเบิกเลขที่ <span className="font-bold">{docToCancel?.docNo}</span> ใช่หรือไม่? เอกสารจะยังคงอยู่ในระบบแต่จะแสดงสถานะเป็นยกเลิก</p>
                 {docToCancel?.status === 'ISSUED' && (
                   <Alert variant="secondary" className="bg-orange-50 border-orange-200 text-orange-800">
                     <RotateCcw className="h-4 w-4 text-orange-600" />
                     <AlertTitle className="text-xs font-bold">ผลของการยกเลิก</AlertTitle>
                     <AlertDescription className="text-[10px] space-y-1">
                       <p>• ระบบจะ **คืนยอดสินค้าเข้าคลัง** ให้โดยอัตโนมัติ</p>
-                      <p>• ระบบจะ **ยกเลิกการผูกบิล** ออกจากใบงานซ่อมเพื่อให้เบิกใหม่ได้</p>
+                      <p>• ระบบจะบันทึกสาเหตุการยกเลิกใน Activity Log</p>
                     </AlertDescription>
                   </Alert>
                 )}
