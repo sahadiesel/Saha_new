@@ -77,7 +77,6 @@ export default function OfficePartsWithdrawPage() {
 
   useEffect(() => {
     if (!db) return;
-    // Query only withdrawals
     const q = query(
         collection(db, "documents"), 
         where("docType", "==", "WITHDRAWAL"),
@@ -94,7 +93,6 @@ export default function OfficePartsWithdrawPage() {
     return () => unsubscribe();
   }, [db]);
 
-  // Logic to handle deletion (with stock reversal if issued)
   const handleConfirmDelete = async () => {
     if (!db || !docToDelete || !profile) return;
     setIsActionLoading(true);
@@ -107,7 +105,6 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
-        // If it was already issued, we MUST return items to stock
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -123,7 +120,6 @@ export default function OfficePartsWithdrawPage() {
                 updatedAt: serverTimestamp()
               });
 
-              // Log activity
               const actRef = doc(collection(db, "stockActivities"));
               transaction.set(actRef, sanitizeForFirestore({
                 partId: item.partId,
@@ -141,8 +137,6 @@ export default function OfficePartsWithdrawPage() {
             }
           }
         }
-
-        // Delete the document
         transaction.delete(docRef);
       });
 
@@ -158,7 +152,6 @@ export default function OfficePartsWithdrawPage() {
     }
   };
 
-  // Logic to handle cancellation (reverse stock but keep doc)
   const handleConfirmCancel = async () => {
     if (!db || !docToCancel || !profile) return;
     setIsActionLoading(true);
@@ -171,7 +164,6 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
-        // Return items to stock if issued
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -187,7 +179,6 @@ export default function OfficePartsWithdrawPage() {
                 updatedAt: serverTimestamp()
               });
 
-              // Log activity
               const actRef = doc(collection(db, "stockActivities"));
               transaction.set(actRef, sanitizeForFirestore({
                 partId: item.partId,
@@ -206,7 +197,6 @@ export default function OfficePartsWithdrawPage() {
           }
         }
 
-        // Update status to CANCELLED
         transaction.update(docRef, {
           status: 'CANCELLED',
           updatedAt: serverTimestamp(),
@@ -270,13 +260,13 @@ export default function OfficePartsWithdrawPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="w-32">เลขที่ใบเบิก</TableHead>
-                    <TableHead className="w-24">วันที่</TableHead>
-                    <TableHead>อ้างอิงใบงาน</TableHead>
-                    <TableHead>ผู้รับ/ลูกค้า</TableHead>
-                    <TableHead className="text-center">สถานะ</TableHead>
-                    <TableHead className="text-right">มูลค่ารวม</TableHead>
-                    <TableHead className="text-right w-24">จัดการ</TableHead>
+                    <TableHead className="w-[120px]">เลขที่ใบเบิก</TableHead>
+                    <TableHead className="w-[100px]">วันที่</TableHead>
+                    <TableHead className="w-[120px]">อ้างอิงใบงาน</TableHead>
+                    <TableHead className="min-w-[150px]">ผู้รับ/ลูกค้า</TableHead>
+                    <TableHead className="text-center w-[100px]">สถานะ</TableHead>
+                    <TableHead className="text-right w-[120px]">มูลค่ารวม</TableHead>
+                    <TableHead className="text-right w-[80px]">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,24 +280,28 @@ export default function OfficePartsWithdrawPage() {
                           <TableCell className="font-bold font-mono text-primary text-xs whitespace-nowrap">
                             {w.docNo}
                           </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
+                          <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
                           <TableCell>
                             {w.jobId ? (
-                                <Badge variant="outline" className="font-mono text-[10px] border-primary/20 text-primary max-w-[100px] truncate">
+                                <Badge variant="outline" className="font-mono text-[9px] border-primary/20 text-primary max-w-[100px] truncate block h-5">
                                     {w.jobId}
                                 </Badge>
-                            ) : "-"}
+                            ) : <span className="text-muted-foreground text-xs">-</span>}
                           </TableCell>
-                          <TableCell className="text-sm font-medium whitespace-nowrap">{w.customerSnapshot?.name}</TableCell>
+                          <TableCell>
+                            <div className="text-sm font-semibold max-w-[180px] truncate" title={w.customerSnapshot?.name}>
+                                {w.customerSnapshot?.name}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-center">
                             <Badge 
                               variant={s === 'DRAFT' ? 'secondary' : s === 'CANCELLED' ? 'destructive' : 'default'} 
-                              className={cn("text-[10px] min-w-[60px] justify-center", s === 'ISSUED' && "bg-green-600")}
+                              className={cn("text-[9px] min-w-[55px] justify-center h-5", s === 'ISSUED' && "bg-green-600")}
                             >
                                 {docStatusLabel(w.status, 'WITHDRAWAL')}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right font-black">฿{w.grandTotal.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-black text-sm">฿{w.grandTotal.toLocaleString()}</TableCell>
                           <TableCell className="text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -359,7 +353,6 @@ export default function OfficePartsWithdrawPage() {
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!docToDelete} onOpenChange={(o) => !o && setDocToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -395,7 +388,6 @@ export default function OfficePartsWithdrawPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Cancellation Confirmation Dialog */}
       <AlertDialog open={!!docToCancel} onOpenChange={(o) => !o && setDocToCancel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
