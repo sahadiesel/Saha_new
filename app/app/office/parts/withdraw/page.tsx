@@ -11,8 +11,7 @@ import {
   orderBy, 
   doc, 
   runTransaction, 
-  serverTimestamp,
-  collectionGroup
+  serverTimestamp
 } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -32,8 +31,7 @@ import {
   Trash2, 
   AlertCircle,
   RotateCcw,
-  XCircle,
-  History
+  XCircle
 } from "lucide-react";
 import { 
   DropdownMenu, 
@@ -86,13 +84,14 @@ export default function OfficePartsWithdrawPage() {
         orderBy("docNo", "desc"), 
         limit(200)
     );
-    return onSnapshot(q, (snap) => {
+    const unsubscribe = onSnapshot(q, (snap) => {
       setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Document)));
       setLoading(false);
     }, (err) => {
         console.error(err);
         setLoading(false);
     });
+    return () => unsubscribe();
   }, [db]);
 
   // Logic to handle deletion (with stock reversal if issued)
@@ -211,7 +210,7 @@ export default function OfficePartsWithdrawPage() {
         transaction.update(docRef, {
           status: 'CANCELLED',
           updatedAt: serverTimestamp(),
-          notes: (docData.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), 'dd/MM/yyyy HH:mm')} โดย ${profile.displayName} (คืนสต็อกแล้ว)`
+          notes: (docData.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} (คืนสต็อกแล้ว)`
         });
       });
 
@@ -267,93 +266,95 @@ export default function OfficePartsWithdrawPage() {
         </CardHeader>
         <CardContent>
           <div className="border rounded-xl overflow-hidden shadow-sm">
-            <Table>
-              <TableHeader className="bg-muted/50">
-                <TableRow>
-                  <TableHead className="w-32">เลขที่ใบเบิก</TableHead>
-                  <TableHead className="w-24">วันที่</TableHead>
-                  <TableHead>อ้างอิงใบงาน</TableHead>
-                  <TableHead>ผู้รับ/ลูกค้า</TableHead>
-                  <TableHead className="text-center">สถานะ</TableHead>
-                  <TableHead className="text-right">มูลค่ารวม</TableHead>
-                  <TableHead className="text-right w-24">จัดการ</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
-                ) : filtered.length > 0 ? (
-                  filtered.map(w => {
-                    const s = w.status.toUpperCase();
-                    return (
-                      <TableRow key={w.id} className={cn("hover:bg-muted/30 transition-colors", s === 'CANCELLED' && "opacity-50 grayscale")}>
-                        <TableCell className="font-bold font-mono text-primary text-xs">
-                          {w.docNo}
-                        </TableCell>
-                        <TableCell className="text-xs">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
-                        <TableCell>
-                          {w.jobId ? (
-                              <Badge variant="outline" className="font-mono text-[10px] border-primary/20 text-primary">
-                                  {w.jobId}
-                              </Badge>
-                          ) : "-"}
-                        </TableCell>
-                        <TableCell className="text-sm font-medium">{w.customerSnapshot?.name}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge 
-                            variant={s === 'DRAFT' ? 'secondary' : s === 'CANCELLED' ? 'destructive' : 'default'} 
-                            className={cn("text-[10px] min-w-[60px] justify-center", s === 'ISSUED' && "bg-green-600")}
-                          >
-                              {docStatusLabel(w.status, 'WITHDRAWAL')}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-black">฿{w.grandTotal.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => router.push(`/app/documents/${w.id}`)}>
-                                <Eye className="mr-2 h-4 w-4" /> ดูรายละเอียด
-                              </DropdownMenuItem>
-                              
-                              {s === 'DRAFT' && (
-                                <DropdownMenuItem onClick={() => router.push(`/app/office/parts/withdraw/new?editDocId=${w.id}`)}>
-                                  <Edit className="mr-2 h-4 w-4" /> แก้ไขฉบับร่าง
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead className="w-32">เลขที่ใบเบิก</TableHead>
+                    <TableHead className="w-24">วันที่</TableHead>
+                    <TableHead>อ้างอิงใบงาน</TableHead>
+                    <TableHead>ผู้รับ/ลูกค้า</TableHead>
+                    <TableHead className="text-center">สถานะ</TableHead>
+                    <TableHead className="text-right">มูลค่ารวม</TableHead>
+                    <TableHead className="text-right w-24">จัดการ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                  ) : filtered.length > 0 ? (
+                    filtered.map(w => {
+                      const s = w.status.toUpperCase();
+                      return (
+                        <TableRow key={w.id} className={cn("hover:bg-muted/30 transition-colors", s === 'CANCELLED' && "opacity-50 grayscale")}>
+                          <TableCell className="font-bold font-mono text-primary text-xs whitespace-nowrap">
+                            {w.docNo}
+                          </TableCell>
+                          <TableCell className="text-xs whitespace-nowrap">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
+                          <TableCell>
+                            {w.jobId ? (
+                                <Badge variant="outline" className="font-mono text-[10px] border-primary/20 text-primary max-w-[100px] truncate">
+                                    {w.jobId}
+                                </Badge>
+                            ) : "-"}
+                          </TableCell>
+                          <TableCell className="text-sm font-medium whitespace-nowrap">{w.customerSnapshot?.name}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge 
+                              variant={s === 'DRAFT' ? 'secondary' : s === 'CANCELLED' ? 'destructive' : 'default'} 
+                              className={cn("text-[10px] min-w-[60px] justify-center", s === 'ISSUED' && "bg-green-600")}
+                            >
+                                {docStatusLabel(w.status, 'WITHDRAWAL')}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right font-black">฿{w.grandTotal.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem onClick={() => router.push(`/app/documents/${w.id}`)}>
+                                  <Eye className="mr-2 h-4 w-4" /> ดูรายละเอียด
                                 </DropdownMenuItem>
-                              )}
+                                
+                                {s === 'DRAFT' && (
+                                  <DropdownMenuItem onClick={() => router.push(`/app/office/parts/withdraw/new?editDocId=${w.id}`)}>
+                                    <Edit className="mr-2 h-4 w-4" /> แก้ไขฉบับร่าง
+                                  </DropdownMenuItem>
+                                )}
 
-                              {s !== 'CANCELLED' && (
+                                {s !== 'CANCELLED' && (
+                                  <DropdownMenuItem 
+                                    className="text-orange-600 focus:text-orange-600 font-medium"
+                                    onClick={() => setDocToCancel(w)}
+                                  >
+                                    <RotateCcw className="mr-2 h-4 w-4" /> ยกเลิกรายการ (คืนของ)
+                                  </DropdownMenuItem>
+                                )}
+
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem 
-                                  className="text-orange-600 focus:text-orange-600"
-                                  onClick={() => setDocToCancel(w)}
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setDocToDelete(w)}
+                                  disabled={!isAdmin}
                                 >
-                                  <XCircle className="mr-2 h-4 w-4" /> ยกเลิกรายการ
+                                  <Trash2 className="mr-2 h-4 w-4" /> ลบถาวร
                                 </DropdownMenuItem>
-                              )}
-
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                className="text-destructive focus:text-destructive"
-                                onClick={() => setDocToDelete(w)}
-                                disabled={!isAdmin}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> ลบถาวร
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                ) : (
-                  <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">ไม่พบรายการเบิกอะไหล่</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  ) : (
+                    <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">ไม่พบรายการเบิกอะไหล่</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </CardContent>
       </Card>
