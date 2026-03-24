@@ -260,13 +260,13 @@ export default function OfficePartsWithdrawPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="w-[120px]">เลขที่ใบเบิก</TableHead>
+                    <TableHead className="w-[110px]">เลขที่ใบเบิก</TableHead>
                     <TableHead className="w-[100px]">วันที่</TableHead>
-                    <TableHead className="w-[120px]">อ้างอิงใบงาน</TableHead>
-                    <TableHead className="min-w-[150px]">ผู้รับ/ลูกค้า</TableHead>
+                    <TableHead className="w-[110px]">อ้างอิงใบงาน</TableHead>
+                    <TableHead className="w-[200px]">ผู้รับ/ลูกค้า</TableHead>
                     <TableHead className="text-center w-[100px]">สถานะ</TableHead>
                     <TableHead className="text-right w-[120px]">มูลค่ารวม</TableHead>
-                    <TableHead className="text-right w-[80px]">จัดการ</TableHead>
+                    <TableHead className="text-right w-[60px]">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -283,13 +283,13 @@ export default function OfficePartsWithdrawPage() {
                           <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap">{safeFormat(new Date(w.docDate), APP_DATE_FORMAT)}</TableCell>
                           <TableCell>
                             {w.jobId ? (
-                                <Badge variant="outline" className="font-mono text-[9px] border-primary/20 text-primary max-w-[100px] truncate block h-5">
+                                <Badge variant="outline" className="font-mono text-[9px] border-primary/20 text-primary max-w-[90px] truncate block h-5">
                                     {w.jobId}
                                 </Badge>
                             ) : <span className="text-muted-foreground text-xs">-</span>}
                           </TableCell>
                           <TableCell>
-                            <div className="text-sm font-semibold max-w-[180px] truncate" title={w.customerSnapshot?.name}>
+                            <div className="text-sm font-semibold w-[200px] truncate" title={w.customerSnapshot?.name}>
                                 {w.customerSnapshot?.name}
                             </div>
                           </TableCell>
