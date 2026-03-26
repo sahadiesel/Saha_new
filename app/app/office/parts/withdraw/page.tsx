@@ -105,6 +105,7 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
+        // ถ้าเป็นใบเบิกที่ตัดสต็อกไปแล้ว (ISSUED) ต้องคืนสต็อกก่อนลบ
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -113,7 +114,7 @@ export default function OfficePartsWithdrawPage() {
             
             if (partSnap.exists()) {
               const currentQty = partSnap.data().stockQty || 0;
-              const revertQty = item.quantity || 0;
+              const revertQty = Number(item.quantity) || 0;
               
               transaction.update(partRef, {
                 stockQty: currentQty + revertQty,
@@ -164,6 +165,7 @@ export default function OfficePartsWithdrawPage() {
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
         const docData = docSnap.data() as Document;
 
+        // ถ้าเป็นใบเบิกที่ตัดสต็อกไปแล้ว ต้องคืนสต็อก
         if (docData.status === 'ISSUED') {
           for (const item of docData.items) {
             if (!item.partId) continue;
@@ -172,7 +174,7 @@ export default function OfficePartsWithdrawPage() {
             
             if (partSnap.exists()) {
               const currentQty = partSnap.data().stockQty || 0;
-              const revertQty = item.quantity || 0;
+              const revertQty = Number(item.quantity) || 0;
               
               transaction.update(partRef, {
                 stockQty: currentQty + revertQty,
@@ -188,7 +190,7 @@ export default function OfficePartsWithdrawPage() {
                 diffQty: revertQty,
                 beforeQty: currentQty,
                 afterQty: currentQty + revertQty,
-                notes: `คืนสต็อกเนื่องจากการยกเลิกใบเบิก ${docData.docNo} โดย ${profile.displayName}`,
+                notes: `คืนสต็อก (ยกเลิกใบเบิก ${docData.docNo}) โดย ${profile.displayName}`,
                 createdByUid: profile.uid,
                 createdByName: profile.displayName,
                 createdAt: serverTimestamp(),
@@ -200,13 +202,13 @@ export default function OfficePartsWithdrawPage() {
         transaction.update(docRef, {
           status: 'CANCELLED',
           updatedAt: serverTimestamp(),
-          notes: (docData.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} (คืนสต็อกแล้ว)`
+          notes: (docData.notes || "") + `\n[System] ยกเลิกเมื่อ ${new Date().toLocaleString()} โดย ${profile.displayName} (คืนสต็อกเรียบร้อย)`
         });
       });
 
       toast({ 
-        title: "ยกเลิกรายการเบิกสำเร็จ", 
-        description: "คืนยอดสต็อกกลับเข้าคลังเรียบร้อยแล้วค่ะ" 
+        title: "ยกเลิกและคืนของสำเร็จ", 
+        description: "ระบบได้ทำการคืนยอดสต็อกกลับเข้าคลังให้เรียบร้อยแล้วค่ะ" 
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "ยกเลิกไม่สำเร็จ", description: e.message });
@@ -392,21 +394,25 @@ export default function OfficePartsWithdrawPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <XCircle className="h-5 w-5 text-orange-600" />
-              ยืนยันการยกเลิกรายการเบิก?
+              <RotateCcw className="h-5 w-5 text-orange-600" />
+              ยืนยันการยกเลิกรายการเบิก (คืนของ)?
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-3">
-                <p>ต้องการยกเลิกใบเบิกเลขที่ <span className="font-bold">{docToCancel?.docNo}</span> ใช่หรือไม่? เอกสารจะยังคงอยู่ในระบบแต่จะแสดงสถานะเป็นยกเลิก</p>
-                {docToCancel?.status === 'ISSUED' && (
-                  <Alert variant="secondary" className="bg-orange-50 border-orange-200 text-orange-800">
-                    <RotateCcw className="h-4 w-4 text-orange-600" />
-                    <AlertTitle className="text-xs font-bold">ผลของการยกเลิก</AlertTitle>
-                    <AlertDescription className="text-[10px] space-y-1">
-                      <p>• ระบบจะ **คืนยอดสินค้าเข้าคลัง** ให้โดยอัตโนมัติ</p>
-                      <p>• ระบบจะบันทึกสาเหตุการยกเลิกใน Activity Log</p>
-                    </AlertDescription>
-                  </Alert>
+              <div className="space-y-3 text-slate-600">
+                <p>คุณต้องการยกเลิกใบเบิกเลขที่ <span className="font-bold text-slate-900">{docToCancel?.docNo}</span> ใช่หรือไม่?</p>
+                {docToCancel?.status === 'ISSUED' ? (
+                  <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-2">
+                    <div className="flex items-center gap-2 text-orange-800 font-bold text-sm">
+                        <Check className="h-4 w-4" /> ผลของการดำเนินการ:
+                    </div>
+                    <ul className="text-xs text-orange-700 space-y-1 list-disc pl-4">
+                      <li>ระบบจะทำการ <b>บวกยอดอะไหล่คืนเข้าสต็อก</b> ให้โดยอัตโนมัติ</li>
+                      <li>สถานะบิลจะเปลี่ยนเป็น "ยกเลิก" เพื่อเก็บไว้เป็นหลักฐาน</li>
+                      <li>บันทึกประวัติการคืนของใน Stock Activity Log</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <p>เอกสารฉบับนี้ยังเป็นฉบับร่าง (ยังไม่มีการตัดสต็อก) ระบบจะเปลี่ยนสถานะเป็นยกเลิกให้ทันทีค่ะ</p>
                 )}
               </div>
             </AlertDialogDescription>
@@ -418,7 +424,7 @@ export default function OfficePartsWithdrawPage() {
               disabled={isActionLoading}
               className="bg-orange-600 hover:bg-orange-700"
             >
-              {isActionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "ยืนยันยกเลิก"}
+              {isActionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "ยืนยันการยกเลิกและคืนของ"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
