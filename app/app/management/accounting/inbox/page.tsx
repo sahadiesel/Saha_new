@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
@@ -51,14 +52,14 @@ function AccountingInboxPageContent() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
 
+  // URL-driven state for the active tab to prevent sync loops
+  const activeTab = (searchParams.get('tab') as "receive" | "ar" | "receipts") || "receive";
+
   const [documents, setDocuments] = useState<WithId<DocumentType>[]>([]);
   const [approvedDocs, setApprovedDocs] = useState<WithId<DocumentType>[]>([]);
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  
-  const initialTab = (searchParams.get('tab') as "receive" | "ar" | "receipts") || "receive";
-  const [activeTab, setActiveTab] = useState<"receive" | "ar" | "receipts">(initialTab);
   
   const [indexCreationUrl, setIndexErrorUrl] = useState<string | null>(null);
 
@@ -80,20 +81,16 @@ function AccountingInboxPageContent() {
     return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'OFFICE' || profile.department === 'ACCOUNTING_HR';
   }, [profile]);
 
-  useEffect(() => {
-    const tab = searchParams.get('tab') as "receive" | "ar" | "receipts";
-    if (tab && tab !== activeTab) {
-      setActiveTab(tab);
-    }
-  }, [searchParams, activeTab]);
-
+  // Main Data Listeners
   useEffect(() => {
     if (!db || !hasPermission) {
       if (!hasPermission && !authLoading) setLoading(false);
       return;
     }
 
-    // Added OrderBy updatedAt desc to ensure new docs appear first
+    setLoading(true);
+
+    // 1. Documents for Review
     const docsQuery = query(
       collection(db, "documents"), 
       where("status", "in", ["PENDING_REVIEW", "APPROVED", "ISSUED", "UNPAID", "PARTIAL"]),
@@ -105,7 +102,6 @@ function AccountingInboxPageContent() {
       (snap) => { 
         const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
         const needingReview = all.filter(d => {
-            // For Tax Invoices, we also need to allow UNPAID/PARTIAL to show in the AR tab
             if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
             if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
             if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
@@ -117,11 +113,7 @@ function AccountingInboxPageContent() {
       },
       (err: FirestoreError) => { 
         if (err.code === 'permission-denied') {
-          const permissionError = new FirestorePermissionError({
-            path: 'documents',
-            operation: 'list',
-          } satisfies SecurityRuleContext);
-          errorEmitter.emit('permission-error', permissionError);
+          errorEmitter.emit('permission-error', new FirestorePermissionError({ path: 'documents', operation: 'list' }));
         } else if (err.message?.includes('requires an index')) {
             const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
             if (urlMatch) setIndexErrorUrl(urlMatch[0]);
@@ -130,6 +122,7 @@ function AccountingInboxPageContent() {
       }
     );
 
+    // 2. Approved Tax Invoices waiting for Receipt
     const approvedQuery = query(
         collection(db, "documents"),
         where("status", "==", "APPROVED"),
@@ -142,33 +135,23 @@ function AccountingInboxPageContent() {
         setApprovedDocs(data);
     });
 
-    const accountsQuery = query(
-      collection(db, "accountingAccounts"), 
-      where("isActive", "==", true)
-    );
+    // 3. Accounts for Payment selection
+    const accountsQuery = query(collection(db, "accountingAccounts"), where("isActive", "==", true));
+    const unsubAccounts = onSnapshot(accountsQuery, (snap) => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingAccount>));
+        data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+        setAccounts(data);
+    });
 
-    const unsubAccounts = onSnapshot(accountsQuery, 
-      (snap) => {
-          const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingAccount>));
-          data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-          setAccounts(data);
-      },
-      (err: FirestoreError) => {
-        if (err.code === 'permission-denied') {
-          const permissionError = new FirestorePermissionError({
-            path: 'accountingAccounts',
-            operation: 'list',
-          } satisfies SecurityRuleContext);
-          errorEmitter.emit('permission-error', permissionError);
-        }
-      }
-    );
-
-    return () => { unsubDocs(); unsubApproved(); unsubAccounts(); };
+    return () => {
+      unsubDocs();
+      unsubApproved();
+      unsubAccounts();
+    };
   }, [db, hasPermission, authLoading]);
 
   const filteredDocs = useMemo(() => {
-    let filteredByTab = documents.filter(doc => {
+    let result = documents.filter(doc => {
       if (activeTab === 'receive') {
         return (doc.paymentTerms === 'CASH' || !doc.paymentTerms) && doc.docType !== 'RECEIPT';
       }
@@ -181,22 +164,19 @@ function AccountingInboxPageContent() {
       return false;
     });
 
-    // Primary sorting already handled by query, but we keep this for searchTerm filtering consistency
     if (searchTerm) {
-      const lowerSearch = searchTerm.toLowerCase();
-      filteredByTab = filteredByTab.filter(doc => 
-        doc.docNo.toLowerCase().includes(lowerSearch) ||
-        (doc.customerSnapshot?.name || '').toLowerCase().includes(lowerSearch)
+      const q = searchTerm.toLowerCase();
+      result = result.filter(doc => 
+        doc.docNo.toLowerCase().includes(q) ||
+        (doc.customerSnapshot?.name || '').toLowerCase().includes(q)
       );
     }
-    return filteredByTab;
+    return result;
   }, [documents, activeTab, searchTerm]);
 
   const handleTabChange = (value: string) => {
-    const v = value as "receive" | "ar" | "receipts";
-    setActiveTab(v);
     const params = new URLSearchParams(searchParams.toString());
-    params.set('tab', v);
+    params.set('tab', value);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
@@ -211,11 +191,7 @@ function AccountingInboxPageContent() {
         toast({ title: "ย้ายงานเข้าประวัติสำเร็จ", description: "ใบงานถูกปิดและเก็บลงประวัติเรียบร้อยแล้วค่ะ" });
       }
     } catch (e: any) {
-      toast({ 
-        variant: "destructive", 
-        title: "ย้ายเข้าประวัติไม่สำเร็จ", 
-        description: "กรุณาแจ้งแอดมินเพื่อตรวจสอบข้อมูล" 
-      });
+      toast({ variant: "destructive", title: "ย้ายเข้าประวัติไม่สำเร็จ", description: "กรุณาแจ้งแอดมินเพื่อตรวจสอบข้อมูล" });
     } finally {
       setClosingJobId(null);
     }
@@ -259,13 +235,6 @@ function AccountingInboxPageContent() {
         if (jobId) {
             const jobRef = doc(db, 'jobs', jobId);
             jobSnap = await transaction.get(jobRef);
-        }
-
-        if (confirmingDoc.docType === 'TAX_INVOICE' && docSnap.data().status === 'APPROVED') {
-          throw new Error("ใบกำกับภาษีนี้ตรวจสอบแล้ว รอออกใบเสร็จค่ะ");
-        }
-        if (docSnap.data().status === 'PAID') {
-          throw new Error("รายการนี้ได้รับเงินเรียบร้อยแล้วค่ะ");
         }
 
         const customerName = confirmingDoc.customerSnapshot?.name || 'ลูกค้าทั่วไป';
@@ -370,22 +339,12 @@ function AccountingInboxPageContent() {
       });
 
       if (isDeliveryNote) {
-          toast({ title: "บันทึกรายรับและใบส่งของเรียบร้อย", description: "ระบบกำลังปิดงานและย้ายเข้าประวัติให้ค่ะ" });
           if (jobId) await callCloseJobFunction(jobId, 'PAID');
-      } else {
-          toast({ title: "ตรวจสอบความถูกต้องสำเร็จ", description: "บิลรอฝ่ายบัญชีออกใบเสร็จและยืนยันรับเงินตามระบบค่ะ" });
       }
       
       setConfirmingDoc(null);
     } catch(e: any) {
-      if (e.code === 'permission-denied') {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: 'documents/' + (confirmingDoc?.id || 'unknown'),
-          operation: 'write',
-        }));
-      } else {
-        setConfirmError(e.message || "Unknown error");
-      }
+      setConfirmError(e.message || "Unknown error");
     } finally {
       setIsSubmitting(false);
     }
@@ -402,7 +361,6 @@ function AccountingInboxPageContent() {
     };
     try {
       await updateDoc(docRef, updateData);
-      
       if (disputingDoc.jobId) {
           const jobRef = doc(db, 'jobs', disputingDoc.jobId);
           const jobSnap = await getDoc(jobRef);
@@ -415,12 +373,11 @@ function AccountingInboxPageContent() {
               });
           }
       }
-
       toast({ title: "ส่งเอกสารกลับเพื่อแก้ไขแล้ว" });
       setDisputingDoc(null);
       setDisputeReason("");
     } catch(e: any) {
-      errorEmitter.emit('permission-error', new FirestorePermissionError({ path: docRef.path, operation: 'update', requestResourceData: updateData }));
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -437,9 +394,6 @@ function AccountingInboxPageContent() {
 
     try {
       await runTransaction(db, async (transaction) => {
-        const docSnap = await transaction.get(docRef);
-        if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
-
         if (docObj.jobId) {
             transaction.update(doc(db, 'jobs', docObj.jobId), {
                 status: isDeliveryNote ? 'CLOSED' : 'PICKED_UP',
@@ -480,11 +434,11 @@ function AccountingInboxPageContent() {
           updatedAt: serverTimestamp()
         });
       });
-      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ", description: isDeliveryNote ? "ใบส่งของเครดิตเรียบร้อย ระบบกำลังปิดงานให้ค่ะ" : "" });
-      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
+      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ" });
+      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
-      errorEmitter.emit('permission-error', new FirestorePermissionError({ path: docRef.path, operation: 'write' }));
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -492,7 +446,7 @@ function AccountingInboxPageContent() {
 
   const handleDeleteReceipt = async (receipt: WithId<DocumentType>) => {
     if (!db || !profile || !isUserAdmin) return;
-    if (!confirm(`ยืนยันการลบใบเสร็จเลขที่ ${receipt.docNo} ใช่หรือไม่? ระบบจะล้างการผูกบิลเพื่อให้สามารถออกใบเสร็จใหม่ได้ค่ะ`)) return;
+    if (!confirm(`ยืนยันการลบใบเสร็จเลขที่ ${receipt.docNo} ใช่หรือไม่?`)) return;
     
     setIsSubmitting(true);
     try {
@@ -877,7 +831,7 @@ function AccountingInboxPageContent() {
             <Textarea id="reason" placeholder="เช่น ยอดเงินไม่ตรง, เลือกประเภทลูกค้าผิด..." value={disputeReason} onChange={e => setDisputeReason(e.target.value)} />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={setDisputingDoc(null)} disabled={isSubmitting}>ยกเลิก</Button>
+            <Button variant="outline" onClick={() => setDisputingDoc(null)} disabled={isSubmitting}>ยกเลิก</Button>
             <Button variant="destructive" onClick={handleDispute} disabled={isSubmitting || !disputeReason}>{isSubmitting && <Loader2 className="mr-2 animate-spin" />}ยืนยันตีกลับ</Button>
           </DialogFooter>
         </DialogContent>
