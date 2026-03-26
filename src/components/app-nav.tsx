@@ -10,7 +10,7 @@ import {
 
 import {
   Building, Factory, Wrench, Truck, Package, Landmark,
-  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays, Globe, ShoppingCart, FileText, LayoutList, Tags, ClipboardList, AlertTriangle
+  ChevronDown, QrCode, Smartphone, Settings, LogOut, Clock, History, Presentation, Users, Loader2, ShieldCheck, MessageSquareText, Receipt, CalendarDays, Globe, ShoppingCart, FileText, LayoutList, Tags, ClipboardList, AlertTriangle, Search
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -322,6 +322,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 {department === 'OFFICE' && (
                      <>
                         <SubNavLink href="/app/office/intake" label="เปิดงานใหม่ (Intake)" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/parts/search" label="ค้นหาสินค้า" icon={Search} onClick={onLinkClick} />
                         <OfficeJobManagementSubMenu onLinkClick={onLinkClick} />
                         
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/list-management') || pathname.startsWith('/app/management/customers')}>
