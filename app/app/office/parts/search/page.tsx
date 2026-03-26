@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -130,42 +131,48 @@ export default function OfficePartSearchPage() {
             <p className="text-xs opacity-60 mt-1">ค้นหาได้จาก 1,000 รายการล่าสุดในระบบค่ะ</p>
           </div>
         ) : filteredParts.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
+          <div className="space-y-2 animate-in fade-in duration-500">
             {filteredParts.map(part => (
-              <Card key={part.id} className="overflow-hidden hover:border-primary/50 transition-all shadow-sm hover:shadow-md group">
-                <div className="flex gap-4 p-4">
-                  <div className="relative h-24 w-24 rounded-xl border bg-muted shrink-0 overflow-hidden shadow-sm">
+              <Card key={part.id} className="overflow-hidden hover:border-primary/50 transition-all shadow-sm group">
+                <div className="flex flex-row items-center p-2 gap-4">
+                  {/* Small Image */}
+                  <div className="relative h-12 w-12 rounded border bg-muted shrink-0 overflow-hidden shadow-sm">
                     {part.imageUrl ? (
-                      <Image src={part.imageUrl} alt={part.name} fill className="object-cover group-hover:scale-110 transition-transform duration-500" />
+                      <Image src={part.imageUrl} alt={part.name} fill className="object-cover" />
                     ) : (
-                      <Box className="h-8 w-8 m-8 text-muted-foreground/30" />
+                      <Box className="h-6 w-6 m-3 text-muted-foreground/30" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0 flex flex-col justify-between py-1">
-                    <div className="space-y-1">
-                        <p className="font-black text-sm line-clamp-2 leading-tight text-slate-800">{part.name}</p>
-                        <p className="text-[10px] font-mono text-muted-foreground uppercase bg-muted w-fit px-1.5 rounded">{part.code}</p>
+                  
+                  {/* Name and Code */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-sm truncate text-slate-800">{part.name}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground uppercase bg-slate-100 px-1 rounded">{part.code}</span>
+                      <Badge variant="outline" className="text-[9px] h-4 py-0 px-1.5 font-normal opacity-70 border-primary/20">{part.categoryNameSnapshot}</Badge>
                     </div>
-                    <Badge variant="outline" className="text-[9px] py-0 w-fit h-4 font-normal">{part.categoryNameSnapshot}</Badge>
                   </div>
-                </div>
-                <Separator />
-                <div className="grid grid-cols-3 divide-x divide-border bg-slate-50/50">
-                  <div className="p-3 text-center">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ราคาขาย</p>
-                    <p className="text-lg font-black text-primary">฿{part.sellingPrice.toLocaleString()}</p>
-                  </div>
-                  <div className="p-3 text-center">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">สต็อกคงเหลือ</p>
-                    <p className={cn("text-lg font-black", part.stockQty <= 0 ? "text-destructive" : "text-slate-700")}>
+
+                  {/* Stock Info */}
+                  <div className="w-20 sm:w-24 text-center border-l border-dashed pl-2">
+                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">สต็อก</p>
+                    <p className={cn("text-sm font-black", part.stockQty <= 0 ? "text-destructive" : "text-slate-700")}>
                       {part.stockQty}
                     </p>
                   </div>
-                  <div className="p-3 text-center flex flex-col items-center justify-center">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ตำแหน่งเก็บ</p>
-                    <div className="flex items-center gap-1 text-sm font-bold text-blue-600 mt-0.5">
+
+                  {/* Price Info */}
+                  <div className="w-24 sm:w-32 text-right border-l border-dashed pl-2 pr-2">
+                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">ราคาขาย</p>
+                    <p className="text-sm font-black text-primary">฿{part.sellingPrice.toLocaleString()}</p>
+                  </div>
+
+                  {/* Location Info */}
+                  <div className="w-24 text-right hidden md:block border-l border-dashed pl-2 pr-2">
+                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">ตำแหน่งเก็บ</p>
+                    <div className="flex items-center justify-end gap-1 text-xs font-bold text-blue-600 mt-0.5">
                       <MapPin className="h-3 w-3" />
-                      <span className="truncate max-w-[80px]">{part.location || "-"}</span>
+                      <span className="truncate max-w-[60px]">{part.location || "-"}</span>
                     </div>
                   </div>
                 </div>
