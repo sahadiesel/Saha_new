@@ -1,4 +1,3 @@
-
 "use client"
 
 import Link from "next/link"
@@ -322,7 +321,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 {department === 'OFFICE' && (
                      <>
                         <SubNavLink href="/app/office/intake" label="เปิดงานใหม่ (Intake)" onClick={onLinkClick} />
-                        <SubNavLink href="/app/office/parts/search" label="ค้นหาสินค้า" onClick={onLinkClick} />
+                        <SubNavLink href="/app/office/search" label="ค้นหาสินค้า" onClick={onLinkClick} />
                         <OfficeJobManagementSubMenu onLinkClick={onLinkClick} />
                         
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/list-management') || pathname.startsWith('/app/management/customers')}>
