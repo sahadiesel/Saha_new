@@ -52,7 +52,6 @@ function AccountingInboxPageContent() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
 
-  // URL-driven state for the active tab to prevent sync loops
   const activeTab = (searchParams.get('tab') as "receive" | "ar" | "receipts") || "receive";
 
   const [documents, setDocuments] = useState<WithId<DocumentType>[]>([]);
@@ -81,74 +80,75 @@ function AccountingInboxPageContent() {
     return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'OFFICE' || profile.department === 'ACCOUNTING_HR';
   }, [profile]);
 
-  // Main Data Listeners
-  useEffect(() => {
-    if (!db || !hasPermission) {
-      if (!hasPermission && !authLoading) setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
-    // 1. Documents for Review
-    const docsQuery = query(
+  // STABILIZE QUERIES
+  const docsQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
       collection(db, "documents"), 
       where("status", "in", ["PENDING_REVIEW", "APPROVED", "ISSUED", "UNPAID", "PARTIAL"]),
       orderBy("updatedAt", "desc"),
       limit(200)
     );
+  }, [db, hasPermission]);
 
-    const unsubDocs = onSnapshot(docsQuery, 
-      (snap) => { 
-        const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
-        const needingReview = all.filter(d => {
-            if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
-            if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
-            if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
-            return false;
-        });
-        setDocuments(needingReview); 
-        setLoading(false);
-        setIndexErrorUrl(null);
-      },
-      (err: FirestoreError) => { 
-        if (err.code === 'permission-denied') {
-          errorEmitter.emit('permission-error', new FirestorePermissionError({ path: 'documents', operation: 'list' }));
-        } else if (err.message?.includes('requires an index')) {
-            const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-            if (urlMatch) setIndexErrorUrl(urlMatch[0]);
-        }
-        setLoading(false); 
-      }
-    );
-
-    // 2. Approved Tax Invoices waiting for Receipt
-    const approvedQuery = query(
+  const approvedQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
         collection(db, "documents"),
         where("status", "==", "APPROVED"),
         where("docType", "==", "TAX_INVOICE"),
         limit(100)
     );
-    const unsubApproved = onSnapshot(approvedQuery, (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId);
-        data.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
-        setApprovedDocs(data);
-    });
+  }, [db, hasPermission]);
 
-    // 3. Accounts for Payment selection
-    const accountsQuery = query(collection(db, "accountingAccounts"), where("isActive", "==", true));
-    const unsubAccounts = onSnapshot(accountsQuery, (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingAccount>));
-        data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-        setAccounts(data);
-    });
+  const accountsQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(collection(db, "accountingAccounts"), where("isActive", "==", true));
+  }, [db, hasPermission]);
 
-    return () => {
-      unsubDocs();
-      unsubApproved();
-      unsubAccounts();
-    };
-  }, [db, hasPermission, authLoading]);
+  // DATA LISTENERS
+  useEffect(() => {
+    if (!docsQuery) return;
+    setLoading(true);
+    return onSnapshot(docsQuery, (snap) => {
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
+      const needingReview = all.filter(d => {
+          if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
+          if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
+          if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
+          return false;
+      });
+      setDocuments(needingReview);
+      setLoading(false);
+      setIndexErrorUrl(null);
+    }, (err: FirestoreError) => {
+      if (err.code === 'permission-denied') {
+        errorEmitter.emit('permission-error', new FirestorePermissionError({ path: 'documents', operation: 'list' }));
+      } else if (err.message?.includes('requires an index')) {
+        const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+      }
+      setLoading(false);
+    });
+  }, [docsQuery]);
+
+  useEffect(() => {
+    if (!approvedQuery) return;
+    return onSnapshot(approvedQuery, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId);
+      data.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
+      setApprovedDocs(data);
+    });
+  }, [approvedQuery]);
+
+  useEffect(() => {
+    if (!accountsQuery) return;
+    return onSnapshot(accountsQuery, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingAccount>));
+      data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      setAccounts(data);
+    });
+  }, [accountsQuery]);
 
   const filteredDocs = useMemo(() => {
     let result = documents.filter(doc => {
@@ -435,7 +435,7 @@ function AccountingInboxPageContent() {
         });
       });
       toast({ title: "ตั้งยอดลูกหนี้สำเร็จ" });
-      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(jobId, 'UNPAID');
+      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
       toast({ variant: 'destructive', title: 'Error', description: e.message });
