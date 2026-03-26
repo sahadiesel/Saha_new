@@ -42,7 +42,7 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 
-const formatCurrency = (value: number) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function AccountingInboxPageContent() {
   const { profile, loading: authLoading } = useAuth();
@@ -80,7 +80,7 @@ function AccountingInboxPageContent() {
     return profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'OFFICE' || profile.department === 'ACCOUNTING_HR';
   }, [profile]);
 
-  // STABILIZE QUERIES
+  // STABILIZE QUERIES TO PREVENT ASSERTION ERRORS
   const docsQuery = useMemo(() => {
     if (!db || !hasPermission) return null;
     return query(
@@ -106,11 +106,11 @@ function AccountingInboxPageContent() {
     return query(collection(db, "accountingAccounts"), where("isActive", "==", true));
   }, [db, hasPermission]);
 
-  // DATA LISTENERS
+  // DATA LISTENERS - Optimized to handle loading only on first success/failure
   useEffect(() => {
-    if (!docsQuery) return;
-    setLoading(true);
-    return onSnapshot(docsQuery, (snap) => {
+    if (!docsQuery || !db) return;
+    
+    const unsubscribe = onSnapshot(docsQuery, (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
       const needingReview = all.filter(d => {
           if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
@@ -130,25 +130,29 @@ function AccountingInboxPageContent() {
       }
       setLoading(false);
     });
-  }, [docsQuery]);
+
+    return () => unsubscribe();
+  }, [docsQuery, db]);
 
   useEffect(() => {
-    if (!approvedQuery) return;
-    return onSnapshot(approvedQuery, (snap) => {
+    if (!approvedQuery || !db) return;
+    const unsubscribe = onSnapshot(approvedQuery, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId);
       data.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
       setApprovedDocs(data);
     });
-  }, [approvedQuery]);
+    return () => unsubscribe();
+  }, [approvedQuery, db]);
 
   useEffect(() => {
-    if (!accountsQuery) return;
-    return onSnapshot(accountsQuery, (snap) => {
+    if (!accountsQuery || !db) return;
+    const unsubscribe = onSnapshot(accountsQuery, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingAccount>));
       data.sort((a, b) => a.name.localeCompare(b.name, 'th'));
       setAccounts(data);
     });
-  }, [accountsQuery]);
+    return () => unsubscribe();
+  }, [accountsQuery, db]);
 
   const filteredDocs = useMemo(() => {
     let result = documents.filter(doc => {
