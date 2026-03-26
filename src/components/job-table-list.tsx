@@ -11,17 +11,37 @@ import {
   limit, 
   or,
   and,
+  deleteDoc,
+  doc,
   type OrderByDirection, 
   type QueryConstraint, 
   type FirestoreError 
 } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
+import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, Eye, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, Eye, AlertCircle, ExternalLink, MoreHorizontal, Trash2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { Job, JobStatus, JobDepartment } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
@@ -70,12 +90,18 @@ export function JobTableList({
   year = new Date().getFullYear(),
 }: JobTableListProps) {
   const { db } = useFirebase();
+  const { profile } = useAuth();
   const { toast } = useToast();
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<any>(null);
   const [indexUrl, setIndexUrl] = useState<string | null>(null);
+  
+  const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT';
 
   const filterConfig = useMemo(() => {
     const excludeArray = excludeStatus ? (Array.isArray(excludeStatus) ? excludeStatus : [excludeStatus]) : [];
@@ -110,7 +136,6 @@ export function JobTableList({
         filters.push(where('status', 'in', filterConfig.inStatus));
       }
       
-      // FIX: Use and() to wrap multiple filters if composite filters (or) are present
       const q = query(
         collection(db, collectionName), 
         and(...filters),
@@ -154,6 +179,22 @@ export function JobTableList({
     fetchData();
   }, [fetchData]);
 
+  const handleDeleteJob = async () => {
+    if (!db || !jobToDelete) return;
+    setIsDeleting(true);
+    try {
+      const collectionName = source === 'archive' ? `jobsArchive_${year}` : 'jobs';
+      await deleteDoc(doc(db, collectionName, jobToDelete.id));
+      toast({ title: "ลบรายการงานซ่อมสำเร็จ" });
+      setJobs(prev => prev.filter(j => j.id !== jobToDelete.id));
+      setJobToDelete(null);
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: "ลบไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (indexUrl) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 rounded-lg border-2 border-dashed">
@@ -190,42 +231,93 @@ export function JobTableList({
   }
 
   return (
-    <Card className="border-none shadow-none bg-transparent">
-      <CardContent className="p-0">
-        <div className="border rounded-lg bg-card overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-6">ลูกค้า (Customer)</TableHead>
-                <TableHead className="hidden md:table-cell">แผนก</TableHead>
-                <TableHead className="hidden lg:table-cell">รายละเอียด</TableHead>
-                <TableHead>สถานะ</TableHead>
-                <TableHead className="hidden md:table-cell">อัปเดตล่าสุด</TableHead>
-                <TableHead className="text-right pr-6">จัดการ</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {jobs.map(job => (
-                <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
-                  <TableCell className="pl-6 py-4">
-                    <div className="font-semibold">{job.customerSnapshot.name}</div>
-                    <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
-                  <TableCell className="max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground">{job.description}</TableCell>
-                  <TableCell><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
-                  <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
-                  <TableCell className="text-right pr-6">
-                    <Button asChild variant="secondary" size="icon" className="h-8 w-8 rounded-full shadow-sm">
-                      <Link href={`/app/jobs/${job.id}`}><Eye className="h-4 w-4" /></Link>
-                    </Button>
-                  </TableCell>
+    <>
+      <Card className="border-none shadow-none bg-transparent">
+        <CardContent className="p-0">
+          <div className="border rounded-lg bg-card overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">ลูกค้า (Customer)</TableHead>
+                  <TableHead className="hidden md:table-cell">แผนก</TableHead>
+                  <TableHead className="hidden lg:table-cell">รายละเอียด</TableHead>
+                  <TableHead>สถานะ</TableHead>
+                  <TableHead className="hidden md:table-cell">อัปเดตล่าสุด</TableHead>
+                  <TableHead className="text-right pr-6">จัดการ</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
+              </TableHeader>
+              <TableBody>
+                {jobs.map(job => (
+                  <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
+                    <TableCell className="pl-6 py-4">
+                      <div className="font-semibold">{job.customerSnapshot.name}</div>
+                      <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
+                    <TableCell className="max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground">{job.description}</TableCell>
+                    <TableCell><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
+                    <TableCell className="text-right pr-6">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem asChild>
+                            <Link href={`/app/jobs/${job.id}`} className="flex items-center">
+                              <Eye className="mr-2 h-4 w-4" />
+                              ดูรายละเอียด
+                            </Link>
+                          </DropdownMenuItem>
+                          {isUserAdmin && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem 
+                                className="text-destructive focus:text-destructive font-medium"
+                                onClick={() => setJobToDelete(job)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                ลบรายการงานซ่อม
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={!!jobToDelete} onOpenChange={(o) => !o && setJobToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              ยืนยันการลบงานซ่อม?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              คุณกำลังจะลบงานซ่อมของ <span className="font-bold">"{jobToDelete?.customerSnapshot.name}"</span> ออกจากระบบอย่างถาวร 
+              การกระทำนี้ไม่สามารถย้อนกลับได้ และข้อมูลกิจกรรมทั้งหมดในใบงานนี้จะหายไปค่ะ
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteJob} 
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={isDeleting}
+            >
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "ยืนยันการลบถาวร"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
