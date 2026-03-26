@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
-import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc, writeBatch, deleteDoc } from "firebase/firestore";
+import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc, writeBatch, deleteDoc, orderBy } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -93,9 +93,11 @@ function AccountingInboxPageContent() {
       return;
     }
 
+    // Added OrderBy updatedAt desc to ensure new docs appear first
     const docsQuery = query(
       collection(db, "documents"), 
       where("status", "in", ["PENDING_REVIEW", "APPROVED", "ISSUED", "UNPAID", "PARTIAL"]),
+      orderBy("updatedAt", "desc"),
       limit(200)
     );
 
@@ -103,8 +105,9 @@ function AccountingInboxPageContent() {
       (snap) => { 
         const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
         const needingReview = all.filter(d => {
-            if (d.docType === 'DELIVERY_NOTE') return d.status === 'PENDING_REVIEW' || d.status === 'APPROVED';
-            if (d.docType === 'TAX_INVOICE') return d.status === 'PENDING_REVIEW';
+            // For Tax Invoices, we also need to allow UNPAID/PARTIAL to show in the AR tab
+            if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
+            if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
             if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
             return false;
         });
@@ -178,20 +181,15 @@ function AccountingInboxPageContent() {
       return false;
     });
 
-    filteredByTab.sort((a, b) => {
-        const dateCompare = (b.docDate || "").localeCompare(a.docDate || "");
-        if (dateCompare !== 0) return dateCompare;
-        const timeA = a.createdAt?.toMillis?.() || 0;
-        const timeB = b.createdAt?.toMillis?.() || 0;
-        return timeB - timeA;
-    });
-
-    if (!searchTerm) return filteredByTab;
-    const lowerSearch = searchTerm.toLowerCase();
-    return filteredByTab.filter(doc => 
-      doc.docNo.toLowerCase().includes(lowerSearch) ||
-      (doc.customerSnapshot?.name || '').toLowerCase().includes(lowerSearch)
-    );
+    // Primary sorting already handled by query, but we keep this for searchTerm filtering consistency
+    if (searchTerm) {
+      const lowerSearch = searchTerm.toLowerCase();
+      filteredByTab = filteredByTab.filter(doc => 
+        doc.docNo.toLowerCase().includes(lowerSearch) ||
+        (doc.customerSnapshot?.name || '').toLowerCase().includes(lowerSearch)
+      );
+    }
+    return filteredByTab;
   }, [documents, activeTab, searchTerm]);
 
   const handleTabChange = (value: string) => {
@@ -519,13 +517,23 @@ function AccountingInboxPageContent() {
     }
   };
 
-  if (authLoading) return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
+  if (authLoading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
   if (!hasPermission) return <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-4"><AlertCircle className="h-12 w-12 text-destructive/50" /><p className="text-lg">ไม่มีสิทธิ์เข้าถึง</p></div>;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Inbox บัญชี (ตรวจสอบรายการขาย)" description="ตรวจสอบความถูกต้องของบิลก่อนลงสมุดบัญชีรายวัน" />
       
+      {indexCreationUrl && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>ต้องสร้างดัชนี (Index) ก่อนดูรายการ</AlertTitle>
+          <Button asChild variant="outline" size="sm" className="mt-2 bg-white text-destructive">
+            <a href={indexCreationUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" />สร้าง Index</a>
+          </Button>
+        </Alert>
+      )}
+
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
           <TabsList>
@@ -869,7 +877,7 @@ function AccountingInboxPageContent() {
             <Textarea id="reason" placeholder="เช่น ยอดเงินไม่ตรง, เลือกประเภทลูกค้าผิด..." value={disputeReason} onChange={e => setDisputeReason(e.target.value)} />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDisputingDoc(null)} disabled={isSubmitting}>ยกเลิก</Button>
+            <Button variant="outline" onClick={setDisputingDoc(null)} disabled={isSubmitting}>ยกเลิก</Button>
             <Button variant="destructive" onClick={handleDispute} disabled={isSubmitting || !disputeReason}>{isSubmitting && <Loader2 className="mr-2 animate-spin" />}ยืนยันตีกลับ</Button>
           </DialogFooter>
         </DialogContent>
