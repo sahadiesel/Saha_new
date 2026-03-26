@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -9,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, Search, Box, MapPin, ScanBarcode, X } from "lucide-react";
+import { Loader2, Search, Box, MapPin, ScanBarcode, X, AlertCircle } from "lucide-react";
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
@@ -153,17 +152,17 @@ export default function OfficePartSearchPage() {
                 <Separator />
                 <div className="grid grid-cols-3 divide-x divide-border bg-slate-50/50">
                   <div className="p-3 text-center">
-                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ราคาขาย</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ราคาขาย</p>
                     <p className="text-lg font-black text-primary">฿{part.sellingPrice.toLocaleString()}</p>
                   </div>
                   <div className="p-3 text-center">
-                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1">สต็อกคงเหลือ</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">สต็อกคงเหลือ</p>
                     <p className={cn("text-lg font-black", part.stockQty <= 0 ? "text-destructive" : "text-slate-700")}>
                       {part.stockQty}
                     </p>
                   </div>
                   <div className="p-3 text-center flex flex-col items-center justify-center">
-                    <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ตำแหน่งเก็บ</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">ตำแหน่งเก็บ</p>
                     <div className="flex items-center gap-1 text-sm font-bold text-blue-600 mt-0.5">
                       <MapPin className="h-3 w-3" />
                       <span className="truncate max-w-[80px]">{part.location || "-"}</span>
