@@ -263,7 +263,7 @@ export default function OfficePartsWithdrawPage() {
                     <TableHead className="w-[110px]">เลขที่ใบเบิก</TableHead>
                     <TableHead className="w-[100px]">วันที่</TableHead>
                     <TableHead className="w-[110px]">อ้างอิงใบงาน</TableHead>
-                    <TableHead className="w-[200px]">ผู้รับ/ลูกค้า</TableHead>
+                    <TableHead className="max-w-[180px]">ผู้รับ/ลูกค้า</TableHead>
                     <TableHead className="text-center w-[100px]">สถานะ</TableHead>
                     <TableHead className="text-right w-[120px]">มูลค่ารวม</TableHead>
                     <TableHead className="text-right w-[60px]">จัดการ</TableHead>
@@ -274,7 +274,7 @@ export default function OfficePartsWithdrawPage() {
                     <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
                   ) : filtered.length > 0 ? (
                     filtered.map(w => {
-                      const s = w.status.toUpperCase();
+                      const s = w.status?.toUpperCase() || 'DRAFT';
                       return (
                         <TableRow key={w.id} className={cn("hover:bg-muted/30 transition-colors", s === 'CANCELLED' && "opacity-50 grayscale")}>
                           <TableCell className="font-bold font-mono text-primary text-xs whitespace-nowrap">
@@ -289,7 +289,7 @@ export default function OfficePartsWithdrawPage() {
                             ) : <span className="text-muted-foreground text-xs">-</span>}
                           </TableCell>
                           <TableCell>
-                            <div className="text-sm font-semibold w-[200px] truncate" title={w.customerSnapshot?.name}>
+                            <div className="text-sm font-semibold max-w-[180px] truncate" title={w.customerSnapshot?.name}>
                                 {w.customerSnapshot?.name}
                             </div>
                           </TableCell>

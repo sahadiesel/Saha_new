@@ -100,7 +100,6 @@ export default function AdminUsersPage() {
     setFoundDocs([]);
     try {
       const collectionName = searchDocCategory === 'SALES' ? "documents" : "purchaseDocs";
-      // Fetch latest 1000 docs to allow partial matching client-side for better UX
       const q = query(collection(db, collectionName), orderBy("createdAt", "desc"), limit(1000));
       const snap = await getDocs(q);
       
@@ -135,12 +134,10 @@ export default function AdminUsersPage() {
     try {
       const batch = writeBatch(db);
       
-      // Determine collection based on data structure or category
       const isPurchase = searchDocCategory === 'PURCHASE' || (docObj.vendorSnapshot && !docObj.docType);
       const collectionName = isPurchase ? 'purchaseDocs' : 'documents';
       const docRef = doc(db, collectionName, docObj.id);
       
-      // 1. Revert Document Status
       const updatePayload: any = {
         status: 'DRAFT',
         updatedAt: serverTimestamp(),
@@ -148,7 +145,6 @@ export default function AdminUsersPage() {
       };
 
       if (!isPurchase) {
-          // Sales Doc specific removals
           updatePayload.arStatus = deleteField();
           updatePayload.receiptStatus = deleteField();
           updatePayload.paymentSummary = deleteField();
@@ -157,7 +153,6 @@ export default function AdminUsersPage() {
           updatePayload.confirmedPayment = deleteField();
           updatePayload.suggestedPayments = deleteField();
       } else {
-          // Purchase Doc specific removals
           updatePayload.apObligationId = deleteField();
           updatePayload.accountingEntryId = deleteField();
           updatePayload.isReceived = false; 
@@ -166,23 +161,19 @@ export default function AdminUsersPage() {
 
       batch.update(docRef, updatePayload);
 
-      // 2. Find and delete associated Obligations (AR/AP)
       const obQuery = query(collection(db, 'accountingObligations'), where('sourceDocId', '==', docObj.id));
       const obSnap = await getDocs(obQuery);
       obSnap.docs.forEach(d => batch.delete(d.ref));
 
-      // 3. Find and delete associated Accounting Entries
       const entryQuery = query(collection(db, 'accountingEntries'), where('sourceDocId', '==', docObj.id));
       const entrySnap = await getDocs(entryQuery);
       entrySnap.docs.forEach(d => batch.delete(d.ref));
 
-      // 4. Find and delete associated Claims
       const claimCollection = isPurchase ? "purchaseClaims" : "paymentClaims";
       const claimQuery = query(collection(db, claimCollection), where(isPurchase ? "purchaseDocId" : "sourceDocId", "==", docObj.id));
       const claimSnap = await getDocs(claimQuery);
       claimSnap.docs.forEach(d => batch.delete(d.ref));
 
-      // 5. Reset Job Status if linked
       if (docObj.jobId) {
         const jobRef = doc(db, 'jobs', docObj.jobId);
         const jobSnap = await getDoc(jobRef);
@@ -257,13 +248,10 @@ export default function AdminUsersPage() {
     }
   };
 
-  // --- Database Maintenance Functions ---
-
   const fetchUnusedTokenCount = useCallback(async () => {
     if (!db || !isUserAdmin) return;
     setIsLoadingCount(true);
     try {
-      // Find tokens that are still active (not yet cleared by scan)
       const q = query(collection(db, "kioskTokens"), where("isActive", "==", true));
       const snap = await getCountFromServer(q);
       setUnusedTokenCount(snap.data().count);
