@@ -1,3 +1,5 @@
+import type { Document } from "@/lib/types";
+
 export const DEPARTMENT_LABELS: Record<string, string> = {
     MANAGEMENT: "ฝ่ายบริหาร",
     OFFICE: "แผนกออฟฟิศ",
@@ -148,6 +150,21 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
     }
 
     return DOC_STATUS_LABELS[s] || status;
+}
+
+/** สถานะแสดงในรายการใบเบิก (รองรับคืนสต็อกบางบรรทัด / เบิกงานบางส่วน) */
+export function withdrawalListStatusLabel(doc: Document): string {
+    const s = (doc.status || "").toUpperCase();
+    if (s === "CANCELLED") return "ยกเลิก";
+    if (s === "DRAFT") return "ฉบับร่าง";
+    if (s === "ISSUED") {
+        const anyReturned = doc.items?.some((i) => (i.returnedToStockQty || 0) > 0);
+        if (anyReturned) return "เบิก (คืนบางส่วน)";
+        if (doc.jobWithdrawalCompletion === "PARTIAL") return "เบิกบางส่วน (งาน)";
+        if (doc.jobWithdrawalCompletion === "COMPLETE") return "เบิกครบ (งาน)";
+        return "เบิก";
+    }
+    return docStatusLabel(doc.status, "WITHDRAWAL");
 }
 
 export function payTypeLabel(payType: string | undefined): string {

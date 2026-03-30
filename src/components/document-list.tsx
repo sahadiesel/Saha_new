@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, Search, AlertCircle, MoreHorizontal, XCircle, Trash2, Edit, Eye, ChevronLeft, ChevronRight, ExternalLink, RotateCcw, Hash, Filter } from "lucide-react";
+import { Loader2, Search, AlertCircle, MoreHorizontal, XCircle, Trash2, Edit, Eye, ChevronLeft, ChevronRight, ExternalLink, RotateCcw, Hash, Filter, Receipt } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -21,6 +21,8 @@ import type { Document, DocType } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 
@@ -87,6 +89,12 @@ export function DocumentList({
   const [isActionLoading, setIsActionLoading] = useState(false);
   
   const [currentPage, setCurrentPage] = useState(0);
+
+  const [billingReceiptOpen, setBillingReceiptOpen] = useState(false);
+  const [billingReceiptSource, setBillingReceiptSource] = useState<Document | null>(null);
+  const [billingLines, setBillingLines] = useState<{ id: string; docNo: string; balance: number }[]>([]);
+  const [billingPickLoading, setBillingPickLoading] = useState(false);
+  const [billingSelected, setBillingSelected] = useState<Record<string, boolean>>({});
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
 
@@ -220,6 +228,43 @@ export function DocumentList({
     } catch (err: any) { toast({ variant: 'destructive', title: "Error", description: err.message }); } finally { setIsActionLoading(false); setIsDeleteAlertOpen(false); setDocToAction(null); }
   };
 
+  const openBillingReceiptPicker = async (bn: Document) => {
+    if (!db) return;
+    setBillingReceiptSource(bn);
+    setBillingReceiptOpen(true);
+    setBillingPickLoading(true);
+    setBillingLines([]);
+    setBillingSelected({});
+    try {
+      const ids = bn.invoiceIds || [];
+      const rows = await Promise.all(
+        ids.map(async (invoiceId) => {
+          const s = await getDoc(doc(db, "documents", invoiceId));
+          if (!s.exists()) return null;
+          const d = s.data() as Document;
+          return {
+            id: s.id,
+            docNo: d.docNo,
+            balance: d.paymentSummary?.balance ?? d.grandTotal,
+          };
+        })
+      );
+      const ok = rows.filter(Boolean) as { id: string; docNo: string; balance: number }[];
+      setBillingLines(ok);
+      const sel: Record<string, boolean> = {};
+      ok.forEach((r) => {
+        sel[r.id] = true;
+      });
+      setBillingSelected(sel);
+    } catch (er: unknown) {
+      const msg = er instanceof Error ? er.message : "Unknown error";
+      toast({ variant: "destructive", title: "โหลดรายการไม่สำเร็จ", description: msg });
+      setBillingReceiptOpen(false);
+    } finally {
+      setBillingPickLoading(false);
+    }
+  };
+
   const confirmRevertPayment = async () => {
     if (!db || !docToAction || !profile) return;
     setIsActionLoading(true);
@@ -252,13 +297,99 @@ export function DocumentList({
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office') ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}` : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
-                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm font-medium">{docItem.customerSnapshot?.name || "-"}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
+                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm font-medium">{docItem.customerSnapshot?.name || "-"}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
         </CardContent>
         {totalPages > 1 && (<CardFooter className="justify-between"><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>
       <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+
+      <Dialog
+        open={billingReceiptOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setBillingReceiptOpen(false);
+            setBillingReceiptSource(null);
+            setBillingLines([]);
+            setBillingSelected({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>ออกใบเสร็จจากใบวางบิล</DialogTitle>
+            <DialogDescription>
+              เลือกบิลย่อยที่จะรวมในใบเสร็จ (เทียบเท่าการเลือกทีละใบในหน้าลูกหนี้) — {billingReceiptSource?.docNo}
+            </DialogDescription>
+          </DialogHeader>
+          {billingPickLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="space-y-3 py-2">
+              {billingLines.map((row) => (
+                <label
+                  key={row.id}
+                  className="flex items-center gap-3 rounded-md border p-3 cursor-pointer hover:bg-muted/40"
+                >
+                  <Checkbox
+                    checked={!!billingSelected[row.id]}
+                    onCheckedChange={(v) =>
+                      setBillingSelected((prev) => ({ ...prev, [row.id]: v === true }))
+                    }
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-sm font-medium">{row.docNo}</div>
+                    <div className="text-xs text-muted-foreground">
+                      ยอดคงค้าง {row.balance.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setBillingReceiptOpen(false);
+                setBillingReceiptSource(null);
+              }}
+            >
+              ปิด
+            </Button>
+            <Button
+              disabled={
+                billingPickLoading ||
+                !billingReceiptSource ||
+                !Object.entries(billingSelected).some(([, v]) => v)
+              }
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => {
+                if (!billingReceiptSource) return;
+                const ids = Object.entries(billingSelected)
+                  .filter(([, v]) => v)
+                  .map(([k]) => k);
+                if (ids.length === 0) return;
+                const customerId =
+                  billingReceiptSource.customerId || billingReceiptSource.customerSnapshot?.id || "";
+                const q = new URLSearchParams();
+                q.set("tab", "new");
+                if (customerId) q.set("customerId", customerId);
+                q.set("sourceDocIds", ids.join(","));
+                router.push(`/app/management/accounting/documents/receipt?${q.toString()}`);
+                setBillingReceiptOpen(false);
+                setBillingReceiptSource(null);
+              }}
+            >
+              <Receipt className="mr-2 h-4 w-4" />
+              ไปหน้าออกใบเสร็จ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo, Suspense } from "react";
-import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, where, getDocs } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, deleteField } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
@@ -32,7 +32,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { Customer } from "@/lib/types";
+import type { Customer, CustomerTaxProfile } from "@/lib/types";
+import {
+  normalizeCustomerPhones,
+  normalizeCustomerTaxProfiles,
+  dedupePhoneList,
+  findCustomerPhoneConflict,
+} from "@/lib/customer-utils";
 import { ACQUISITION_SOURCES } from "@/lib/constants";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -44,27 +50,86 @@ import { cn } from "@/lib/utils";
 
 export const dynamic = 'force-dynamic';
 
-const customerSchema = z.object({
-  name: z.string().min(1, "กรุณากรอกชื่อลูกค้า"),
-  phone: z.string().min(1, "กรุณากรอกเบอร์โทรศัพท์"),
-  detail: z.string().optional().default(""),
-  useTax: z.boolean().default(false),
-  taxName: z.string().optional(),
-  taxAddress: z.string().optional(),
-  taxId: z.string().optional(),
+const taxProfileRowSchema = z.object({
+  id: z.string(),
+  label: z.string().optional(),
+  taxName: z.string(),
+  taxAddress: z.string(),
+  taxId: z.string(),
   taxPhone: z.string().optional(),
-  taxBranchType: z.enum(['HEAD_OFFICE', 'BRANCH']).optional(),
+  taxBranchType: z.enum(["HEAD_OFFICE", "BRANCH"]),
   taxBranchNo: z.string().optional(),
-  acquisitionSource: z.enum(ACQUISITION_SOURCES, {
-    errorMap: () => ({ message: "กรุณาเลือกช่องทางที่ลูกค้ารู้จักร้าน เพื่อใช้ทำสถิติในแดชบอร์ด" })
-  }),
-}).refine(data => !data.useTax || (data.taxName && data.taxAddress && data.taxId), {
-  message: "กรุณากรอกข้อมูลภาษีให้ครบถ้วนเมื่อเลือก 'ต้องการใบกำกับภาษี'",
-  path: ["taxName"], 
-}).refine(data => !data.useTax || data.taxBranchType !== 'BRANCH' || (data.taxBranchNo && data.taxBranchNo.length === 5), {
-  message: "กรุณาระบุรหัสสาขา 5 หลัก",
-  path: ["taxBranchNo"],
 });
+
+const customerSchema = z
+  .object({
+    name: z.string().min(1, "กรุณากรอกชื่อลูกค้า"),
+    phones: z.array(z.string()),
+    detail: z.string().optional().default(""),
+    useTax: z.boolean().default(false),
+    taxProfiles: z.array(taxProfileRowSchema),
+    acquisitionSource: z.enum(ACQUISITION_SOURCES, {
+      errorMap: () => ({
+        message: "กรุณาเลือกช่องทางที่ลูกค้ารู้จักร้าน เพื่อใช้ทำสถิติในแดชบอร์ด",
+      }),
+    }),
+  })
+  .superRefine((data, ctx) => {
+    const trimmed = data.phones.map((p) => p.trim()).filter(Boolean);
+    if (trimmed.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "กรุณากรอกอย่างน้อย 1 เบอร์โทรศัพท์",
+        path: ["phones", 0],
+      });
+    }
+    const keys = trimmed.map((p) => p.replace(/\D/g, ""));
+    if (keys.length > 0 && new Set(keys).size !== keys.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "มีเบอร์โทรซ้ำในฟอร์ม",
+        path: ["phones", 0],
+      });
+    }
+    if (!data.useTax) return;
+    if (data.taxProfiles.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "กรุณาเพิ่มอย่างน้อย 1 ชุดชื่อ/ที่อยู่สำหรับใบกำกับภาษี",
+        path: ["taxProfiles"],
+      });
+      return;
+    }
+    data.taxProfiles.forEach((p, i) => {
+      if (!p.taxName?.trim() || !p.taxAddress?.trim() || !p.taxId?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "กรุณากรอกชื่อ ที่อยู่ และเลขผู้เสียภาษีให้ครบทุกชุด",
+          path: ["taxProfiles", i, "taxName"],
+        });
+      }
+      if (p.taxBranchType === "BRANCH" && (!p.taxBranchNo || p.taxBranchNo.length !== 5)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "กรุณาระบุรหัสสาขา 5 หลัก",
+          path: ["taxProfiles", i, "taxBranchNo"],
+        });
+      }
+    });
+  });
+
+function emptyTaxProfileRow(): CustomerTaxProfile {
+  return {
+    id: typeof crypto !== "undefined" ? crypto.randomUUID() : `tp_${Date.now()}`,
+    label: "",
+    taxName: "",
+    taxAddress: "",
+    taxId: "",
+    taxPhone: "",
+    taxBranchType: "HEAD_OFFICE",
+    taxBranchNo: "00000",
+  };
+}
 
 function CustomersContent() {
   const { db } = useFirebase();
@@ -92,20 +157,29 @@ function CustomersContent() {
     resolver: zodResolver(customerSchema),
     defaultValues: {
       name: "",
-      phone: "",
+      phones: [""],
       detail: "",
       useTax: false,
-      taxName: "",
-      taxAddress: "",
-      taxId: "",
-      taxPhone: "",
-      taxBranchType: 'HEAD_OFFICE',
-      taxBranchNo: '00000',
+      taxProfiles: [],
+      acquisitionSource: undefined,
     },
   });
-  
+
+  const { fields: phoneFields, append: appendPhone, remove: removePhone } = useFieldArray({
+    control: form.control,
+    name: "phones",
+  });
+
+  const {
+    fields: taxProfileFields,
+    append: appendTaxProfile,
+    remove: removeTaxProfile,
+  } = useFieldArray({
+    control: form.control,
+    name: "taxProfiles",
+  });
+
   const useTax = form.watch("useTax");
-  const taxBranchType = form.watch("taxBranchType");
 
   useEffect(() => {
     if (!db) return;
@@ -115,9 +189,22 @@ function CustomersContent() {
       setCustomers(customersData);
       setLoading(false);
       
+      const editCustomerId = searchParams.get("editCustomerId");
       const editPhone = searchParams.get("editPhone");
-      if (editPhone && customersData.length > 0) {
-        const target = customersData.find(c => c.phone === editPhone);
+      if (customersData.length > 0) {
+        let target: Customer | undefined;
+        if (editCustomerId) {
+          target = customersData.find((c) => c.id === editCustomerId);
+        }
+        if (!target && editPhone) {
+          const q = editPhone.trim();
+          target = customersData.find(
+            (c) =>
+              normalizeCustomerPhones(c).some(
+                (p) => p === q || p.replace(/\D/g, "") === q.replace(/\D/g, "")
+              )
+          );
+        }
         if (target) {
           setEditingCustomer(target);
           setIsDialogOpen(true);
@@ -150,12 +237,21 @@ function CustomersContent() {
 
     if (searchTerm.trim()) {
       const lowercasedFilter = searchTerm.toLowerCase();
-      result = result.filter(customer =>
-        customer.name.toLowerCase().includes(lowercasedFilter) ||
-        customer.phone.includes(searchTerm) ||
-        (customer.taxName || "").toLowerCase().includes(lowercasedFilter) ||
-        (customer.detail || "").toLowerCase().includes(lowercasedFilter)
-      );
+      const qDigits = searchTerm.replace(/\D/g, "");
+      result = result.filter((customer) => {
+        const phones = normalizeCustomerPhones(customer);
+        const taxLabels = normalizeCustomerTaxProfiles(customer)
+          .map((p) => `${p.label || ""} ${p.taxName} ${p.taxId}`)
+          .join(" ")
+          .toLowerCase();
+        return (
+          customer.name.toLowerCase().includes(lowercasedFilter) ||
+          phones.some((p) => p.includes(searchTerm.trim()) || (qDigits && p.replace(/\D/g, "").includes(qDigits))) ||
+          (customer.taxName || "").toLowerCase().includes(lowercasedFilter) ||
+          taxLabels.includes(lowercasedFilter) ||
+          (customer.detail || "").toLowerCase().includes(lowercasedFilter)
+        );
+      });
     }
     return result;
   }, [customers, searchTerm, taxFilter]);
@@ -171,34 +267,37 @@ function CustomersContent() {
   useEffect(() => {
     if (isDialogOpen) {
       if (editingCustomer) {
+        const phones = normalizeCustomerPhones(editingCustomer);
+        const rawProfiles = normalizeCustomerTaxProfiles(editingCustomer);
+        const taxProfilesForForm: CustomerTaxProfile[] =
+          rawProfiles.length > 0
+            ? rawProfiles.map((p) => ({
+                ...p,
+                id: p.id || (typeof crypto !== "undefined" ? crypto.randomUUID() : `tp_${Date.now()}`),
+                label: p.label || "",
+                taxPhone: p.taxPhone || "",
+                taxBranchType: p.taxBranchType || "HEAD_OFFICE",
+                taxBranchNo: p.taxBranchNo || "00000",
+              }))
+            : [];
         form.reset({
-            name: editingCustomer.name || "",
-            phone: editingCustomer.phone || "",
-            detail: editingCustomer.detail || "",
-            useTax: editingCustomer.useTax || false,
-            taxName: editingCustomer.taxName || "",
-            taxAddress: editingCustomer.taxAddress || "",
-            taxId: editingCustomer.taxId || "",
-            taxPhone: editingCustomer.taxPhone || editingCustomer.phone || "",
-            taxBranchType: editingCustomer.taxBranchType || 'HEAD_OFFICE',
-            taxBranchNo: editingCustomer.taxBranchNo || '00000',
-            acquisitionSource: editingCustomer.acquisitionSource || undefined
+          name: editingCustomer.name || "",
+          phones: phones.length > 0 ? phones : [""],
+          detail: editingCustomer.detail || "",
+          useTax: editingCustomer.useTax || false,
+          taxProfiles: taxProfilesForForm,
+          acquisitionSource: editingCustomer.acquisitionSource || undefined,
         });
       }
     } else {
       setEditingCustomer(null);
       form.reset({
         name: "",
-        phone: "",
+        phones: [""],
         detail: "",
         useTax: false,
-        taxName: "",
-        taxAddress: "",
-        taxId: "",
-        taxPhone: "",
-        taxBranchType: 'HEAD_OFFICE',
-        taxBranchNo: '00000',
-        acquisitionSource: undefined
+        taxProfiles: [],
+        acquisitionSource: undefined,
       });
     }
   }, [isDialogOpen, editingCustomer, form]);
@@ -211,34 +310,72 @@ function CustomersContent() {
   const onSubmit = async (values: z.infer<typeof customerSchema>) => {
     if (!db || !editingCustomer) return;
     setIsSubmitting(true);
-    
+
     try {
-      // Check for duplicate phone number (excluding this current customer)
-      const q = query(collection(db, "customers"), where("phone", "==", values.phone.trim()));
-      const querySnap = await getDocs(q);
-      
-      const duplicate = querySnap.docs.find(d => d.id !== editingCustomer.id);
-      if (duplicate) {
-        toast({ 
-          variant: "destructive", 
-          title: "เบอร์โทรศัพท์ซ้ำกับลูกค้าท่านอื่น", 
-          description: `เบอร์นี้ถูกใช้งานแล้วโดย: ${duplicate.data().name}` 
+      const dedupedPhones = dedupePhoneList(values.phones.map((p) => p.trim()).filter(Boolean));
+      if (dedupedPhones.length === 0) {
+        toast({ variant: "destructive", title: "กรุณากรอกอย่างน้อย 1 เบอร์โทรศัพท์" });
+        setIsSubmitting(false);
+        return;
+      }
+
+      const conflict = findCustomerPhoneConflict(customers, dedupedPhones, editingCustomer.id);
+      if (conflict) {
+        toast({
+          variant: "destructive",
+          title: "เบอร์โทรศัพท์ซ้ำกับลูกค้าท่านอื่น",
+          description: `เบอร์ ${conflict.phone} ถูกใช้โดย: ${conflict.customer.name}`,
         });
         setIsSubmitting(false);
         return;
       }
 
+      const primary = dedupedPhones[0];
+      const profiles: CustomerTaxProfile[] = values.useTax
+        ? values.taxProfiles.map((p) => ({
+            id: p.id || (typeof crypto !== "undefined" ? crypto.randomUUID() : `tp_${Date.now()}`),
+            label: (p.label || "").trim(),
+            taxName: p.taxName.trim(),
+            taxAddress: p.taxAddress.trim(),
+            taxId: p.taxId.trim(),
+            taxPhone: (p.taxPhone || "").trim() || undefined,
+            taxBranchType: p.taxBranchType,
+            taxBranchNo:
+              p.taxBranchType === "BRANCH" ? (p.taxBranchNo || "").trim() : "00000",
+          }))
+        : [];
+
+      const first = profiles[0];
+
       const customerDoc = doc(db, "customers", editingCustomer.id);
-      const updateData = { 
-        ...values, 
+      const updateData: Record<string, unknown> = {
+        name: values.name.trim(),
+        phone: primary,
+        phones: dedupedPhones,
+        detail: values.detail || "",
+        useTax: values.useTax,
+        acquisitionSource: values.acquisitionSource,
         updatedAt: serverTimestamp(),
-        taxName: values.useTax ? values.taxName : "",
-        taxAddress: values.useTax ? values.taxAddress : "",
-        taxId: values.useTax ? values.taxId : "",
-        taxPhone: values.useTax ? values.taxPhone : "",
-        taxBranchType: values.useTax ? values.taxBranchType : null,
-        taxBranchNo: values.useTax && values.taxBranchType === 'BRANCH' ? values.taxBranchNo : (values.taxBranchType === 'HEAD_OFFICE' ? '00000' : null),
       };
+
+      if (values.useTax && first) {
+        updateData.taxProfiles = profiles;
+        updateData.taxName = first.taxName;
+        updateData.taxAddress = first.taxAddress;
+        updateData.taxId = first.taxId;
+        updateData.taxPhone = first.taxPhone || primary;
+        updateData.taxBranchType = first.taxBranchType;
+        updateData.taxBranchNo =
+          first.taxBranchType === "BRANCH" ? first.taxBranchNo : "00000";
+      } else {
+        updateData.taxProfiles = deleteField();
+        updateData.taxName = "";
+        updateData.taxAddress = "";
+        updateData.taxId = "";
+        updateData.taxPhone = "";
+        updateData.taxBranchType = null;
+        updateData.taxBranchNo = null;
+      }
 
       await updateDoc(customerDoc, updateData);
       toast({ title: "อัปเดตข้อมูลลูกค้าสำเร็จ" });
@@ -348,7 +485,9 @@ function CustomersContent() {
                   paginatedCustomers.map(customer => (
                     <TableRow key={customer.id}>
                       <TableCell className="font-medium">{customer.name}</TableCell>
-                      <TableCell>{customer.phone}</TableCell>
+                      <TableCell className="text-sm max-w-[220px]">
+                        {normalizeCustomerPhones(customer).join(", ")}
+                      </TableCell>
                       <TableCell>
                         {customer.useTax ? <Badge>ใช่</Badge> : <Badge variant="outline">ไม่</Badge>}
                       </TableCell>
@@ -397,7 +536,7 @@ function CustomersContent() {
       </Card>
 
       <Dialog open={isDialogOpen} onOpenChange={(open) => !isSubmitting && setIsDialogOpen(open)}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] p-0 flex flex-col overflow-hidden">
+        <DialogContent className="sm:max-w-[720px] max-h-[90vh] p-0 flex flex-col overflow-hidden">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle>ข้อมูลลูกค้า</DialogTitle>
             <DialogDescription>ดูและแก้ไขรายละเอียดข้อมูลลูกค้า</DialogDescription>
@@ -409,9 +548,46 @@ function CustomersContent() {
                 <FormField name="name" control={form.control} render={({ field }) => (
                     <FormItem><FormLabel>ชื่อลูกค้า</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
                 )} />
-                <FormField name="phone" control={form.control} render={({ field }) => (
-                    <FormItem><FormLabel>เบอร์โทรศัพท์</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
+                <div className="space-y-2">
+                  <FormLabel>เบอร์โทรศัพท์ (เพิ่มได้หลายเบอร์)</FormLabel>
+                  <p className="text-xs text-muted-foreground">ห้ามซ้ำกับลูกค้าคนอื่นในระบบ และห้ามซ้ำกันในฟอร์ม</p>
+                  {phoneFields.map((pf, idx) => (
+                    <FormField
+                      key={pf.id}
+                      control={form.control}
+                      name={`phones.${idx}` as const}
+                      render={({ field }) => (
+                        <FormItem>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input {...field} placeholder={`เบอร์ ${idx + 1}`} />
+                            </FormControl>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              disabled={phoneFields.length <= 1}
+                              onClick={() => removePhone(idx)}
+                              aria-label="ลบเบอร์"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {idx === 0 ? <FormMessage /> : null}
+                        </FormItem>
+                      )}
+                    />
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full border-dashed"
+                    onClick={() => appendPhone("")}
+                  >
+                    <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มเบอร์โทรศัพท์
+                  </Button>
+                </div>
                 
                 <Card className="bg-primary/5 border-primary/20 shadow-none">
                     <CardHeader className="pb-2">
@@ -470,7 +646,12 @@ function CustomersContent() {
                 
                 <FormField name="useTax" control={form.control} render={({ field }) => (
                     <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4 bg-muted/20">
-                    <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl>
+                    <FormControl><Checkbox checked={field.value} onCheckedChange={(v) => {
+                      field.onChange(v);
+                      if (v && form.getValues("taxProfiles").length === 0) {
+                        appendTaxProfile(emptyTaxProfileRow());
+                      }
+                    }} /></FormControl>
                     <div className="space-y-1 leading-none">
                         <FormLabel className="cursor-pointer font-bold text-primary">ต้องการใบกำกับภาษี (Use Tax Invoice)</FormLabel>
                         <FormMessage />
@@ -480,57 +661,89 @@ function CustomersContent() {
 
                 {useTax && (
                     <div className="space-y-4 p-4 border rounded-md bg-muted/50 border-primary/20 mb-4">
-                        <h4 className="text-sm font-bold text-primary uppercase tracking-wider border-b pb-2">ข้อมูลภาษี</h4>
-                        <FormField name="taxName" control={form.control} render={({ field }) => (
-                            <FormItem><FormLabel>ชื่อในใบกำกับภาษี</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                        )} />
-                        <FormField name="taxAddress" control={form.control} render={({ field }) => (
-                            <FormItem><FormLabel>ที่อยู่ในใบกำกับภาษี</FormLabel><FormControl><Textarea {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                        )} />
-                        <div className="grid grid-cols-2 gap-4">
-                            <FormField name="taxId" control={form.control} render={({ field }) => (
-                                <FormItem><FormLabel>เลขประจำตัวผู้เสียภาษี</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField name="taxPhone" control={form.control} render={({ field }) => (
-                                <FormItem><FormLabel>เบอร์โทรศัพท์ (บิล)</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                            )} />
+                        <div className="flex flex-col gap-1 border-b pb-2">
+                          <h4 className="text-sm font-bold text-primary uppercase tracking-wider">ชื่อ / ที่อยู่สำหรับออกใบกำกับภาษี</h4>
+                          <p className="text-xs text-muted-foreground">เพิ่มได้หลายชุด (หลายบริษัทหรือหลายสาขา) — ตอนออกใบกำกับระบบจะให้เลือกนามที่ใช้</p>
                         </div>
-
-                        <FormField
-                            control={form.control}
-                            name="taxBranchType"
-                            render={({ field }) => (
-                                <FormItem className="space-y-3">
-                                <FormLabel>สถานะสถานประกอบการ</FormLabel>
-                                <FormControl>
-                                    <RadioGroup
-                                    onValueChange={field.onChange}
-                                    value={field.value}
-                                    className="flex flex-col space-y-1"
-                                    >
-                                    <FormItem className="flex items-center space-x-3 space-y-0">
-                                        <FormControl><RadioGroupItem value="HEAD_OFFICE" /></FormControl>
-                                        <Label className="font-normal cursor-pointer">สำนักงานใหญ่</Label>
-                                    </FormItem>
-                                    <FormItem className="flex items-center space-x-3 space-y-0">
-                                        <FormControl><RadioGroupItem value="BRANCH" /></FormControl>
-                                        <Label className="font-normal cursor-pointer">สาขา</Label>
-                                    </FormItem>
-                                    </RadioGroup>
-                                </FormControl>
-                                </FormItem>
-                            )}
-                        />
-
-                        {taxBranchType === 'BRANCH' && (
-                            <FormField name="taxBranchNo" control={form.control} render={({ field }) => (
-                                <FormItem className="animate-in fade-in slide-in-from-left-1">
-                                    <FormLabel>รหัสสาขา (5 หลัก)</FormLabel>
-                                    <FormControl><Input {...field} value={field.value ?? ''} placeholder="เช่น 00001" maxLength={5} /></FormControl>
-                                    <FormMessage />
-                                </FormItem>
+                        {taxProfileFields.map((tp, profileIdx) => {
+                          const branchType = form.watch(`taxProfiles.${profileIdx}.taxBranchType`);
+                          return (
+                          <div key={tp.id} className="rounded-lg border bg-background p-4 space-y-3 relative">
+                            <div className="flex justify-between items-center gap-2">
+                              <span className="text-xs font-semibold text-muted-foreground">ชุดที่ {profileIdx + 1}</span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive h-8"
+                                disabled={taxProfileFields.length <= 1}
+                                onClick={() => removeTaxProfile(profileIdx)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-1" /> ลบชุดนี้
+                              </Button>
+                            </div>
+                            <FormField control={form.control} name={`taxProfiles.${profileIdx}.label`} render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs">ป้ายเรียก (ไม่บังคับ)</FormLabel>
+                                <FormControl><Input {...field} value={field.value ?? ""} placeholder="เช่น สำนักงานใหญ่, สาขาชลบุรี" /></FormControl>
+                              </FormItem>
                             )} />
-                        )}
+                            <FormField control={form.control} name={`taxProfiles.${profileIdx}.taxName`} render={({ field }) => (
+                              <FormItem><FormLabel>ชื่อในใบกำกับภาษี</FormLabel><FormControl><Input {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>
+                            )} />
+                            <FormField control={form.control} name={`taxProfiles.${profileIdx}.taxAddress`} render={({ field }) => (
+                              <FormItem><FormLabel>ที่อยู่ในใบกำกับภาษี</FormLabel><FormControl><Textarea {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>
+                            )} />
+                            <div className="grid grid-cols-2 gap-4">
+                              <FormField control={form.control} name={`taxProfiles.${profileIdx}.taxId`} render={({ field }) => (
+                                <FormItem><FormLabel>เลขประจำตัวผู้เสียภาษี</FormLabel><FormControl><Input {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>
+                              )} />
+                              <FormField control={form.control} name={`taxProfiles.${profileIdx}.taxPhone`} render={({ field }) => (
+                                <FormItem><FormLabel>เบอร์โทรศัพท์ (บิล)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>
+                              )} />
+                            </div>
+                            <FormField
+                              control={form.control}
+                              name={`taxProfiles.${profileIdx}.taxBranchType`}
+                              render={({ field }) => (
+                                <FormItem className="space-y-3">
+                                  <FormLabel>สถานะสถานประกอบการ</FormLabel>
+                                  <FormControl>
+                                    <RadioGroup onValueChange={field.onChange} value={field.value} className="flex flex-col space-y-1">
+                                      <div className="flex items-center space-x-3">
+                                        <RadioGroupItem value="HEAD_OFFICE" id={`ho-${tp.id}`} />
+                                        <Label htmlFor={`ho-${tp.id}`} className="font-normal cursor-pointer">สำนักงานใหญ่</Label>
+                                      </div>
+                                      <div className="flex items-center space-x-3">
+                                        <RadioGroupItem value="BRANCH" id={`br-${tp.id}`} />
+                                        <Label htmlFor={`br-${tp.id}`} className="font-normal cursor-pointer">สาขา</Label>
+                                      </div>
+                                    </RadioGroup>
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                            {branchType === "BRANCH" && (
+                              <FormField control={form.control} name={`taxProfiles.${profileIdx}.taxBranchNo`} render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>รหัสสาขา (5 หลัก)</FormLabel>
+                                  <FormControl><Input {...field} value={field.value ?? ""} placeholder="เช่น 00001" maxLength={5} /></FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )} />
+                            )}
+                          </div>
+                        );
+                        })}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full border-dashed"
+                          onClick={() => appendTaxProfile(emptyTaxProfileRow())}
+                        >
+                          <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มชุดชื่อ/ที่อยู่สำหรับใบกำกับ
+                        </Button>
                     </div>
                 )}
                 </form>

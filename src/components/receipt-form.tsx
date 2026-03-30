@@ -5,7 +5,18 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, onSnapshot, query, where, updateDoc, serverTimestamp, writeBatch, deleteField, getDoc } from "firebase/firestore";
+import {
+  doc,
+  collection,
+  onSnapshot,
+  query,
+  where,
+  updateDoc,
+  serverTimestamp,
+  writeBatch,
+  deleteField,
+  getDoc,
+} from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -49,6 +60,18 @@ export function ReceiptForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editDocId = searchParams.get("editDocId");
+  const presetAmountParam = searchParams.get("presetAmount");
+  const urlSourceDocIds = useMemo(() => {
+    const multi = searchParams.get("sourceDocIds");
+    if (multi)
+      return multi
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const one = searchParams.get("sourceDocId");
+    return one ? [one] : [];
+  }, [searchParams]);
+  const urlSourceKey = urlSourceDocIds.join("|");
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -60,6 +83,7 @@ export function ReceiptForm() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [extraSourceDocs, setExtraSourceDocs] = useState<DocumentType[]>([]);
 
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -72,8 +96,8 @@ export function ReceiptForm() {
     defaultValues: {
       paymentDate: "", // Set in useEffect
       amount: 0,
-      customerId: searchParams.get('customerId') || "",
-      sourceDocIds: searchParams.get('sourceDocId') ? [searchParams.get('sourceDocId')!] : [],
+      customerId: searchParams.get("customerId") || "",
+      sourceDocIds: [],
       accountId: "",
       notes: "",
     },
@@ -88,6 +112,11 @@ export function ReceiptForm() {
 
   const selectedCustomerId = form.watch('customerId');
   const watchedSourceDocIds = form.watch('sourceDocIds');
+
+  useEffect(() => {
+    if (editDocId || urlSourceDocIds.length === 0) return;
+    form.setValue("sourceDocIds", urlSourceDocIds);
+  }, [editDocId, urlSourceKey, form]);
 
   useEffect(() => {
     if (!db) return;
@@ -113,6 +142,13 @@ export function ReceiptForm() {
       });
     }
   }, [docToEdit, form, isSubmitting]);
+
+  const displaySourceDocs = useMemo(() => {
+    const m = new Map<string, DocumentType>();
+    for (const d of sourceDocs) m.set(d.id, d);
+    for (const d of extraSourceDocs) m.set(d.id, d);
+    return Array.from(m.values());
+  }, [sourceDocs, extraSourceDocs]);
 
   useEffect(() => {
     if (!db || !selectedCustomerId) {
@@ -143,21 +179,58 @@ export function ReceiptForm() {
     });
     return unsubscribe;
   }, [db, selectedCustomerId, editDocId]);
+
+  useEffect(() => {
+    if (!db || !selectedCustomerId) {
+      setExtraSourceDocs([]);
+      return;
+    }
+    const missing = watchedSourceDocIds.filter((id) => !sourceDocs.some((d) => d.id === id));
+    if (missing.length === 0) {
+      setExtraSourceDocs([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const rows = await Promise.all(
+        missing.map((id) =>
+          getDoc(doc(db, "documents", id)).then((s) =>
+            s.exists() ? ({ id: s.id, ...s.data() } as DocumentType) : null
+          )
+        )
+      );
+      if (!cancelled) setExtraSourceDocs(rows.filter(Boolean) as DocumentType[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, selectedCustomerId, watchedSourceDocIds, sourceDocs]);
   
   useEffect(() => {
-    const selected = sourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
+    const selected = displaySourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
     const total = selected.reduce((sum, d) => sum + (d.paymentSummary?.balance ?? d.grandTotal), 0);
-    form.setValue('amount', Math.round(total * 100) / 100);
+    const rounded = Math.round(total * 100) / 100;
+    if (presetAmountParam && selected.length === 1) {
+      const p = parseFloat(presetAmountParam);
+      if (Number.isFinite(p)) {
+        form.setValue("amount", Math.round(p * 100) / 100);
+        if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId') && !editDocId) {
+          form.setValue('accountId', selected[0].suggestedAccountId);
+        }
+        return;
+      }
+    }
+    form.setValue('amount', rounded);
     
     if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId') && !editDocId) {
         form.setValue('accountId', selected[0].suggestedAccountId);
     }
-  }, [watchedSourceDocIds, sourceDocs, form, editDocId]);
+  }, [watchedSourceDocIds, displaySourceDocs, form, editDocId, presetAmountParam]);
 
   const handleToggleDoc = (docId: string) => {
     const currentIds = form.getValues('sourceDocIds');
     if (currentIds.includes(docId)) {
-      form.setValue('sourceDocIds', currentIds.filter(id => id !== id), { shouldValidate: true });
+      form.setValue('sourceDocIds', currentIds.filter((id) => id !== docId), { shouldValidate: true });
     } else {
       form.setValue('sourceDocIds', [...currentIds, docId], { shouldValidate: true });
     }
@@ -167,7 +240,7 @@ export function ReceiptForm() {
     if (isSubmitting) return;
     
     const customer = customers.find(c => c.id === data.customerId);
-    const selectedDocs = sourceDocs.filter(d => data.sourceDocIds.includes(d.id));
+    const selectedDocs = displaySourceDocs.filter(d => data.sourceDocIds.includes(d.id));
     const account = accounts.find(a => a.id === data.accountId);
 
     if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || !account) {
@@ -177,9 +250,11 @@ export function ReceiptForm() {
     
     setIsSubmitting(true);
     const amount2dec = Math.round(data.amount * 100) / 100;
-    
+    const payInstrument = account.type === "CASH" ? "CASH" : "TRANSFER";
+    const payMethodLegacy = payInstrument === "CASH" ? "CASH" : "TRANSFER";
+
     const items = selectedDocs.map(doc => ({
-      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบวางบิล'} เลขที่ ${doc.docNo}`,
+      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : "ใบวางบิล"} เลขที่ ${doc.docNo}`,
       quantity: 1,
       unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
       total: doc.paymentSummary?.balance ?? doc.grandTotal
@@ -200,7 +275,8 @@ export function ReceiptForm() {
         grandTotal: amount2dec,
         notes: data.notes,
         referencesDocIds: data.sourceDocIds,
-        paymentMethod: account.type === 'CASH' ? 'CASH' : 'TRANSFER',
+        paymentMethod: payMethodLegacy,
+        paymentInstrument: payInstrument,
         paymentDate: data.paymentDate,
         receivedAccountId: data.accountId,
       };
@@ -209,12 +285,16 @@ export function ReceiptForm() {
       let finalDocNo: string;
 
       if (editDocId) {
-          await updateDoc(doc(db, 'documents', editDocId), sanitizeForFirestore({
+          await updateDoc(
+            doc(db, "documents", editDocId),
+            sanitizeForFirestore({
               ...docData,
-              status: 'ISSUED',
-              receiptStatus: 'ISSUED_NOT_CONFIRMED',
+              checkDueDate: deleteField(),
+              status: "ISSUED",
+              receiptStatus: "ISSUED_NOT_CONFIRMED",
               updatedAt: serverTimestamp(),
-          }));
+            })
+          );
           finalDocId = editDocId;
           finalDocNo = docToEdit?.docNo || "";
       } else {
@@ -329,7 +409,7 @@ export function ReceiptForm() {
 
             {selectedCustomerId && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
-                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (เฉพาะใบกำกับภาษีและใบวางบิล)</FormLabel>
+                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (ใบกำกับภาษี / ใบวางบิล — ไม่รวมใบส่งของ)</FormLabel>
                     <div className="border rounded-md">
                         <Table>
                             <TableHeader>
@@ -341,7 +421,7 @@ export function ReceiptForm() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {sourceDocs.length > 0 ? sourceDocs.map(doc => (
+                                {displaySourceDocs.length > 0 ? displaySourceDocs.map(doc => (
                                     <TableRow key={doc.id} className={cn("hover:bg-muted/30 cursor-pointer", watchedSourceDocIds.includes(doc.id) && "bg-primary/5")} onClick={() => !isSubmitting && handleToggleDoc(doc.id)}>
                                         <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                                             <Checkbox 
@@ -378,7 +458,7 @@ export function ReceiptForm() {
 
         {watchedSourceDocIds.length > 0 && (
         <Card className="animate-in zoom-in-95">
-            <CardHeader><CardTitle className="text-base">2. รายละเอียดการรับเงินรวม (คาดการณ์)</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">2. รายละเอียดใบเสร็จ (บันทึกบัญชีจริงเมื่อรับเงินที่หน้าลูกหนี้)</CardTitle></CardHeader>
             <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField

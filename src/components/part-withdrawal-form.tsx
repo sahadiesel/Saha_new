@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { 
   collection, query, where, onSnapshot, doc, writeBatch, 
-  serverTimestamp, getDocs, limit, orderBy, runTransaction, getDoc, updateDoc
+  serverTimestamp, getDocs, limit, orderBy, runTransaction, getDoc, updateDoc, addDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useDoc, useCollection } from "@/firebase";
@@ -29,7 +29,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { 
   Loader2, PlusCircle, Trash2, Save, ArrowLeft, Search, 
-  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList, Hash, ExternalLink, Users
+  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList, Hash, ExternalLink, Users, PackageCheck
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,7 +37,29 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Customer, Job, Part, Document as DocumentType, StoreSettings, UserProfile } from "@/lib/types";
+
+function tsMs(t: unknown): number {
+  if (t && typeof t === "object" && "toMillis" in t && typeof (t as { toMillis: () => number }).toMillis === "function") {
+    return (t as { toMillis: () => number }).toMillis();
+  }
+  return 0;
+}
+
+/** แสดงใน dropdown — อ้างอิงใบเสนอราคา ไม่โชว์แค่ id */
+function formatJobWithdrawalRefLabel(job: Job): string {
+  const quote =
+    job.salesDocType === "QUOTATION" && job.salesDocNo
+      ? `ใบเสนอราคา ${job.salesDocNo}`
+      : job.salesDocNo
+        ? `เอกสาร ${job.salesDocNo}${job.salesDocType ? ` (${job.salesDocType})` : ""}`
+        : "ยังไม่มีเลขอ้างอิงใบเสนอราคา";
+  const name = job.customerSnapshot?.name || "—";
+  const desc = (job.description || "").trim();
+  const short = desc.length > 48 ? `${desc.slice(0, 48)}…` : desc;
+  return `${quote} — ${name}${short ? ` — ${short}` : ""}`;
+}
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -92,6 +114,8 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
 
   const [previewDocNo, setPreviewDocNo] = useState<string>("");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
+  const [quotationDoc, setQuotationDoc] = useState<DocumentType | null>(null);
+  const [loadingQuotation, setLoadingQuotation] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -122,7 +146,57 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
 
   const watchedRefType = form.watch("refType");
   const watchedCustomerId = form.watch("customerId");
+  const watchedRefId = form.watch("refId");
   const watchedDocDate = form.watch("docDate");
+
+  // โหลดใบเสนอราคาที่ผูกกับงาน (แสดงรายการอ้างอิงด้านบน)
+  useEffect(() => {
+    if (!db || watchedRefType !== "JOB" || !watchedRefId) {
+      setQuotationDoc(null);
+      setLoadingQuotation(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingQuotation(true);
+    (async () => {
+      try {
+        let job = activeJobs.find((j) => j.id === watchedRefId);
+        if (!job) {
+          const js = await getDoc(doc(db, "jobs", watchedRefId));
+          if (cancelled) return;
+          if (!js.exists()) {
+            setQuotationDoc(null);
+            setLoadingQuotation(false);
+            return;
+          }
+          job = { id: js.id, ...js.data() } as Job;
+        }
+        if (job.salesDocId && job.salesDocType === "QUOTATION") {
+          const d = await getDoc(doc(db, "documents", job.salesDocId));
+          if (cancelled) return;
+          if (d.exists()) {
+            setQuotationDoc({ id: d.id, ...d.data() } as DocumentType);
+            setLoadingQuotation(false);
+            return;
+          }
+        }
+        const qSnap = await getDocs(query(collection(db, "documents"), where("jobId", "==", job.id)));
+        if (cancelled) return;
+        const quotations = qSnap.docs
+          .map((x) => ({ id: x.id, ...x.data() } as DocumentType))
+          .filter((d) => d.docType === "QUOTATION")
+          .sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+        setQuotationDoc(quotations[0] ?? null);
+      } catch {
+        if (!cancelled) setQuotationDoc(null);
+      } finally {
+        if (!cancelled) setLoadingQuotation(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, watchedRefType, watchedRefId, activeJobs]);
 
   // Fetch Preview Doc No
   useEffect(() => {
@@ -150,7 +224,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
       setWorkers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
     });
 
-    const unsubJobs = onSnapshot(query(collection(db, "jobs"), where("status", "in", ["PENDING_PARTS", "IN_REPAIR_PROCESS", "DONE", "WAITING_CUSTOMER_PICKUP"])), (snap) => {
+    const unsubJobs = onSnapshot(query(collection(db, "jobs"), where("status", "==", "PENDING_PARTS")), (snap) => {
       setActiveJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Job)));
     });
 
@@ -166,17 +240,30 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     return () => { unsubCustomers(); unsubWorkers(); unsubJobs(); unsubDocs(); unsubParts(); };
   }, [db]);
 
-  // Handle URL Job ID
+  // Handle URL Job ID — ต้องเป็นงานสถานะรอจัดอะไหล่ (เดียวกับหน้างานตามสถานะ)
   useEffect(() => {
-    if (queryJobId && !isEditing && activeJobs.length > 0 && customers.length > 0) {
-      const targetJob = activeJobs.find(j => j.id === queryJobId);
-      if (targetJob) {
-        form.setValue('refType', 'JOB');
-        form.setValue('customerId', targetJob.customerId);
-        form.setValue('refId', targetJob.id);
+    if (!queryJobId || isEditing || !db) return;
+    let cancelled = false;
+    (async () => {
+      const snap = await getDoc(doc(db, "jobs", queryJobId));
+      if (cancelled || !snap.exists()) return;
+      const targetJob = { id: snap.id, ...snap.data() } as Job;
+      if (targetJob.status !== "PENDING_PARTS") {
+        toast({
+          variant: "destructive",
+          title: "งานนี้ไม่ได้อยู่ในสถานะรอจัดอะไหล่",
+          description: "เปิดจากรายการ «รอจัดอะไหล่» หรือเลือกงานจากรายการด้านล่างเท่านั้น",
+        });
+        return;
       }
-    }
-  }, [queryJobId, activeJobs, customers, form, isEditing]);
+      form.setValue("refType", "JOB");
+      form.setValue("customerId", targetJob.customerId);
+      form.setValue("refId", targetJob.id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [queryJobId, isEditing, db, form, toast]);
 
   // Load existing doc for editing
   useEffect(() => {
@@ -266,8 +353,16 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     setIsScannerOpen(false);
   };
 
-  const handleSave = async (data: WithdrawalFormData, isDraft: boolean) => {
+  const handleSave = async (
+    data: WithdrawalFormData,
+    isDraft: boolean,
+    jobCompletion?: "PARTIAL" | "COMPLETE"
+  ) => {
     if (!db || !profile || !storeSettings) return;
+    if (!isDraft && data.refType === "JOB" && !jobCompletion) {
+      toast({ variant: "destructive", title: "กรุณาเลือกประเภทการเบิก", description: "เบิกบางส่วน หรือ จัดอะไหล่ครบแล้ว" });
+      return;
+    }
     setIsSubmitting(true);
 
     const entity = availableEntities.find(e => e.id === data.customerId);
@@ -322,8 +417,10 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
       
       const docPayload = {
         jobId: data.refType === 'JOB' ? data.refId : undefined,
+        quotationDocNo:
+          data.refType === "JOB" && quotationDoc?.docNo ? quotationDoc.docNo : undefined,
         customerId: data.customerId,
-        docDate: data.issueDate,
+        docDate: data.docDate,
         customerSnapshot: entity,
         storeSnapshot: storeSettings,
         items: data.items.map(i => ({ 
@@ -344,7 +441,11 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         notes: (data.refType === 'INTERNAL' ? '[INTERNAL] ' : '') + (data.notes || ''),
         senderName: profile.displayName,
         receiverName: entity.name,
-      };
+        jobWithdrawalCompletion:
+          !isDraft && data.refType === "JOB" && jobCompletion ? jobCompletion : undefined,
+      } as Omit<DocumentType, "id" | "docNo" | "docType" | "createdAt" | "updatedAt" | "status">;
+
+      let createdDocNo = "";
 
       if (isEditing && editDocId) {
           await updateDoc(doc(db, 'documents', editDocId), sanitizeForFirestore({
@@ -352,8 +453,39 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
               status: targetStatus,
               updatedAt: serverTimestamp()
           }));
+          const existing = await getDoc(doc(db, "documents", editDocId));
+          createdDocNo = existing.exists() ? (existing.data().docNo as string) : "";
       } else {
-          await createDocument(db, 'WITHDRAWAL', docPayload, profile, undefined, { initialStatus: targetStatus });
+          const { docNo } = await createDocument(db, 'WITHDRAWAL', docPayload, profile, undefined, { initialStatus: targetStatus });
+          createdDocNo = docNo;
+      }
+
+      if (!isDraft && data.refType === "JOB" && data.refId && jobCompletion) {
+        const jobRef = doc(db, "jobs", data.refId);
+        const jobSnap = await getDoc(jobRef);
+        if (jobSnap.exists()) {
+          const jStatus = jobSnap.data().status as Job["status"];
+          if (jobCompletion === "COMPLETE" && jStatus === "PENDING_PARTS") {
+            await updateDoc(jobRef, {
+              status: "IN_REPAIR_PROCESS",
+              lastActivityAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+            await addDoc(collection(jobRef, "activities"), {
+              text: `จัดอะไหล่ครบแล้ว (ใบเบิก ${createdDocNo || "—"}) — เริ่มดำเนินการซ่อม`,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
+            });
+          } else if (jobCompletion === "PARTIAL") {
+            await addDoc(collection(jobRef, "activities"), {
+              text: `เบิกอะไหล่บางส่วน (ใบเบิก ${createdDocNo || "—"}) — สถานะงานยังรอจัดอะไหล่ สามารถเบิกเพิ่มได้`,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
       }
 
       toast({ 
@@ -387,15 +519,39 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     บันทึกฉบับร่าง
                 </Button>
-                <Button 
-                    type="button" 
-                    onClick={form.handleSubmit(d => handleSave(d, false))} 
-                    disabled={isSubmitting} 
+                {watchedRefType === "JOB" ? (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={form.handleSubmit((d) => handleSave(d, false, "PARTIAL"))}
+                      disabled={isSubmitting}
+                      variant="outline"
+                      className="flex-1 sm:flex-none border-green-600 text-green-700 hover:bg-green-50 font-bold"
+                    >
+                      {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
+                      เบิกบางส่วน (ตัดสต็อก)
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={form.handleSubmit((d) => handleSave(d, false, "COMPLETE"))}
+                      disabled={isSubmitting}
+                      className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
+                    >
+                      {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PackageCheck className="mr-2 h-4 w-4" />}
+                      จัดอะไหล่ครบแล้ว (ตัดสต็อก + เริ่มซ่อม)
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={form.handleSubmit((d) => handleSave(d, false))}
+                    disabled={isSubmitting}
                     className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
-                >
+                  >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
                     สร้างรายการเบิก (ตัดสต็อก)
-                </Button>
+                  </Button>
+                )}
             </div>
           </div>
 
@@ -468,16 +624,28 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                 {watchedCustomerId && (
                   <FormField name="refId" control={form.control} render={({ field }) => (
                     <FormItem className="animate-in fade-in slide-in-from-top-1">
-                      <FormLabel>รายการอ้างอิง</FormLabel>
+                      <FormLabel>
+                        {watchedRefType === "JOB" ? "งานที่รอจัดอะไหล่ (อ้างอิงใบเสนอราคา)" : "รายการอ้างอิง"}
+                      </FormLabel>
                       <Select onValueChange={field.onChange} value={field.value || ""} disabled={isSubmitting || !!queryJobId || isEditing || watchedRefType === 'INTERNAL'}>
                         <FormControl><SelectTrigger><SelectValue placeholder="เลือก..." /></SelectTrigger></FormControl>
                         <SelectContent>
-                          {watchedRefType === 'JOB' && filteredJobs.map(j => <SelectItem key={j.id} value={j.id}>{j.id} - {j.description.slice(0,30)}...</SelectItem>)}
+                          {watchedRefType === 'JOB' &&
+                            filteredJobs.map((j) => (
+                              <SelectItem key={j.id} value={j.id}>
+                                {formatJobWithdrawalRefLabel(j)}
+                              </SelectItem>
+                            ))}
                           {watchedRefType === 'SALES_DOC' && filteredSalesDocs.map(d => <SelectItem key={d.id} value={d.id}>{d.docNo} ({d.grandTotal.toLocaleString()}.-)</SelectItem>)}
                           {watchedRefType === 'LOAN' && <SelectItem value="MANUAL_LOAN">ใบยืมอะไหล่ (ระบุมือ)</SelectItem>}
                           {watchedRefType === 'INTERNAL' && <SelectItem value="INTERNAL_USE">เบิกใช้ภายในร้าน</SelectItem>}
                         </SelectContent>
                       </Select>
+                      {watchedRefType === "JOB" && (
+                        <p className="text-xs text-muted-foreground">
+                          แสดงเฉพาะงานที่สถานะ «รอจัดอะไหล่» — ชื่อรายการอ้างอิงใช้เลขที่ใบเสนอราคา ไม่ใช่รหัสงานดิบ
+                        </p>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )} />
@@ -486,8 +654,81 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
             </Card>
           </div>
 
+          {watchedRefType === "JOB" && watchedRefId && (
+            <Card className="border-dashed border-primary/30 bg-muted/20">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-primary" />
+                  3. รายการจากใบเสนอราคา (อ้างอิง)
+                </CardTitle>
+                <CardDescription>
+                  รายการด้านล่างมาจากใบเสนอราคาที่ผูกกับงาน — ไม่ใช่ยอดเบิกจริงจนกว่าจะกรอกในขั้นตอนถัดไป
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {loadingQuotation ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : quotationDoc ? (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Badge variant="secondary" className="font-mono">
+                        {quotationDoc.docNo}
+                      </Badge>
+                      <Button type="button" variant="link" className="h-auto p-0" asChild>
+                        <Link href={`/app/office/documents/quotation/${quotationDoc.id}`} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="mr-1 h-4 w-4" />
+                          เปิดใบเสนอราคา
+                        </Link>
+                      </Button>
+                    </div>
+                    <div className="border rounded-md overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/50">
+                            <TableHead>รายการ</TableHead>
+                            <TableHead className="w-24 text-right">จำนวน</TableHead>
+                            <TableHead className="w-28 text-right">ราคา/หน่วย</TableHead>
+                            <TableHead className="w-32 text-right">รวม</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(quotationDoc.items || []).map((line, idx) => (
+                            <TableRow key={`${line.description}-${idx}`}>
+                              <TableCell className="text-sm">
+                                <span className="font-mono text-xs text-muted-foreground mr-2">{line.code || "—"}</span>
+                                {line.description}
+                              </TableCell>
+                              <TableCell className="text-right">{line.quantity}</TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {(line.unitPrice ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                {(line.total ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    ไม่พบใบเสนอราคาที่ผูกกับงานนี้ — ยังเบิกอะไหล่ได้ตามรายการด้านล่าง
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
-            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Package className="h-4 w-4 text-primary"/> 3. รายการอะไหล่ที่เบิก</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Package className="h-4 w-4 text-primary" />
+                {watchedRefType === "JOB" ? "4." : "3."} รายการอะไหล่ที่เบิก (จำนวนจริง / ตัดสต็อก)
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
               <div className="border rounded-md overflow-x-auto">
                 <Table>
@@ -541,7 +782,11 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="text-base">4. หมายเหตุเพิ่มเติม</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base">
+                {watchedRefType === "JOB" ? "5." : "4."} หมายเหตุเพิ่มเติม
+              </CardTitle>
+            </CardHeader>
             <CardContent>
               <FormField name="notes" control={form.control} render={({ field }) => (<Textarea placeholder="ระบุเหตุผลการเบิก..." {...field} disabled={isSubmitting} />)} />
             </CardContent>

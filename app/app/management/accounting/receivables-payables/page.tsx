@@ -30,11 +30,22 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Separator } from "@/components/ui/separator";
 import { Calendar } from "@/components/ui/calendar";
 
-import type { AccountingObligation, AccountingAccount, UserProfile, Vendor, Document as DocumentType, AccountingEntry, PurchaseDoc, StoreSettings, DocumentSettings } from "@/lib/types";
+import type {
+  AccountingObligation,
+  AccountingAccount,
+  UserProfile,
+  Vendor,
+  Document as DocumentType,
+  AccountingEntry,
+  PurchaseDoc,
+  StoreSettings,
+  DocumentSettings,
+} from "@/lib/types";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { ReceiveArPaymentDialog } from "@/components/accounting/receive-ar-payment-dialog";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', {
@@ -42,133 +53,6 @@ const formatCurrency = (value: number | null | undefined) => {
     maximumFractionDigits: 2,
   });
 };
-
-const arPaymentSchema = z.object({
-  paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
-  amount: z.coerce.number().positive("จำนวนเงินต้องมากกว่า 0"),
-  accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
-  notes: z.string().optional(),
-  withholdingEnabled: z.boolean().default(false),
-  withholdingAmount: z.coerce.number().min(0).optional(),
-});
-
-function ReceivePaymentDialog({
-  obligation,
-  accounts,
-  isOpen,
-  onClose,
-}: {
-  obligation: WithId<AccountingObligation>;
-  accounts: WithId<AccountingAccount>[];
-  isOpen: boolean;
-  onClose: () => void;
-}) {
-  const { db } = useFirebase();
-  const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const form = useForm<z.infer<typeof arPaymentSchema>>({
-    resolver: zodResolver(arPaymentSchema),
-    defaultValues: {
-      paymentDate: "",
-      amount: obligation.balance,
-      withholdingEnabled: false,
-      withholdingAmount: 0,
-      notes: "",
-      accountId: accounts[0]?.id || "",
-    },
-  });
-
-  useEffect(() => {
-    if (isOpen) {
-        form.reset({
-          paymentDate: dfFormat(new Date(), "yyyy-MM-dd"),
-          amount: obligation.balance,
-          withholdingEnabled: false,
-          withholdingAmount: 0,
-          notes: "",
-          accountId: accounts[0]?.id || "",
-        });
-    }
-  }, [obligation, accounts, form, isOpen]);
-
-  const watchedAmount = form.watch('amount');
-  const watchedWhtEnabled = form.watch('withholdingEnabled');
-  const watchedWhtAmount = form.watch('withholdingAmount') || 0;
-  const cashReceived = watchedAmount - (watchedWhtEnabled ? watchedWhtAmount : 0);
-
-  const handleSavePayment = async (data: z.infer<typeof arPaymentSchema>) => {
-    if (!db) return;
-    const account = accounts.find(a => a.id === data.accountId);
-    if (!account) return;
-
-    setIsSubmitting(true);
-    const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
-
-    try {
-      const batch = writeBatch(db);
-      const obligationRef = doc(db, 'accountingObligations', obligation.id);
-      const newAmountPaid = Math.round(((obligation.amountPaid || 0) + data.amount) * 100) / 100;
-      const newBalance = Math.max(0, Math.round((obligation.amountTotal - newAmountPaid) * 100) / 100);
-      const newStatus = newBalance <= 0.05 ? 'PAID' : 'PARTIAL';
-      
-      batch.update(obligationRef, { amountPaid: newAmountPaid, balance: newBalance, status: newStatus, lastPaymentDate: data.paymentDate, paidOffDate: newStatus === 'PAID' ? data.paymentDate : null, updatedAt: serverTimestamp() });
-      
-      const entryRef = doc(collection(db, "accountingEntries"));
-      batch.set(entryRef, { entryType: "CASH_IN", entryDate: data.paymentDate, amount: cashReceived, accountId: data.accountId, paymentMethod: paymentMethod, description: `รับชำระหนี้จาก ${obligation.customerNameSnapshot} (อ้างอิง: ${obligation.sourceDocNo})`, sourceDocType: obligation.sourceDocType, sourceDocId: obligation.sourceDocId, sourceDocNo: obligation.sourceDocNo, customerNameSnapshot: obligation.customerNameSnapshot, jobId: obligation.jobId, createdAt: serverTimestamp() });
-
-      if (obligation.sourceDocId) {
-        const sourceDocRef = doc(db, 'documents', obligation.sourceDocId);
-        const sourceDocSnap = await getDoc(sourceDocRef);
-        if (sourceDocSnap.exists()) {
-            const sourceDoc = sourceDocSnap.data() as DocumentType;
-            const currentPaidTotal = sourceDoc.paymentSummary?.paidTotal || 0;
-            const updatedPaidTotal = Math.round((currentPaidTotal + data.amount) * 100) / 100;
-            const updatedBalance = Math.max(0, Math.round((sourceDoc.grandTotal - updatedPaidTotal) * 100) / 100);
-            const updatedStatus = updatedBalance <= 0.05 ? 'PAID' : 'PARTIAL';
-            batch.update(sourceDocRef, { status: updatedStatus, arStatus: updatedStatus, paymentSummary: { paidTotal: updatedPaidTotal, balance: updatedBalance, paymentStatus: updatedStatus }, paymentDate: data.paymentDate, paymentMethod: paymentMethod, receivedAccountId: data.accountId, cashReceived: cashReceived, withholdingEnabled: data.withholdingEnabled, withholdingAmount: data.withholdingAmount, updatedAt: serverTimestamp() });
-        }
-      }
-
-      if (newStatus === 'PAID' && obligation.jobId) {
-          const jobRef = doc(db, 'jobs', obligation.jobId);
-          const jobSnap = await getDoc(jobRef);
-          if (jobSnap.exists()) batch.update(jobRef, { status: 'CLOSED', updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
-      }
-      await batch.commit();
-      toast({ title: "บันทึกการรับชำระสำเร็จ", description: newStatus === 'PAID' ? "ปิดงานซ่อมเรียบร้อยแล้วค่ะ" : "" });
-      onClose();
-    } catch (e: any) { toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message }); } finally { setIsSubmitting(false); }
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-0 overflow-hidden">
-        <DialogHeader className="p-6 pb-0"><DialogTitle>รับชำระหนี้</DialogTitle><DialogDescription>สำหรับเอกสาร: {obligation.sourceDocNo}</DialogDescription></DialogHeader>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          <Form {...form}>
-            <form id="payment-form" onSubmit={form.handleSubmit(handleSavePayment)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <FormField control={form.control} name="paymentDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่รับเงิน</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} />
-                <FormField name="amount" control={form.control} render={({ field }) => (<FormItem><FormLabel>จำนวนเงินที่รับ</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
-              </div>
-               <div className="grid grid-cols-1 gap-4">
-                <FormField name="accountId" control={form.control} render={({ field }) => (<FormItem><FormLabel>เข้าบัญชี</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl><SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent></Select><FormMessage/></FormItem>)} />
-              </div>
-              <div className="p-4 border rounded-md bg-muted/20 space-y-4">
-                <FormField control={form.control} name="withholdingEnabled" render={({ field }) => (<FormItem className="flex items-center gap-2 space-y-0"><FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl><FormLabel className="font-bold cursor-pointer text-primary">มีหัก ณ ที่จ่าย (WHT)</FormLabel></FormItem>)} />
-                {watchedWhtEnabled && (<FormField control={form.control} name="withholdingAmount" render={({ field }) => (<FormItem className="animate-in slide-in-from-top-1 duration-200"><FormLabel>ยอดเงินที่ถูกหัก (WHT)</FormLabel><FormControl><Input type="number" {...field} value={field.value || 0} /></FormControl><FormMessage/></FormItem>)} />)}
-              </div>
-              <div className="text-right space-y-1 p-2"><p className="text-sm">ยอดรับชำระ: {formatCurrency(watchedAmount)}</p>{watchedWhtEnabled && <p className='text-xs text-destructive'>หัก ณ ที่จ่าย: -{formatCurrency(watchedWhtAmount || 0)}</p>}<p className="font-bold text-xl text-primary">ยอดเงินเข้าจริง: {formatCurrency(cashReceived)}</p></div>
-               <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
-            </form>
-          </Form>
-        </div>
-        <DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="payment-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึกการรับชำระ</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 const apPaymentSchema = z.object({
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
@@ -371,7 +255,9 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
     const [loading, setLoading] = useState(true);
-    const [docDetails, setDocDetails] = useState<Record<string, { receiptStatus?: string, billingNoteNo?: string }>>({});
+    const [docDetails, setDocDetails] = useState<
+      Record<string, { receiptStatus?: string; billingNoteNo?: string; customerId?: string }>
+    >({});
     const [payingAR, setPayingAR] = useState<WithId<AccountingObligation> | null>(null);
     const [payingAP, setPayingAP] = useState<WithId<AccountingObligation> | null>(null);
     
@@ -405,7 +291,14 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
         const unsubscribes = arSourceDocIds.map(docId => onSnapshot(doc(db, 'documents', docId!), (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
-                setDocDetails(prev => ({ ...prev, [docId!]: { receiptStatus: data.receiptStatus || 'NONE', billingNoteNo: data.billingNoteNo } }));
+                setDocDetails((prev) => ({
+                  ...prev,
+                  [docId!]: {
+                    receiptStatus: data.receiptStatus || "NONE",
+                    billingNoteNo: data.billingNoteNo,
+                    customerId: data.customerId || data.customerSnapshot?.id,
+                  },
+                }));
             }
         }, () => {}));
         return () => unsubscribes.forEach(unsub => unsub());
@@ -441,12 +334,94 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                             const details = docDetails[ob.sourceDocId || ''];
                             const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
                             const billDateRaw = ob.docDate || (ob as any).createdAt?.toDate?.();
-                            return (<TableRow key={ob.id} className="hover:bg-muted/30"><TableCell className="text-xs">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell><TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell><TableCell><div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>{details?.billingNoteNo && (<Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200"><FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}</Badge>)}</TableCell><TableCell className="text-sm">{type === 'AR' ? ob.customerNameSnapshot : (ob.vendorShortNameSnapshot || ob.vendorNameSnapshot)}</TableCell><TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell><TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell><TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-2">{type === 'AR' && ob.sourceDocType === 'TAX_INVOICE' && (<TooltipProvider><Tooltip><TooltipTrigger asChild><span><Button size="sm" variant={isReceiptIssued ? "secondary" : "default"} disabled={isReceiptIssued} onClick={() => router.push(`/app/management/accounting/documents/receipt?customerId=${ob.customerId}&sourceDocId=${ob.sourceDocId}`)}><Receipt className="mr-2 h-4 w-4" />ออกใบเสร็จ</Button></span></TooltipTrigger>{isReceiptIssued && <TooltipContent>ออกใบเสร็จไปแล้ว ({details?.receiptStatus})</TooltipContent>}</Tooltip></TooltipProvider>)}{type === 'AR' ? (<Button size="sm" variant="outline" onClick={() => setPayingAR(ob)}><HandCoins className="mr-2 h-4 w-4" /> รับชำระ</Button>) : (<Button size="sm" variant="outline" onClick={() => setPayingAP(ob)}><HandCoins className="mr-2 h-4 w-4" /> จ่ายบิล</Button>)}</div></TableCell></TableRow>);
+                            const customerIdForReceipt = ob.customerId || details?.customerId || '';
+                            const canIssueReceipt = type === "AR" && ob.sourceDocType === "TAX_INVOICE";
+                            const requireReceiptBeforeReceive = ob.sourceDocType === "TAX_INVOICE";
+                            const receiptHref = (() => {
+                              const q = new URLSearchParams();
+                              q.set('tab', 'new');
+                              if (customerIdForReceipt) q.set('customerId', customerIdForReceipt);
+                              q.set('sourceDocId', ob.sourceDocId);
+                              q.set('presetAmount', String(ob.balance ?? ''));
+                              return `/app/management/accounting/documents/receipt?${q.toString()}`;
+                            })();
+                            return (
+                              <TableRow key={ob.id} className="hover:bg-muted/30">
+                                <TableCell className="text-xs">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
+                                <TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell>
+                                <TableCell>
+                                  <div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
+                                  {details?.billingNoteNo && (
+                                    <Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">
+                                      <FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}
+                                    </Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-sm">{type === 'AR' ? ob.customerNameSnapshot : (ob.vendorShortNameSnapshot || ob.vendorNameSnapshot)}</TableCell>
+                                <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
+                                <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
+                                <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-2 flex-wrap">
+                                    {canIssueReceipt && (
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span>
+                                              <Button
+                                                size="sm"
+                                                variant={isReceiptIssued ? 'secondary' : 'default'}
+                                                className={isReceiptIssued ? '' : 'bg-green-600 hover:bg-green-700'}
+                                                disabled={isReceiptIssued}
+                                                onClick={() => router.push(receiptHref)}
+                                              >
+                                                <Receipt className="mr-2 h-4 w-4" />
+                                                ออกใบเสร็จ
+                                              </Button>
+                                            </span>
+                                          </TooltipTrigger>
+                                          {isReceiptIssued && (
+                                            <TooltipContent>ออกใบเสร็จไปแล้ว ({details?.receiptStatus})</TooltipContent>
+                                          )}
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    )}
+                                    {type === 'AR' ? (
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span className="inline-block">
+                                              <Button
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={requireReceiptBeforeReceive && !isReceiptIssued}
+                                                onClick={() => setPayingAR(ob)}
+                                              >
+                                                <HandCoins className="mr-2 h-4 w-4" /> รับ
+                                              </Button>
+                                            </span>
+                                          </TooltipTrigger>
+                                          {requireReceiptBeforeReceive && !isReceiptIssued && (
+                                            <TooltipContent>
+                                              ใบกำกับภาษี: ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริง (เงินสด/โอน/เช็ค) ได้ — ใบส่งของรับเงินได้ทันที
+                                            </TooltipContent>
+                                          )}
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    ) : (
+                                      <Button size="sm" variant="outline" onClick={() => setPayingAP(ob)}>
+                                        <HandCoins className="mr-2 h-4 w-4" /> จ่ายบิล
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
                         }) : (<TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ค้างชำระ</TableCell></TableRow>)}
                     </TableBody>
                 </Table>
             </div>
-            {payingAR && (<ReceivePaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />)}
+            {payingAR && (<ReceiveArPaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />)}
             {payingAP && (<PayCreditorDialog isOpen={!!payingAP} onClose={() => setPayingAP(null)} obligation={payingAP} accounts={accounts} />)}
         </>
     );

@@ -46,6 +46,7 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { restoreJobFromArchive } from "@/firebase/jobs-archive";
+import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
@@ -201,9 +202,12 @@ function JobDetailsPageContent() {
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
-    if (job?.isArchived || archiveYear) {
-      const year = archiveYear || parseInt((job?.closedDate || "").split('-')[0]) || new Date().getFullYear();
-      return query(collection(db, `jobsArchive_${year}`, jobId, "activities"), orderBy("createdAt", "desc"));
+    if (job?.isArchived || archiveYear != null) {
+      const year =
+        archiveYear != null
+          ? archiveYear
+          : getGregorianArchiveYearFromDateString(job?.closedDate || "");
+      return query(collection(db, archiveCollectionNameByYear(year), jobId, "activities"), orderBy("createdAt", "desc"));
     }
     return query(collection(db, "jobs", jobId, "activities"), orderBy("createdAt", "desc"));
   }, [db, jobId, job?.isArchived, job?.closedDate, archiveYear]);
@@ -253,9 +257,10 @@ function JobDetailsPageContent() {
 
   const getJobRef = () => {
     if (!db || !job) return null;
-    if (job.isArchived || archiveYear) {
-      const year = archiveYear || parseInt(job.closedDate || "") || new Date().getFullYear();
-      return doc(db, `jobsArchive_${year}`, jobId);
+    if (job.isArchived || archiveYear != null) {
+      const year =
+        archiveYear != null ? archiveYear : getGregorianArchiveYearFromDateString(job.closedDate || "");
+      return doc(db, archiveCollectionNameByYear(year), jobId);
     }
     return doc(db, "jobs", jobId);
   };
@@ -707,7 +712,8 @@ function JobDetailsPageContent() {
     if (!db || !profile || !job || !job.isArchived) return;
     setIsRestoring(true);
     try {
-      const year = archiveYear || parseInt(job.closedDate || "") || new Date().getFullYear();
+      const year =
+        archiveYear != null ? archiveYear : getGregorianArchiveYearFromDateString(job.closedDate || "");
       await restoreJobFromArchive(db, job.id, year, profile);
       toast({ title: "กู้คืนงานสำเร็จ", description: "งานถูกย้ายกลับมาเป็นงานที่กำลังดำเนินการ (Active) เรียบร้อยแล้วค่ะ" });
       setIsRestoreDialogOpen(false);
@@ -964,14 +970,25 @@ function JobDetailsPageContent() {
           )}
 
           <Card>
-            <CardHeader><CardTitle>Activity Log</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Activity Log</CardTitle>
+              {job.isArchived && (
+                <CardDescription className="text-xs">
+                  ประวัติกิจกรรมจากงานที่ปิดแล้ว — แสดงข้อความและรูปที่บันทึกไว้ทุกรายการ
+                </CardDescription>
+              )}
+            </CardHeader>
             <CardContent className="space-y-6">{activitiesLoading ? <div className="flex items-center justify-center h-24"><Loader2 className="h-66 w-6 animate-spin text-muted-foreground" /></div> : activities && activities.length > 0 ? (
                 activities.map((activity) => (
                   <div key={activity.id} className="flex gap-4">
                       <User className="h-5 w-5 mt-1 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1">
                           <p className="font-semibold text-sm">{activity.userName} <span className="text-[10px] font-normal text-muted-foreground ml-2">{safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}</span></p>
-                          {activity.text && <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>}
+                          {activity.text ? (
+                            <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>
+                          ) : activity.photos && activity.photos.length > 0 ? (
+                            <p className="text-sm text-muted-foreground italic my-1">(แนบรูปภาพ — ไม่มีข้อความ)</p>
+                          ) : null}
                           {activity.photos && activity.photos.length > 0 && (
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
                                   {activity.photos.map((url, i) => (
@@ -1116,7 +1133,7 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Withdraw Parts - Logic Split */}
-                    {['IN_PROGRESS', 'PENDING_PARTS'].includes(job.status) && (
+                    {job.status === 'PENDING_PARTS' && (
                         <Button 
                           asChild
                           variant="outline"

@@ -45,18 +45,38 @@ export interface UserProfile {
   lastAttendanceDateKey?: string; // YYYY-MM-DD
 }
 
+/** นาม/ที่อยู่/เลขผู้เสียภาษีหนึ่งชุด — ลูกค้าคนเดียวอาจมีหลายโปรไฟล์ (หลายบริษัท/สาขา) */
+export interface CustomerTaxProfile {
+  id: string;
+  /** ป้ายสั้นๆ เช่น สำนักงานใหญ่, สาขาชลบุรี */
+  label?: string;
+  taxName: string;
+  taxAddress: string;
+  taxId: string;
+  taxPhone?: string;
+  taxBranchType?: "HEAD_OFFICE" | "BRANCH";
+  taxBranchNo?: string;
+}
+
 export interface Customer {
   id: string;
   name: string;
+  /** เบอร์หลัก (ควรตรงกับ phones[0] เมื่อมี phones) — ใช้ query/แสดงผลแบบเดิม */
   phone: string;
+  /** เบอร์ทั้งหมดของผู้ติดต่อ — ถ้าไม่มีให้ถือว่ามีแค่ phone */
+  phones?: string[];
   detail: string;
   useTax: boolean;
+  /** หลายชุดสำหรับออกใบกำกับ — ถ้าไม่มีให้อ่านจาก taxName/taxAddress/... แบบเดิม */
+  taxProfiles?: CustomerTaxProfile[];
   taxName?: string;
   taxAddress?: string;
   taxId?: string;
   taxPhone?: string;
-  taxBranchType?: 'HEAD_OFFICE' | 'BRANCH';
+  taxBranchType?: "HEAD_OFFICE" | "BRANCH";
   taxBranchNo?: string;
+  /** ระบุเมื่อ snapshot บนเอกสารว่าใช้โปรไฟล์ไหน */
+  taxProfileId?: string;
   acquisitionSource?: AcquisitionSource;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -442,6 +462,8 @@ export interface DocumentItem {
   partId?: string;
   code?: string;
   stockSnapshot?: number;
+  /** จำนวนที่คืนเข้าสต็อกแล้วจากบรรทัดนี้ (ใบเบิก — ยกเลิกบางส่วน) */
+  returnedToStockQty?: number;
 }
 
 export type DocType = 'QUOTATION' | 'DELIVERY_NOTE' | 'TAX_INVOICE' | 'RECEIPT' | 'BILLING_NOTE' | 'CREDIT_NOTE' | 'WITHHOLDING_TAX' | 'WITHDRAWAL';
@@ -453,6 +475,8 @@ export interface Document {
   docDate: string; // YYYY-MM-DD
   customerId?: string;
   jobId?: string;
+  /** ใบเบิกจากงานซ่อม: เลขที่ใบเสนอราคาอ้างอิง (แสดงในรายการแทนรหัสงานดิบ) */
+  quotationDocNo?: string;
   customerSnapshot: Partial<Customer>;
   carSnapshot?: {
     licensePlate?: string;
@@ -483,6 +507,7 @@ export interface Document {
   // AR Fields
   paymentTerms?: 'CASH' | 'CREDIT';
   billingRequired?: boolean;
+  arObligationId?: string;
   arStatus?: 'PENDING' | 'UNPAID' | 'PARTIAL' | 'PAID' | 'DISPUTED';
   receiptStatus?: 'ISSUED_NOT_CONFIRMED' | 'CONFIRMED';
   billingRunId?: string; // Links a BILLING_NOTE to its generation batch
@@ -495,7 +520,11 @@ export interface Document {
   // Doc-specific fields
   expiryDate?: string; // For Quotation
   dueDate?: string; // For TaxInvoice
-  paymentMethod?: string; // For Receipt
+  paymentMethod?: string; // For Receipt (legacy / display)
+  /** วิธีรับชำระตอนออกใบเสร็จ — ถ้า CHECK ให้ใช้ร่วมกับ accountingCheckItems */
+  paymentInstrument?: 'CASH' | 'TRANSFER' | 'CHECK';
+  /** วันที่เช็คครบกำหนด (เงินเข้าตามดิว) เมื่อ paymentInstrument === 'CHECK' */
+  checkDueDate?: string;
   paymentDate?: string; // For Receipt
   receivedAccountId?: string;
   cashReceived?: number;
@@ -514,6 +543,9 @@ export interface Document {
     accountId: string;
     amount: number;
   }[];
+
+  /** ใบเบิกอะไหล่จากงานซ่อม: บันทึกว่าเบิกบางส่วนหรือครบ (กำหนดการเปลี่ยนสถานะงาน) */
+  jobWithdrawalCompletion?: 'PARTIAL' | 'COMPLETE';
 
   delivery?: {
     deliveredDate?: string; // YYYY-MM-DD
@@ -624,6 +656,47 @@ export interface AccountingEntry {
   withholdingTaxDocId?: string; // Link to WITHHOLDING_TAX Document
 }
 
+/** เช็ครับ / เช็คจ่าย — ยังไม่ตัดบัญชีจนกว่าจะยืนยันในแท็บเช็ค */
+export type AccountingCheckDirection = 'RECEIVE' | 'PAY';
+export type AccountingCheckStatus = 'PENDING' | 'CLEARED' | 'CANCELLED';
+
+export interface AccountingCheckItem {
+  id: string;
+  direction: AccountingCheckDirection;
+  status: AccountingCheckStatus;
+  amount: number;
+  /** วันครบกำหนดเช็ค (เงินเข้า/ออกตามดิว) */
+  dueDate: string;
+  /** บัญชีที่รับเช็คเข้า / บัญชีที่สั่งจ่ายเช็ค */
+  accountId: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  createdByUid?: string;
+  createdByName?: string;
+  /** เช็ครับ — ใบเสร็จรับเงิน (ซ้ำกับ receiveAnchor เมื่อ anchor = RECEIPT) */
+  receiptId?: string;
+  receiptDocNo?: string;
+  /** อ้างอิงเอกสารขาย — ใบเสร็จเป็นหลัก; ใบส่งของ/ใบวางบิลเมื่อยังไม่ผ่านใบเสร็จ — ไม่ผูกใบกำกับภาษีโดยตรง */
+  receiveAnchorDocType?: 'RECEIPT' | 'DELIVERY_NOTE' | 'BILLING_NOTE';
+  receiveAnchorDocId?: string;
+  receiveAnchorDocNo?: string;
+  customerNameSnapshot?: string;
+  jobId?: string;
+  referenceInvoiceId?: string;
+  /** เช็คจ่าย — บิลซื้อ / เจ้าหนี้ */
+  purchaseDocId?: string;
+  obligationId?: string;
+  vendorNameSnapshot?: string;
+  /** วันที่ยืนยันรับ/จ่ายจริง (ตัดบัญชี) */
+  clearedAt?: Timestamp;
+  clearedByUid?: string;
+  clearedByName?: string;
+  clearedEntryId?: string;
+  /** วันที่รับ/จ่ายจริงที่ใช้ในรายการบัญชี */
+  clearedDate?: string;
+  notes?: string;
+}
+
 export interface ARPayment {
   id: string;
   receiptId: string;
@@ -681,7 +754,14 @@ export interface AccountingObligation {
   id: string;
   type: 'AR' | 'AP';
   status: 'UNPAID' | 'PARTIAL' | 'PAID';
-  sourceDocType: 'DELIVERY_NOTE' | 'TAX_INVOICE' | 'PURCHASE_ORDER' | 'BILL' | 'PURCHASE' | 'WITHDRAWAL';
+  sourceDocType:
+    | 'DELIVERY_NOTE'
+    | 'TAX_INVOICE'
+    | 'BILLING_NOTE'
+    | 'PURCHASE_ORDER'
+    | 'BILL'
+    | 'PURCHASE'
+    | 'WITHDRAWAL';
   sourceDocId: string;
   sourceDocNo: string;
   amountTotal: number;
@@ -694,6 +774,8 @@ export interface AccountingObligation {
   paidOffDate?: string; // YYYY-MM-DD
   note?: string;
   jobId?: string;
+  /** สำหรับลิงก์ออกใบเสร็จจากหน้าลูกหนี้ */
+  customerId?: string;
   customerNameSnapshot?: string;
   customerPhoneSnapshot?: string;
   vendorId?: string;

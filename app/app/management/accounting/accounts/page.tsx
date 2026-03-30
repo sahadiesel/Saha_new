@@ -1,8 +1,9 @@
 
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { collection, onSnapshot, query, orderBy, doc, updateDoc, serverTimestamp, writeBatch, where } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -10,9 +11,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns";
 
 import { PageHeader } from "@/components/page-header";
+import { AccountingChecksTab } from "@/components/accounting/accounting-checks-tab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,7 +27,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AccountingAccount, AccountingEntry } from "@/lib/types";
+import { computeCashAccountCurrentBalance } from "@/lib/accounting-balance";
 import type { WithId } from "@/firebase/index";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
@@ -44,7 +48,9 @@ const transferSchema = z.object({
 
 type TransferFormData = z.infer<typeof transferSchema>;
 
-export default function ManagementAccountingAccountsPage() {
+function ManagementAccountingAccountsPageContent() {
+  const searchParams = useSearchParams();
+  const defaultTab = searchParams.get("tab") === "checks" ? "checks" : "cash";
   const { db } = useFirebase();
   const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
@@ -102,46 +108,10 @@ export default function ManagementAccountingAccountsPage() {
     return () => { unsubAccounts(); unsubEntries(); };
   }, [db, hasPermission, authLoading]);
 
-  // Calculate current balances for all accounts using the EXACT same robust logic as Ledger page
   const accountsWithBalances = useMemo(() => {
-    return accounts.map(acc => {
-      const openingBalanceDateStr = acc.openingBalanceDate || "1970-01-01";
-      const openingBalanceValue = Number(acc.openingBalance ?? 0);
-      
-      // 1. Filter entries for this account
-      const accEntries = entries.filter(e => e.accountId === acc.id);
-      
-      // 2. Sort EXACTLY like Ledger page (Date -> CreatedAt)
-      const sortedEntries = [...accEntries].sort((a, b) => {
-          const dateA = parseISO(a.entryDate).getTime();
-          const dateB = parseISO(b.entryDate).getTime();
-          if (dateA !== dateB) return dateA - dateB;
-          
-          const timeA = (a as any).createdAt?.toMillis?.() || 0;
-          const timeB = (b as any).createdAt?.toMillis?.() || 0;
-          return timeA - timeB;
-      });
-      
-      // 3. Sequential Calculation including pre-opening entries (calculating backwards then forwards)
-      // This ensures 100% consistency with the Ledger's "currentBalance" at the end of the history
-      
-      const preOpening = sortedEntries.filter(e => e.entryDate < openingBalanceDateStr);
-      const postOpening = sortedEntries.filter(e => e.entryDate >= openingBalanceDateStr);
-      
-      // We start from opening balance and calculate the current state
-      let currentBalance = openingBalanceValue;
-      
-      // Forward calculation for everything after (and including) opening balance date
-      postOpening.forEach(e => {
-          const income = (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') ? Number(e.amount || 0) : 0;
-          const expense = (e.entryType === 'CASH_OUT') ? Number(e.amount || 0) : 0;
-          currentBalance = Math.round((currentBalance + income - expense) * 100) / 100;
-      });
-      
-      // If the ledger view also calculates pre-opening entries backwards to show their history,
-      // it doesn't change the fact that the 'currentBalance' at the end of all time 
-      // is precisely what we just calculated above.
-      
+    return accounts.map((acc) => {
+      const accEntries = entries.filter((e) => e.accountId === acc.id);
+      const currentBalance = computeCashAccountCurrentBalance(acc, accEntries);
       return { ...acc, currentBalance };
     });
   }, [accounts, entries]);
@@ -284,68 +254,79 @@ export default function ManagementAccountingAccountsPage() {
         </div>
       </PageHeader>
 
-      <Card>
-        <CardContent className="pt-6 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="ค้นหาจากชื่อบัญชี หรือ เลขที่บัญชี..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+      <Tabs defaultValue={defaultTab} key={defaultTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="cash">รับ-จ่าย</TabsTrigger>
+          <TabsTrigger value="checks">เช็ค</TabsTrigger>
+        </TabsList>
+        <TabsContent value="cash" className="mt-4">
+          <Card>
+            <CardContent className="pt-6 space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="ค้นหาจากชื่อบัญชี หรือ เลขที่บัญชี..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
 
-          <div className="border rounded-md">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ชื่อบัญชี</TableHead>
-                  <TableHead>ประเภท</TableHead>
-                  <TableHead>ธนาคาร</TableHead>
-                  <TableHead>เลขที่บัญชี</TableHead>
-                  <TableHead className="text-right">ยอดคงเหลือปัจจุบัน</TableHead>
-                  <TableHead>สถานะ</TableHead>
-                  <TableHead className="text-right">จัดการ</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mx-auto animate-spin" /></TableCell></TableRow>
-                ) : filteredAccounts.length > 0 ? (
-                  filteredAccounts.map(account => (
-                    <TableRow key={account.id}>
-                      <TableCell className="font-medium">{account.name}</TableCell>
-                      <TableCell>{account.type}</TableCell>
-                      <TableCell>{account.bankName || '-'}</TableCell>
-                      <TableCell>{account.accountNo || '-'}</TableCell>
-                      <TableCell className="text-right font-bold text-primary">{(account.currentBalance ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                      <TableCell>
-                        <Badge variant={account.isActive ? 'default' : 'secondary'}>{account.isActive ? 'ใช้งาน' : 'ปิดใช้งาน'}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem asChild><Link href={`/app/management/accounting/accounts/${account.id}/ledger`}><BookOpen className="mr-2 h-4 w-4"/> ดูรายการเข้า-ออก</Link></DropdownMenuItem>
-                            <DropdownMenuItem asChild><Link href={`/app/management/accounting/accounts/${account.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link></DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleToggleActive(account)}>
-                              {account.isActive ? <ToggleLeft className="mr-2 h-4 w-4"/> : <ToggleRight className="mr-2 h-4 w-4"/>}
-                              {account.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+              <div className="border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ชื่อบัญชี</TableHead>
+                      <TableHead>ประเภท</TableHead>
+                      <TableHead>ธนาคาร</TableHead>
+                      <TableHead>เลขที่บัญชี</TableHead>
+                      <TableHead className="text-right">ยอดคงเหลือปัจจุบัน</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center">ยังไม่มีบัญชี กรุณากด ‘เพิ่มบัญชี’</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mx-auto animate-spin" /></TableCell></TableRow>
+                    ) : filteredAccounts.length > 0 ? (
+                      filteredAccounts.map(account => (
+                        <TableRow key={account.id}>
+                          <TableCell className="font-medium">{account.name}</TableCell>
+                          <TableCell>{account.type}</TableCell>
+                          <TableCell>{account.bankName || '-'}</TableCell>
+                          <TableCell>{account.accountNo || '-'}</TableCell>
+                          <TableCell className="text-right font-bold text-primary">{(account.currentBalance ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                          <TableCell>
+                            <Badge variant={account.isActive ? 'default' : 'secondary'}>{account.isActive ? 'ใช้งาน' : 'ปิดใช้งาน'}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem asChild><Link href={`/app/management/accounting/accounts/${account.id}/ledger`}><BookOpen className="mr-2 h-4 w-4"/> ดูรายการเข้า-ออก</Link></DropdownMenuItem>
+                                <DropdownMenuItem asChild><Link href={`/app/management/accounting/accounts/${account.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link></DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleToggleActive(account)}>
+                                  {account.isActive ? <ToggleLeft className="mr-2 h-4 w-4"/> : <ToggleRight className="mr-2 h-4 w-4"/>}
+                                  {account.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow><TableCell colSpan={7} className="h-24 text-center">ยังไม่มีบัญชี กรุณากด ‘เพิ่มบัญชี’</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="checks" className="mt-4">
+          <AccountingChecksTab db={db} accounts={accounts} profile={profile} />
+        </TabsContent>
+      </Tabs>
 
       {/* Transfer Dialog */}
       <Dialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
@@ -431,5 +412,19 @@ export default function ManagementAccountingAccountsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+export default function ManagementAccountingAccountsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="animate-spin h-10 w-10 text-primary" />
+        </div>
+      }
+    >
+      <ManagementAccountingAccountsPageContent />
+    </Suspense>
   );
 }

@@ -195,6 +195,10 @@ service cloud.firestore {
       allow read, create, update: if isAccountingAllowed();
       allow delete: if isMgmt();
     }
+
+    match /accountingCheckItems/{id} {
+      allow read, create, update, delete: if isAccountingAllowed();
+    }
     
     match /billingRuns/{monthId} {
         allow read, write: if isAccountingAllowed();

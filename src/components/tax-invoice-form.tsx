@@ -170,21 +170,25 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const currentCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
   const grandTotal = form.watch('grandTotal');
   
-  // Strict Tax Info Validation
+  const hasFullTaxInvoiceCustomerInfo = (c: {
+    useTax?: boolean;
+    taxName?: string;
+    taxAddress?: string;
+    taxId?: string;
+  }) =>
+    !!(
+      c.useTax &&
+      c.taxName?.trim() &&
+      c.taxAddress?.trim() &&
+      c.taxId?.trim()
+    );
+
+  // เลือกผู้ติดต่อแล้วตรวจว่ามีชื่อ/ที่อยู่/เลขประจำตัวผู้เสียภาษีครบหรือไม่
   useEffect(() => {
-    if (selectedCustomerId && !isLoadingCustomers && customers.length > 0) {
-      const customer = customers.find(c => c.id === selectedCustomerId);
-      if (customer) {
-        const hasFullTaxInfo = customer.useTax && 
-                               customer.taxName?.trim() && 
-                               customer.taxAddress?.trim() && 
-                               customer.taxId?.trim();
-        
-        if (!hasFullTaxInfo) {
-          setShowTaxInfoAlert(true);
-        }
-      }
-    }
+    if (!selectedCustomerId || isLoadingCustomers || customers.length === 0) return;
+    const customer = customers.find((c) => c.id === selectedCustomerId);
+    if (!customer) return;
+    setShowTaxInfoAlert(!hasFullTaxInvoiceCustomerInfo(customer));
   }, [selectedCustomerId, isLoadingCustomers, customers]);
 
   const handleGoToEditCustomer = () => {
@@ -299,8 +303,8 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     const customerSnapshot = currentCustomer || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
     
-    // Final check for tax info before saving
-    if (!customerSnapshot.useTax || !customerSnapshot.taxName?.trim() || !customerSnapshot.taxId?.trim()) {
+    // Final check for tax info before saving (ชื่อ/ที่อยู่/เลขผู้เสียภาษี — สอดคล้องกับการเลือกลูกค้า)
+    if (!hasFullTaxInvoiceCustomerInfo(customerSnapshot)) {
         toast({ variant: 'destructive', title: 'ข้อมูลภาษีไม่ครบถ้วน', description: 'กรุณาแก้ไขข้อมูลลูกค้าเพื่อเพิ่มรายละเอียดการออกใบกำกับภาษีก่อนค่ะ' });
         setShowTaxInfoAlert(true);
         return;
@@ -604,7 +608,16 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                       </div>
                       <ScrollArea className="h-fit max-h-60">
                         {filteredCustomers.map((c) => (
-                          <Button key={c.id} variant="ghost" onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); }} className="w-full justify-start h-auto py-2 px-3 text-left">
+                          <Button
+                            key={c.id}
+                            variant="ghost"
+                            onClick={() => {
+                              field.onChange(c.id);
+                              form.setValue("receiverName", c.taxName?.trim() || c.name || "");
+                              setIsCustomerPopoverOpen(false);
+                            }}
+                            className="w-full justify-start h-auto py-2 px-3 text-left"
+                          >
                             <span>{c.name}</span>
                           </Button>
                         ))}
@@ -709,13 +722,19 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                   <AlertCircle className="h-5 w-5" />
                   ข้อมูลภาษีไม่ครบถ้วน
                 </AlertDialogTitle>
-                <AlertDialogDescription className="space-y-3 pt-2">
-                  <p>ผู้ติดต่อคนนี้ไม่มีชื่อที่อยู่สำหรับออกใบกำกับภาษี ต้องไปเพิ่มเติมก่อนค่ะ</p>
-                  <div className="p-3 bg-muted rounded-md text-sm font-bold border border-primary/10">
-                    <p className="text-xs text-muted-foreground font-normal mb-1">รายชื่อลูกค้า:</p>
-                    {currentCustomer?.name}
+                <AlertDialogDescription asChild>
+                  <div className="space-y-3 pt-2 text-sm text-muted-foreground">
+                    <div className="leading-relaxed">
+                      ผู้ติดต่อคนนี้ไม่มีชื่อ/ที่อยู่สำหรับออกใบกำกับภาษีครบถ้วน ต้องไปเพิ่มเติมในรายชื่อลูกค้าก่อนค่ะ
+                    </div>
+                    <div className="p-3 bg-muted rounded-md text-sm font-bold border border-primary/10 text-foreground">
+                      <div className="text-xs text-muted-foreground font-normal mb-1">รายชื่อลูกค้า</div>
+                      {currentCustomer?.name ?? "—"}
+                    </div>
+                    <div className="text-primary font-semibold">
+                      คุณต้องการไปแก้ไขข้อมูลลูกค้าเพื่อเพิ่มรายละเอียดภาษีตอนนี้หรือไม่?
+                    </div>
                   </div>
-                  <p className="text-primary font-semibold">คุณต้องการไปแก้ไขข้อมูลลูกค้าเพื่อเพิ่มรายละเอียดภาษีตอนนี้หรือไม่?</p>
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">

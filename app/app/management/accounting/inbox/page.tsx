@@ -44,6 +44,26 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** ค้นหาเลขที่เอกสาร / ชื่อลูกค้า / ชื่อในใบกำกับ / เบอร์โทร */
+function matchesInboxSearch(
+  doc: Pick<DocumentType, "docNo" | "customerSnapshot">,
+  rawSearch: string
+): boolean {
+  const t = rawSearch.trim();
+  if (!t) return true;
+  const q = t.toLowerCase();
+  if ((doc.docNo || "").toLowerCase().includes(q)) return true;
+  const s = doc.customerSnapshot;
+  if (!s) return false;
+  if ((s.name || "").toLowerCase().includes(q)) return true;
+  if ((s.taxName || "").toLowerCase().includes(q)) return true;
+  const phone = (s.phone || "").replace(/\s|-/g, "");
+  const qDigits = t.replace(/\s|-/g, "");
+  if (phone && qDigits && phone.includes(qDigits)) return true;
+  if ((s.phone || "").includes(t)) return true;
+  return false;
+}
+
 function AccountingInboxPageContent() {
   const { profile, loading: authLoading } = useAuth();
   const { db, app: firebaseApp } = useFirebase();
@@ -113,6 +133,10 @@ function AccountingInboxPageContent() {
     const unsubscribe = onSnapshot(docsQuery, (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
       const needingReview = all.filter(d => {
+          // ตั้งลูกหนี้แล้ว → ไม่แสดงใน Inbox ตรวจบิล (ติดตามที่หน้าลูกหนี้/เจ้าหนี้)
+          if ((d.docType === 'DELIVERY_NOTE' || d.docType === 'TAX_INVOICE') && d.arObligationId) {
+            return false;
+          }
           if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
           if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
           if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
@@ -157,6 +181,8 @@ function AccountingInboxPageContent() {
   const filteredDocs = useMemo(() => {
     let result = documents.filter(doc => {
       if (activeTab === 'receive') {
+        // ใบกำกับเงินสด: หลังบัญชียืนยันแล้วเป็น APPROVED → ไปขั้นตอนใบเสร็จ ไม่ให้ค้างในแท็บนี้
+        if (doc.docType === 'TAX_INVOICE' && doc.status === 'APPROVED') return false;
         return (doc.paymentTerms === 'CASH' || !doc.paymentTerms) && doc.docType !== 'RECEIPT';
       }
       if (activeTab === 'ar') {
@@ -168,15 +194,21 @@ function AccountingInboxPageContent() {
       return false;
     });
 
-    if (searchTerm) {
-      const q = searchTerm.toLowerCase();
-      result = result.filter(doc => 
-        doc.docNo.toLowerCase().includes(q) ||
-        (doc.customerSnapshot?.name || '').toLowerCase().includes(q)
-      );
+    if (searchTerm.trim()) {
+      result = result.filter((doc) => matchesInboxSearch(doc, searchTerm));
     }
     return result;
   }, [documents, activeTab, searchTerm]);
+
+  const filteredApprovedDocs = useMemo(() => {
+    if (!searchTerm.trim()) return approvedDocs;
+    return approvedDocs.filter((d) => matchesInboxSearch(d, searchTerm));
+  }, [approvedDocs, searchTerm]);
+
+  const receiptDocsInInbox = useMemo(
+    () => documents.filter((d) => d.docType === "RECEIPT"),
+    [documents]
+  );
 
   const handleTabChange = (value: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -425,6 +457,7 @@ function AccountingInboxPageContent() {
           balance: docObj.grandTotal,
           createdAt: serverTimestamp(), 
           updatedAt: serverTimestamp(), 
+          customerId: docObj.customerId || docObj.customerSnapshot?.id || null,
           customerNameSnapshot: customerName,
           jobId: docObj.jobId || null,
           dueDate: docObj.dueDate || null,
@@ -623,9 +656,12 @@ function AccountingInboxPageContent() {
             <TabsContent value="receipts" className="mt-0 space-y-8">
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b pb-2">
-                    <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. บิลที่ตรวจสอบแล้ว (รอดำเนินการออกใบเสร็จ)</h3>
-                    <Badge variant="outline" className="bg-primary/5">{approvedDocs.length} รายการ</Badge>
+                    <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. ใบกำกับภาษีที่ตรวจสอบแล้ว (รอออกใบเสร็จ)</h3>
+                    <Badge variant="outline" className="bg-primary/5">
+                      {searchTerm.trim() ? `${filteredApprovedDocs.length} / ${approvedDocs.length}` : filteredApprovedDocs.length} รายการ
+                    </Badge>
                 </div>
+                <p className="text-xs text-muted-foreground -mt-2">ลิงก์เดียวกับหน้าลูกหนี้/เจ้าหนี้ — ออกใบเสร็จได้เฉพาะใบกำกับภาษี ใบส่งของลูกหนี้รับเงินที่หน้าลูกหนี้เท่านั้น</p>
                 <Table>
                     <TableHeader className="bg-muted/30">
                         <TableRow>
@@ -636,30 +672,41 @@ function AccountingInboxPageContent() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {approvedDocs.length > 0 ? approvedDocs.map(docItem => (
+                        {filteredApprovedDocs.length > 0 ? (
+                          filteredApprovedDocs.map((docItem) => (
                             <TableRow key={docItem.id}>
                                 <TableCell className="font-mono text-xs">{docItem.docNo}</TableCell>
                                 <TableCell className="text-sm">{docItem.customerSnapshot?.name}</TableCell>
                                 <TableCell className="text-right font-bold">{formatCurrency(docItem.grandTotal)}</TableCell>
                                 <TableCell className="text-right">
                                     <Button asChild size="sm" variant="default" className="h-8">
-                                        <Link href={`/app/management/accounting/documents/receipt?customerId=${docItem.customerId}&sourceDocId=${docItem.id}`}>
+                                        <Link href={`/app/management/accounting/documents/receipt?tab=new&customerId=${encodeURIComponent(docItem.customerId || "")}&sourceDocId=${docItem.id}&presetAmount=${encodeURIComponent(String(docItem.paymentSummary?.balance ?? docItem.grandTotal))}`}>
                                             <PlusCircle className="mr-2 h-4 w-4"/> ออกใบเสร็จ
                                         </Link>
                                     </Button>
                                 </TableCell>
                             </TableRow>
-                        )) : (
+                          ))
+                        ) : approvedDocs.length > 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="h-20 text-center text-muted-foreground italic text-xs">
+                                ไม่พบรายการที่ตรงกับ &quot;{searchTerm.trim()}&quot; — ลองเลขที่บิลหรือชื่อลูกค้า
+                              </TableCell>
+                            </TableRow>
+                        ) : (
                             <TableRow><TableCell colSpan={4} className="h-20 text-center text-muted-foreground italic text-xs">ไม่มีบิลค้างในขั้นตอนนี้</TableCell></TableRow>
                         )}
                     </TableBody>
                 </Table>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-4 pt-4 border-t">
                 <div className="flex items-center justify-between border-b pb-2">
                     <h3 className="font-bold text-lg flex items-center gap-2"><CheckCircle className="h-5 w-5 text-green-600"/> 2. ใบเสร็จที่รอตรวจสอบรับเงินจริง</h3>
                 </div>
+                <p className="text-xs text-muted-foreground -mt-2">
+                  หลังออกใบเสร็จจากหน้านี้หรือจากหน้าลูกหนี้ รายการจะมาอยู่ที่นี่เหมือนกัน
+                </p>
                 <Table>
                     <TableHeader>
                     <TableRow>
@@ -672,7 +719,13 @@ function AccountingInboxPageContent() {
                     </TableHeader>
                     <TableBody>
                     {filteredDocs.length === 0 ? (
-                        <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีใบเสร็จที่รอยืนยันเงินเข้า</TableCell></TableRow>
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">
+                            {receiptDocsInInbox.length > 0 && searchTerm.trim()
+                              ? `ไม่พบรายการที่ตรงกับ "${searchTerm.trim()}" — ลองเลขที่ใบเสร็จหรือชื่อลูกค้า`
+                              : "ไม่มีใบเสร็จที่รอยืนยันเงินเข้า"}
+                          </TableCell>
+                        </TableRow>
                     ) : filteredDocs.map(docItem => (
                         <TableRow key={docItem.id}>
                         <TableCell>{safeFormat(docItem.docDate)}</TableCell>
@@ -856,6 +909,7 @@ function AccountingInboxPageContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </div>
   );
 }
