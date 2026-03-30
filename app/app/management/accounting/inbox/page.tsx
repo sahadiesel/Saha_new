@@ -335,6 +335,7 @@ function AccountingInboxPageContent() {
                 paymentSummary: { paidTotal: 0, balance: confirmingDoc.grandTotal, paymentStatus: 'UNPAID' },
                 suggestedPayments: finalPayments,
                 paymentDate: selectedPaymentDate,
+                arObligationId: arId,
                 updatedAt: serverTimestamp()
             });
 

@@ -4,7 +4,27 @@ import { useMemo, Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
-import { collection, query, where, onSnapshot, doc, writeBatch, serverTimestamp, getDoc, type FirestoreError, addDoc, limit, orderBy, runTransaction } from "firebase/firestore";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  writeBatch,
+  serverTimestamp,
+  getDoc,
+  getDocs,
+  deleteField,
+  type FirestoreError,
+  type Firestore,
+  type QueryDocumentSnapshot,
+  type DocumentData,
+  addDoc,
+  limit,
+  orderBy,
+  startAfter,
+  runTransaction,
+} from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -53,6 +73,38 @@ const formatCurrency = (value: number | null | undefined) => {
     maximumFractionDigits: 2,
   });
 };
+
+/** ดึงใบกำกับ APPROVED ทั้งชุดที่เกี่ยวกับการซ่อมลูกหนี้ — แบ่งหน้า + orderBy ไม่ให้พลาดใบที่ไม่อยู่ใน limit แรก */
+async function getApprovedTaxInvoiceSnapshotsPaged(db: Firestore): Promise<QueryDocumentSnapshot<DocumentData>[]> {
+  const pageSize = 200;
+  const maxPages = 50;
+  const out: QueryDocumentSnapshot<DocumentData>[] = [];
+  let last: QueryDocumentSnapshot<DocumentData> | undefined;
+  for (let p = 0; p < maxPages; p++) {
+    const q = last
+      ? query(
+          collection(db, "documents"),
+          where("status", "==", "APPROVED"),
+          where("docType", "==", "TAX_INVOICE"),
+          orderBy("updatedAt", "desc"),
+          startAfter(last),
+          limit(pageSize)
+        )
+      : query(
+          collection(db, "documents"),
+          where("status", "==", "APPROVED"),
+          where("docType", "==", "TAX_INVOICE"),
+          orderBy("updatedAt", "desc"),
+          limit(pageSize)
+        );
+    const snap = await getDocs(q);
+    if (snap.empty) break;
+    out.push(...snap.docs);
+    last = snap.docs[snap.docs.length - 1];
+    if (snap.docs.length < pageSize) break;
+  }
+  return out;
+}
 
 const apPaymentSchema = z.object({
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
@@ -256,12 +308,159 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
     const [loading, setLoading] = useState(true);
     const [docDetails, setDocDetails] = useState<
-      Record<string, { receiptStatus?: string; billingNoteNo?: string; customerId?: string }>
+      Record<
+        string,
+        {
+          receiptStatus?: string;
+          billingNoteNo?: string;
+          customerId?: string;
+          customerNameFromDoc?: string;
+          customerTaxNameFromDoc?: string;
+        }
+      >
     >({});
     const [payingAR, setPayingAR] = useState<WithId<AccountingObligation> | null>(null);
     const [payingAP, setPayingAP] = useState<WithId<AccountingObligation> | null>(null);
-    
-    const obligationsQuery = useMemo(() => { if (!db) return null; return query(collection(db, "accountingObligations"), where("type", "==", type), limit(500)); }, [db, type]);
+    const { toast } = useToast();
+
+    /**
+     * ซ่อมความไม่สอดคล้องระหว่าง Inbox (documents) กับหน้าลูกหนี้ (accountingObligations):
+     * 1) obligation PAID แต่ใบกำกับกลับเป็น APPROVED รอใบเสร็จ → รีเซ็ต UNPAID
+     * 2) ใบกำกับ APPROVED รอใบเสร็จ แต่ไม่มี AR_<docId> → สร้าง obligation (ดึงแบบแบ่งหน้า + orderBy ไม่ให้พลาดใบนอก limit แรก)
+     */
+    useEffect(() => {
+        if (!db || type !== 'AR') return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const obSnap = await getDocs(query(collection(db, 'accountingObligations'), where('type', '==', 'AR'), limit(500)));
+                if (cancelled) return;
+                const batchPaid = writeBatch(db);
+                let nPaid = 0;
+                for (const d of obSnap.docs) {
+                    const ob = { id: d.id, ...d.data() } as WithId<AccountingObligation>;
+                    if (ob.status !== 'PAID' || ob.sourceDocType !== 'TAX_INVOICE' || !ob.sourceDocId) continue;
+                    const src = await getDoc(doc(db, 'documents', ob.sourceDocId));
+                    if (!src.exists()) continue;
+                    const docData = src.data() as DocumentType;
+                    if (docData.status === 'APPROVED' && !docData.receiptDocId) {
+                        const total = typeof ob.amountTotal === 'number' ? ob.amountTotal : docData.grandTotal;
+                        batchPaid.update(doc(db, 'accountingObligations', ob.id), {
+                            status: 'UNPAID',
+                            amountPaid: 0,
+                            balance: total,
+                            lastPaymentDate: deleteField(),
+                            paidOffDate: deleteField(),
+                            updatedAt: serverTimestamp(),
+                        });
+                        nPaid++;
+                    }
+                }
+                if (nPaid > 0 && !cancelled) await batchPaid.commit();
+
+                let invDocs: QueryDocumentSnapshot<DocumentData>[] = [];
+                try {
+                    invDocs = await getApprovedTaxInvoiceSnapshotsPaged(db);
+                } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    const urlMatch = msg.match(/https?:\/\/[^\s]+/);
+                    if (urlMatch) {
+                        toast({
+                            variant: 'destructive',
+                            title: 'ต้องสร้าง Firestore index',
+                            description: `เปิดลิงก์นี้ในเบราว์เซอร์แล้วกดสร้างดัชนี จากนั้นรีเฟรชหน้าลูกหนี้: ${urlMatch[0]}`,
+                        });
+                    }
+                    const snap = await getDocs(
+                        query(collection(db, 'documents'), where('status', '==', 'APPROVED'), where('docType', '==', 'TAX_INVOICE'), limit(500))
+                    );
+                    invDocs = snap.docs;
+                }
+                if (cancelled) return;
+
+                const batchMissing = writeBatch(db);
+                let nMissing = 0;
+                for (const d of invDocs) {
+                    const docData = { id: d.id, ...d.data() } as DocumentType;
+                    if (docData.receiptDocId) continue;
+                    const arId = `AR_${d.id}`;
+                    const arRef = doc(db, 'accountingObligations', arId);
+                    const arExisting = await getDoc(arRef);
+                    if (arExisting.exists()) continue;
+                    const balance = docData.paymentSummary?.balance ?? docData.grandTotal;
+                    const customerName = docData.customerSnapshot?.name || 'Unknown';
+                    batchMissing.set(
+                        arRef,
+                        sanitizeForFirestore({
+                            id: arId,
+                            type: 'AR',
+                            status: 'UNPAID',
+                            sourceDocType: 'TAX_INVOICE',
+                            sourceDocId: d.id,
+                            sourceDocNo: docData.docNo,
+                            amountTotal: docData.grandTotal,
+                            amountPaid: 0,
+                            balance,
+                            createdAt: serverTimestamp(),
+                            updatedAt: serverTimestamp(),
+                            customerId: docData.customerId || docData.customerSnapshot?.id || null,
+                            customerNameSnapshot: customerName,
+                            jobId: docData.jobId || null,
+                            dueDate: docData.dueDate || null,
+                            docDate: docData.docDate,
+                        })
+                    );
+                    batchMissing.update(doc(db, 'documents', d.id), {
+                        arObligationId: arId,
+                        arStatus: docData.arStatus || 'UNPAID',
+                        updatedAt: serverTimestamp(),
+                    });
+                    nMissing++;
+                }
+                if (nMissing > 0 && !cancelled) {
+                    await batchMissing.commit();
+                    toast({ title: 'ซ่อมข้อมูลลูกหนี้', description: `สร้างรายการลูกหนี้ที่ขาด ${nMissing} รายการแล้ว` });
+                }
+
+                // ชื่อลูกค้าว่างบน obligation → ค้นหาตามชื่อไม่เจอ; ดึงจากเอกสารต้นทางแล้วอัปเดต
+                const arAll = await getDocs(query(collection(db, 'accountingObligations'), where('type', '==', 'AR'), limit(1000)));
+                if (cancelled) return;
+                const batchNames = writeBatch(db);
+                let nNames = 0;
+                for (const d of arAll.docs) {
+                    const ob = { id: d.id, ...d.data() } as WithId<AccountingObligation>;
+                    if (!ob.sourceDocId) continue;
+                    if (String(ob.customerNameSnapshot || '').trim().length > 0) continue;
+                    const src = await getDoc(doc(db, 'documents', ob.sourceDocId));
+                    if (!src.exists()) continue;
+                    const dd = src.data() as DocumentType;
+                    const nm = dd.customerSnapshot?.name || dd.customerSnapshot?.taxName;
+                    if (!nm) continue;
+                    batchNames.update(doc(db, 'accountingObligations', ob.id), {
+                        customerNameSnapshot: dd.customerSnapshot?.name || nm,
+                        customerId: dd.customerId || dd.customerSnapshot?.id || ob.customerId || null,
+                        updatedAt: serverTimestamp(),
+                    });
+                    nNames++;
+                    if (nNames >= 400) break;
+                }
+                if (nNames > 0 && !cancelled) {
+                    await batchNames.commit();
+                    toast({ title: 'อัปเดตชื่อลูกค้าในลูกหนี้', description: `เติมชื่อจากเอกสารต้นทาง ${nNames} รายการ (ให้ค้นหาตามชื่อตรงกับรายการจริง)` });
+                }
+            } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : String(e);
+                toast({ variant: 'destructive', title: 'ซ่อมข้อมูลลูกหนี้ไม่สำเร็จ', description: msg });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [db, type, toast]);
+
+    const obligationsQuery = useMemo(() => {
+        if (!db) return null;
+        // ไม่ใช้ orderBy(updatedAt) — เอกสารเก่าอาจไม่มีฟิลด์นี้แล้วหลุดจาก query ทั้งก้อน
+        return query(collection(db, "accountingObligations"), where("type", "==", type), limit(1000));
+    }, [db, type]);
 
     useEffect(() => {
         if (!obligationsQuery) return;
@@ -291,12 +490,15 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
         const unsubscribes = arSourceDocIds.map(docId => onSnapshot(doc(db, 'documents', docId!), (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
+                const snap = data.customerSnapshot as { name?: string; taxName?: string } | undefined;
                 setDocDetails((prev) => ({
                   ...prev,
                   [docId!]: {
                     receiptStatus: data.receiptStatus || "NONE",
                     billingNoteNo: data.billingNoteNo,
                     customerId: data.customerId || data.customerSnapshot?.id,
+                    customerNameFromDoc: snap?.name,
+                    customerTaxNameFromDoc: snap?.taxName,
                   },
                 }));
             }
@@ -314,10 +516,27 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
         }
         if (searchTerm) {
             const lowerSearch = searchTerm.toLowerCase();
-            result = result.filter(ob => ob.customerNameSnapshot?.toLowerCase().includes(lowerSearch) || ob.vendorShortNameSnapshot?.toLowerCase().includes(lowerSearch) || ob.vendorNameSnapshot?.toLowerCase().includes(lowerSearch) || ob.sourceDocNo.toLowerCase().includes(lowerSearch) || ob.invoiceNo?.toLowerCase().includes(lowerSearch));
+            result = result.filter((ob) => {
+                const det = docDetails[ob.sourceDocId || ""];
+                const names = [
+                    ob.customerNameSnapshot,
+                    ob.vendorShortNameSnapshot,
+                    ob.vendorNameSnapshot,
+                    det?.customerNameFromDoc,
+                    det?.customerTaxNameFromDoc,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+                const nums = [ob.sourceDocNo, ob.invoiceNo]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+                return names.includes(lowerSearch) || nums.includes(lowerSearch);
+            });
         }
         return result;
-    }, [obligations, searchTerm, monthFilter]);
+    }, [obligations, searchTerm, monthFilter, docDetails]);
 
     useEffect(() => {
         const total = filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);
@@ -357,7 +576,11 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                     </Badge>
                                   )}
                                 </TableCell>
-                                <TableCell className="text-sm">{type === 'AR' ? ob.customerNameSnapshot : (ob.vendorShortNameSnapshot || ob.vendorNameSnapshot)}</TableCell>
+                                <TableCell className="text-sm">
+                                  {type === 'AR'
+                                    ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
+                                    : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}
+                                </TableCell>
                                 <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
                                 <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
                                 <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>

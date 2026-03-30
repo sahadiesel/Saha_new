@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch } from "firebase/firestore";
+import type { AccountingObligation } from "@/lib/types";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -271,7 +272,34 @@ export function DocumentList({
     try {
       const batch = writeBatch(db);
       if (docToAction.accountingEntryId) batch.delete(doc(db, 'accountingEntries', docToAction.accountingEntryId));
-      batch.update(doc(db, 'documents', docToAction.id), { status: 'APPROVED', paymentSummary: { paidTotal: 0, balance: docToAction.grandTotal, paymentStatus: 'UNPAID' }, receiptStatus: deleteField(), accountingEntryId: deleteField(), updatedAt: serverTimestamp() });
+      const docRef = doc(db, 'documents', docToAction.id);
+      batch.update(docRef, {
+        status: 'APPROVED',
+        paymentSummary: { paidTotal: 0, balance: docToAction.grandTotal, paymentStatus: 'UNPAID' },
+        receiptStatus: deleteField(),
+        accountingEntryId: deleteField(),
+        receiptDocId: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+
+      // หน้าลูกหนี้ดึงจาก accountingObligations (UNPAID/PARTIAL) — ถ้าไม่รีเซ็ต obligation ที่เคย PAID บิลจะหายจากลูกหนี้แต่ยังโผล่ใน Inbox รอใบเสร็จ
+      if (docToAction.docType === 'TAX_INVOICE' || docToAction.docType === 'DELIVERY_NOTE') {
+        const arRef = doc(db, 'accountingObligations', `AR_${docToAction.id}`);
+        const arSnap = await getDoc(arRef);
+        if (arSnap.exists()) {
+          const ob = arSnap.data() as AccountingObligation;
+          const total = typeof ob.amountTotal === 'number' ? ob.amountTotal : docToAction.grandTotal;
+          batch.update(arRef, {
+            status: 'UNPAID',
+            amountPaid: 0,
+            balance: total,
+            lastPaymentDate: deleteField(),
+            paidOffDate: deleteField(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
       await batch.commit();
       toast({ title: "กู้คืนสถานะสำเร็จ" });
     } catch (err: any) { toast({ variant: 'destructive', title: "Error", description: err.message }); } finally { setIsActionLoading(false); setIsRevertAlertOpen(false); setDocToAction(null); }
