@@ -36,7 +36,7 @@ export default function ManagementHRHolidaysPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
   const { profile } = useAuth();
-  const isAdmin = profile?.role === "ADMIN";
+  const canBackfillHoliday = profile?.role === "ADMIN" || profile?.department === "ACCOUNTING_HR";
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   
   const form = useForm<z.infer<typeof holidaySchema>>({
@@ -93,7 +93,7 @@ export default function ManagementHRHolidaysPage() {
                 <CardDescription>Select a date and enter a name to add a new holiday.</CardDescription>
             </CardHeader>
             <CardContent>
-                {isAdmin && (
+                {canBackfillHoliday && (
                     <Alert variant="destructive" className="mb-4">
                         <ShieldAlert className="h-4 w-4" />
                         <AlertTitle>Admin Backfill Mode</AlertTitle>
@@ -135,7 +135,7 @@ export default function ManagementHRHolidaysPage() {
                                   }
                                   setIsCalendarOpen(false);
                                 }}
-                                disabled={(date) => !isAdmin && isBefore(date, today)}
+                                disabled={(date) => !canBackfillHoliday && isBefore(date, today)}
                                 initialFocus
                             />
                             </PopoverContent>
@@ -192,7 +192,7 @@ export default function ManagementHRHolidaysPage() {
                     holidays.map((holiday) => {
                         const holidayDate = parseISO(holiday.date);
                         const isPast = isBefore(holidayDate, today);
-                        const canDelete = isAdmin || !isPast;
+                        const canDelete = canBackfillHoliday || !isPast;
                         return (
                         <TableRow key={holiday.id} className={cn(isPast && "text-muted-foreground")}>
                             <TableCell className="font-medium">{format(holidayDate, 'dd MMM yyyy')}</TableCell>

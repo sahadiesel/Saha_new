@@ -161,7 +161,7 @@ export function HRSettingsForm() {
   const { profile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
 
-  const isUserAdmin = profile?.role === 'ADMIN';
+  const canEditSettings = profile?.role === 'ADMIN' || profile?.department === 'ACCOUNTING_HR';
 
   const settingsDocRef = useMemo(() => {
     if (!db) return null;
@@ -307,7 +307,7 @@ export function HRSettingsForm() {
     return (
         <div className="space-y-8">
             <div className="flex justify-end sticky top-20 z-10 -mb-8">
-                {isUserAdmin && <Button variant="outline" onClick={() => setIsEditing(true)} className="bg-background shadow-lg"><Edit /> แก้ไข</Button>}
+                {canEditSettings && <Button variant="outline" onClick={() => setIsEditing(true)} className="bg-background shadow-lg"><Edit /> แก้ไข</Button>}
             </div>
             <Card>
                 <CardHeader>
@@ -423,7 +423,7 @@ export function HRSettingsForm() {
                 </CardContent>
             </Card>
             
-            {isUserAdmin && (
+            {canEditSettings && (
               <>
                 <Card>
                     <CardHeader>
@@ -595,7 +595,7 @@ export function HRSettingsForm() {
           </CardContent>
         </Card>
 
-        {isUserAdmin && (
+        {canEditSettings && (
             <Card>
                 <CardHeader><CardTitle>Admin Controls</CardTitle></CardHeader>
                 <CardContent>

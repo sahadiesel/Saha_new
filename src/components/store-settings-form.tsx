@@ -43,7 +43,7 @@ export function StoreSettingsForm() {
   const { profile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
 
-  const isUserAdmin = profile?.role === 'ADMIN';
+  const canEditSettings = profile?.role === 'ADMIN' || profile?.department === 'ACCOUNTING_HR';
 
   const settingsDocRef = useMemo(() => {
     if (!db) return null;
@@ -94,7 +94,7 @@ export function StoreSettingsForm() {
                         <CardTitle>ข้อมูลร้าน</CardTitle>
                         <CardDescription>ข้อมูลสำหรับออกเอกสารและข้อมูลทั่วไปของร้าน</CardDescription>
                     </div>
-                    {isUserAdmin && <Button variant="outline" onClick={() => setIsEditing(true)}><Edit /> Edit</Button>}
+                    {canEditSettings && <Button variant="outline" onClick={() => setIsEditing(true)}><Edit /> Edit</Button>}
                 </CardHeader>
                 <CardContent className="space-y-1">
                     <Separator />

@@ -46,7 +46,7 @@ export function DocumentSettingsForm() {
   const { profile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
 
-  const isUserAdmin = profile?.role === 'ADMIN';
+  const canEditSettings = profile?.role === 'ADMIN' || profile?.department === 'ACCOUNTING_HR';
 
   const settingsDocRef = useMemo(() => {
     if (!db) return null;
@@ -96,7 +96,7 @@ export function DocumentSettingsForm() {
                     <CardTitle>เลขที่เอกสาร</CardTitle>
                     <CardDescription>คำนำหน้า (Prefix) สำหรับเอกสารแต่ละประเภท</CardDescription>
                 </div>
-                {isUserAdmin && <Button variant="outline" onClick={() => setIsEditing(true)}><Edit /> Edit</Button>}
+                {canEditSettings && <Button variant="outline" onClick={() => setIsEditing(true)}><Edit /> Edit</Button>}
             </CardHeader>
             <CardContent className="space-y-1">
                 <Separator />
