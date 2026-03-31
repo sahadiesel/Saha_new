@@ -92,6 +92,7 @@ export async function getNextAvailableDocNo(
     RECEIPT: 'receiptPrefix',
     BILLING_NOTE: 'billingNotePrefix',
     CREDIT_NOTE: 'creditNotePrefix',
+    DEBIT_NOTE: 'debitNotePrefix',
     WITHHOLDING_TAX: 'withholdingTaxPrefix',
     WITHDRAWAL: 'withdrawalPrefix',
   };
@@ -103,6 +104,7 @@ export async function getNextAvailableDocNo(
     RECEIPT: 'RE',
     BILLING_NOTE: 'BN',
     CREDIT_NOTE: 'CN',
+    DEBIT_NOTE: 'DBN',
     WITHHOLDING_TAX: 'WHT',
     WITHDRAWAL: 'SWD',
   };
@@ -165,6 +167,7 @@ export async function createDocument(
     RECEIPT: 'receiptPrefix',
     BILLING_NOTE: 'billingNotePrefix',
     CREDIT_NOTE: 'creditNotePrefix',
+    DEBIT_NOTE: 'debitNotePrefix',
     WITHHOLDING_TAX: 'withholdingTaxPrefix',
     WITHDRAWAL: 'withdrawalPrefix',
   };
@@ -176,6 +179,7 @@ export async function createDocument(
     RECEIPT: 'RE',
     BILLING_NOTE: 'BN',
     CREDIT_NOTE: 'CN',
+    DEBIT_NOTE: 'DBN',
     WITHHOLDING_TAX: 'WHT',
     WITHDRAWAL: 'SWD',
   };

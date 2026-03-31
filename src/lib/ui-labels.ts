@@ -44,6 +44,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
     RECEIPT: "ใบเสร็จรับเงิน",
     BILLING_NOTE: "ใบวางบิล",
     CREDIT_NOTE: "ใบลดหนี้",
+    DEBIT_NOTE: "ใบเพิ่มหนี้",
     WITHHOLDING_TAX: "หนังสือรับรองหัก ณ ที่จ่าย",
     WITHDRAWAL: "ใบเบิกอะไหล่",
 };

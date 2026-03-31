@@ -449,6 +449,7 @@ export interface DocumentSettings {
   receiptPrefix?: string;
   billingNotePrefix?: string;
   creditNotePrefix?: string;
+  debitNotePrefix?: string;
   withholdingTaxPrefix?: string;
   purchasePrefix?: string;
   withdrawalPrefix?: string; // Prefix for part withdrawals
@@ -466,7 +467,7 @@ export interface DocumentItem {
   returnedToStockQty?: number;
 }
 
-export type DocType = 'QUOTATION' | 'DELIVERY_NOTE' | 'TAX_INVOICE' | 'RECEIPT' | 'BILLING_NOTE' | 'CREDIT_NOTE' | 'WITHHOLDING_TAX' | 'WITHDRAWAL';
+export type DocType = 'QUOTATION' | 'DELIVERY_NOTE' | 'TAX_INVOICE' | 'RECEIPT' | 'BILLING_NOTE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'WITHHOLDING_TAX' | 'WITHDRAWAL';
 
 export interface Document {
   id: string;
@@ -510,6 +511,9 @@ export interface Document {
   arObligationId?: string;
   arStatus?: 'PENDING' | 'UNPAID' | 'PARTIAL' | 'PAID' | 'DISPUTED';
   receiptStatus?: 'ISSUED_NOT_CONFIRMED' | 'CONFIRMED';
+  receiptDocId?: string;
+  receiptDocNo?: string;
+  accountingEntryId?: string;
   billingRunId?: string; // Links a BILLING_NOTE to its generation batch
   dispute?: {
     isDisputed: boolean;
@@ -595,6 +599,8 @@ export interface DocumentCounters {
   billingNotePrefix?: string;
   creditNote?: number;
   creditNotePrefix?: string;
+  debitNote?: number;
+  debitNotePrefix?: string;
   withholdingTax?: number;
   withholdingTaxPrefix?: string;
   purchase?: number;
@@ -676,8 +682,8 @@ export interface AccountingCheckItem {
   /** เช็ครับ — ใบเสร็จรับเงิน (ซ้ำกับ receiveAnchor เมื่อ anchor = RECEIPT) */
   receiptId?: string;
   receiptDocNo?: string;
-  /** อ้างอิงเอกสารขาย — ใบเสร็จเป็นหลัก; ใบส่งของ/ใบวางบิลเมื่อยังไม่ผ่านใบเสร็จ — ไม่ผูกใบกำกับภาษีโดยตรง */
-  receiveAnchorDocType?: 'RECEIPT' | 'DELIVERY_NOTE' | 'BILLING_NOTE';
+  /** อ้างอิงเอกสารขาย — ใช้ระบุเอกสารต้นทางของเช็ครับ */
+  receiveAnchorDocType?: 'RECEIPT' | 'DELIVERY_NOTE' | 'BILLING_NOTE' | 'TAX_INVOICE';
   receiveAnchorDocId?: string;
   receiveAnchorDocNo?: string;
   customerNameSnapshot?: string;
@@ -686,7 +692,14 @@ export interface AccountingCheckItem {
   /** เช็คจ่าย — บิลซื้อ / เจ้าหนี้ */
   purchaseDocId?: string;
   obligationId?: string;
+  sourceDocType?: AccountingObligation['sourceDocType'];
+  sourceDocId?: string;
+  sourceDocNo?: string;
+  vendorId?: string;
   vendorNameSnapshot?: string;
+  withholdingEnabled?: boolean;
+  withholdingPercent?: number;
+  withholdingAmount?: number;
   /** วันที่ยืนยันรับ/จ่ายจริง (ตัดบัญชี) */
   clearedAt?: Timestamp;
   clearedByUid?: string;

@@ -20,6 +20,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -54,7 +56,7 @@ const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-export function CreditNoteForm() {
+export function CreditNoteForm({ mode = 'CREDIT_NOTE' }: { mode?: 'CREDIT_NOTE' | 'DEBIT_NOTE' }) {
   const router = useRouter();
   const { db } = useFirebase();
   const { profile } = useAuth();
@@ -145,6 +147,8 @@ export function CreditNoteForm() {
     form.setValue("grandTotal", grandTotal);
   }, [watchedItems, watchedDiscount, watchedWithTax, form]);
 
+  const isDebit = mode === 'DEBIT_NOTE';
+
   const onSubmit = async (data: z.infer<typeof creditNoteFormSchema>) => {
     const customerObj = customers.find(c => c.id === data.customerId);
     const invoiceObj = invoices.find(inv => inv.id === data.taxInvoiceId);
@@ -174,8 +178,19 @@ export function CreditNoteForm() {
     };
 
     try {
-      const { docId, docNo } = await createDocument(db, 'CREDIT_NOTE', documentData, profile);
-      toast({ title: "สร้างใบลดหนี้สำเร็จ", description: `เลขที่เอกสาร: ${docNo}` });
+      const { docId, docNo } = await createDocument(
+        db,
+        mode,
+        {
+          ...documentData,
+          paymentTerms: invoiceObj.paymentTerms || 'CREDIT',
+          dueDate: invoiceObj.dueDate || null,
+        },
+        profile,
+        undefined,
+        { initialStatus: 'PENDING_REVIEW' }
+      );
+      toast({ title: isDebit ? "สร้างใบเพิ่มหนี้สำเร็จ" : "สร้างใบลดหนี้สำเร็จ", description: `เลขที่เอกสาร: ${docNo}` });
       router.push(`/app/office/documents/${docId}`);
     } catch (error: any) {
       toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: error.message });
@@ -204,11 +219,11 @@ export function CreditNoteForm() {
         <div className="flex justify-between items-center bg-muted/30 p-4 rounded-lg border border-dashed">
             <div className="flex items-center gap-2 text-primary font-bold">
                 <Info className="h-5 w-5" />
-                <span>การสร้างใบลดหนี้ต้องอ้างอิงใบกำกับภาษีเดิมเสมอ</span>
+                <span>{isDebit ? "การสร้างใบเพิ่มหนี้ต้องอ้างอิงใบกำกับภาษีเดิมเสมอ" : "การสร้างใบลดหนี้ต้องอ้างอิงใบกำกับภาษีเดิมเสมอ"}</span>
             </div>
             <Button type="submit" disabled={isSubmitting || !selectedInvoiceId}>
               {isSubmitting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
-              บันทึกใบลดหนี้
+              {isDebit ? "บันทึกใบเพิ่มหนี้" : "บันทึกใบลดหนี้"}
             </Button>
         </div>
 
@@ -262,7 +277,7 @@ export function CreditNoteForm() {
                             control={form.control}
                             render={({ field }) => (
                                 <FormItem className="animate-in fade-in slide-in-from-top-1">
-                                    <FormLabel>เลือกใบกำกับภาษีที่ต้องการลดหนี้</FormLabel>
+                                    <FormLabel>{isDebit ? "เลือกใบกำกับภาษีที่ต้องการเพิ่มหนี้" : "เลือกใบกำกับภาษีที่ต้องการลดหนี้"}</FormLabel>
                                     <Select onValueChange={field.onChange} value={field.value}>
                                         <FormControl>
                                             <SelectTrigger>
@@ -287,7 +302,7 @@ export function CreditNoteForm() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="text-sm font-bold uppercase tracking-wider">2. ข้อมูลใบลดหนี้</CardTitle>
+                    <CardTitle className="text-sm font-bold uppercase tracking-wider">2. ข้อมูล{isDebit ? "ใบเพิ่มหนี้" : "ใบลดหนี้"}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <FormField
@@ -295,7 +310,7 @@ export function CreditNoteForm() {
                         name="docDate"
                         render={({ field }) => (
                             <FormItem>
-                                <FormLabel>วันที่ออกใบลดหนี้</FormLabel>
+                                <FormLabel>วันที่ออก{isDebit ? "ใบเพิ่มหนี้" : "ใบลดหนี้"}</FormLabel>
                                 <FormControl>
                                     <Input type="date" {...field} />
                                 </FormControl>
@@ -308,9 +323,9 @@ export function CreditNoteForm() {
                         name="reason"
                         render={({ field }) => (
                             <FormItem>
-                                <FormLabel>สาเหตุการลดหนี้ (ระบุในบิล)</FormLabel>
+                                <FormLabel>{isDebit ? "สาเหตุการเพิ่มหนี้ (ระบุในบิล)" : "สาเหตุการลดหนี้ (ระบุในบิล)"}</FormLabel>
                                 <FormControl>
-                                    <Input placeholder="เช่น คืนสินค้า, คำนวณราคาสินค้าผิดพลาด..." {...field} />
+                                    <Input placeholder={isDebit ? "เช่น คิดบริการเพิ่ม, คิดค่าวัสดุเพิ่ม..." : "เช่น คืนสินค้า, คำนวณราคาสินค้าผิดพลาด..."} {...field} />
                                 </FormControl>
                                 <FormMessage />
                             </FormItem>
@@ -426,7 +441,7 @@ export function CreditNoteForm() {
                             </div>
                             <Separator className="bg-primary/20" />
                             <div className="flex justify-between items-center text-xl font-black text-primary">
-                                <span>มูลค่าที่ลดลงรวมทั้งสิ้น:</span>
+                                <span>{isDebit ? "มูลค่าที่เพิ่มขึ้นรวมทั้งสิ้น:" : "มูลค่าที่ลดลงรวมทั้งสิ้น:"}</span>
                                 <span>฿{formatCurrency(form.watch('grandTotal'))}</span>
                             </div>
                         </div>

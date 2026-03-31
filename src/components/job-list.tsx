@@ -128,6 +128,8 @@ export function JobList({
   emptyDescription = "ยังไม่มีรายการงานในระบบ",
   searchTerm = "",
 }: JobListProps) {
+  type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
+
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -153,6 +155,7 @@ export function JobList({
   const [recordRemainingAsCredit, setRecordRemainingAsCredit] = useState(false);
   const [submitBillingRequired, setSubmitBillingRequired] = useState(false);
   const [submitDueDate, setSubmitDueDate] = useState('');
+  const [statusConfirmAction, setStatusConfirmAction] = useState<{ type: QuickStatusAction; job: Job } | null>(null);
 
   const statusConfig = useMemo(() => {
     const statusArray = status ? (Array.isArray(status) ? status : [status]) : [];
@@ -427,6 +430,45 @@ export function JobList({
       if (!paymentConfirmDoc) return 0;
       return Math.round((paymentConfirmDoc.grandTotal - currentSuggestedTotal) * 100) / 100;
   }, [paymentConfirmDoc, currentSuggestedTotal]);
+  const statusConfirmConfig = useMemo(() => {
+    return {
+      APPROVE_JOB: {
+        title: "ยืนยันอนุมัติงาน",
+        description: "ยืนยันว่าลูกค้าอนุมัติแล้ว และต้องการเปลี่ยนสถานะเป็นกำลังจัดอะไหล่ใช่ไหม?",
+        confirmText: "ยืนยันอนุมัติ",
+      },
+      REJECT_JOB: {
+        title: "ยืนยันไม่อนุมัติงาน",
+        description: "ยืนยันว่าลูกค้าไม่อนุมัติหรือยกเลิก และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
+        confirmText: "ยืนยันไม่อนุมัติ",
+      },
+      FINISH_JOB: {
+        title: "ยืนยันแจ้งงานเสร็จ",
+        description: "เก็บรายละเอียดงานเรียบร้อยแล้ว และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
+        confirmText: "ยืนยันงานเสร็จ",
+      },
+      ACCEPT_JOB: {
+        title: "ยืนยันรับงาน",
+        description: "ยืนยันว่าคุณพร้อมรับงานนี้และเริ่มดำเนินการใช่ไหม?",
+        confirmText: "ยืนยันรับงาน",
+      },
+    } as const;
+  }, []);
+
+  const executeConfirmedStatusAction = async () => {
+    if (!statusConfirmAction) return;
+    const { type, job } = statusConfirmAction;
+    if (type === 'APPROVE_JOB') {
+      await handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว');
+    } else if (type === 'REJECT_JOB') {
+      await handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"');
+    } else if (type === 'FINISH_JOB') {
+      await handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล');
+    } else if (type === 'ACCEPT_JOB') {
+      await handleAcceptJob(job);
+    }
+    setStatusConfirmAction(null);
+  };
 
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md"><ExternalLink className="h-4 w-4" />สร้าง Index</a></Button></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
@@ -467,8 +509,8 @@ export function JobList({
 
                   {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
                     <div className="grid grid-cols-2 gap-2">
-                      <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว')} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button>
-                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"')} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button>
+                      <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => setStatusConfirmAction({ type: 'APPROVE_JOB', job })} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button>
+                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => setStatusConfirmAction({ type: 'REJECT_JOB', job })} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button>
                     </div>
                   )}
                   
@@ -477,10 +519,10 @@ export function JobList({
                   )}
 
                   {job.status === 'IN_REPAIR_PROCESS' && (
-                    <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล')} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
+                    <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'FINISH_JOB', job })} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
                   )}
 
-                  {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => handleAcceptJob(job)} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
+                  {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => setStatusConfirmAction({ type: 'ACCEPT_JOB', job })} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (<Button asChild className="w-full h-9 font-bold" variant="default"><Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link></Button>)}
                   
                   {['DONE', 'WAITING_CUSTOMER_PICKUP', 'PICKED_UP', 'CLOSED'].includes(job.status) && (
@@ -594,6 +636,31 @@ export function JobList({
           <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!statusConfirmAction}
+        onOpenChange={(open) => {
+          if (!open && !isProcessing) setStatusConfirmAction(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction.type].title : "ยืนยันการเปลี่ยนสถานะ"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction.type].description : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!isProcessing}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction disabled={!!isProcessing} onClick={executeConfirmedStatusAction}>
+              {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction.type].confirmText : "ยืนยัน"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

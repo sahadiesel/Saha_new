@@ -14,10 +14,13 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  getDoc,
+  getDocs,
+  runTransaction,
 } from "firebase/firestore";
 import { format, parseISO, isBefore, startOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import type { UserProfile, Customer, Document as SalesDocument } from "@/lib/types";
+import type { UserProfile, Customer, Document as SalesDocument, AccountingObligation, DocumentSettings, StoreSettings, PurchaseDoc } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -47,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { AccountingAccount, AccountingCheckItem, DocType } from "@/lib/types";
 import type { Firestore } from "firebase/firestore";
 import type { WithId } from "@/firebase/index";
@@ -112,6 +116,16 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
   const [addAccountId, setAddAccountId] = useState("");
   const [addNotes, setAddNotes] = useState("");
   const [savingAdd, setSavingAdd] = useState(false);
+  const [addPayOpen, setAddPayOpen] = useState(false);
+  const [apObligations, setApObligations] = useState<WithId<AccountingObligation>[]>([]);
+  const [addPayObligationId, setAddPayObligationId] = useState("");
+  const [addPayAmount, setAddPayAmount] = useState("");
+  const [addPayDue, setAddPayDue] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [addPayAccountId, setAddPayAccountId] = useState("");
+  const [addPayNotes, setAddPayNotes] = useState("");
+  const [addPayWithholdingEnabled, setAddPayWithholdingEnabled] = useState(false);
+  const [addPayWithholdingPercent, setAddPayWithholdingPercent] = useState("3");
+  const [savingAddPay, setSavingAddPay] = useState(false);
 
   const [editItem, setEditItem] = useState<WithId<AccountingCheckItem> | null>(null);
   const [editDue, setEditDue] = useState("");
@@ -174,6 +188,28 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
     if (d) setAddAmount(String(suggestedAnchorAmount(d)));
   }, [addSelectedDocId, addCandidateDocs]);
 
+  useEffect(() => {
+    if (!db || !addPayOpen) return;
+    const q = query(
+      collection(db, "accountingObligations"),
+      where("type", "==", "AP"),
+      where("status", "in", ["UNPAID", "PARTIAL"]),
+      limit(300)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setApObligations(
+          snap.docs
+            .map((d) => ({ id: d.id, ...d.data() } as WithId<AccountingObligation>))
+            .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""))
+        );
+      },
+      () => setApObligations([])
+    );
+    return () => unsub();
+  }, [db, addPayOpen]);
+
   const resetAddForm = () => {
     setAddCustomerId("");
     setAddCustomerSearch("");
@@ -183,6 +219,16 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
     setAddDue(format(new Date(), "yyyy-MM-dd"));
     setAddAccountId("");
     setAddNotes("");
+  };
+
+  const resetAddPayForm = () => {
+    setAddPayObligationId("");
+    setAddPayAmount("");
+    setAddPayDue(format(new Date(), "yyyy-MM-dd"));
+    setAddPayAccountId("");
+    setAddPayNotes("");
+    setAddPayWithholdingEnabled(false);
+    setAddPayWithholdingPercent("3");
   };
 
   const receivePending = useMemo(
@@ -202,9 +248,10 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
     if (!db || !profile || !confirmItem) return;
     setBusyId(confirmItem.id);
     try {
+      const ch = confirmItem;
       const batch = writeBatch(db);
       const entryRef = doc(collection(db, "accountingEntries"));
-      const ch = confirmItem;
+      let whtDocId = "";
 
       if (ch.direction === "RECEIVE") {
         const anchorType =
@@ -236,10 +283,15 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             })
           );
         } else if (
-          (anchorType === "DELIVERY_NOTE" || anchorType === "BILLING_NOTE") &&
+          (anchorType === "DELIVERY_NOTE" || anchorType === "BILLING_NOTE" || anchorType === "TAX_INVOICE") &&
           anchorId
         ) {
-          const label = anchorType === "DELIVERY_NOTE" ? "ใบส่งของ" : "ใบวางบิล";
+          const label =
+            anchorType === "DELIVERY_NOTE"
+              ? "ใบส่งของ"
+              : anchorType === "BILLING_NOTE"
+                ? "ใบวางบิล"
+                : "ใบกำกับภาษี";
           batch.set(
             entryRef,
             sanitizeForFirestore({
@@ -279,13 +331,164 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             })
           );
         }
+
+        let targetObligationId = ch.obligationId;
+        if (!targetObligationId && anchorId) {
+          const q = query(
+            collection(db, "accountingObligations"),
+            where("type", "==", "AR"),
+            where("sourceDocId", "==", anchorId),
+            limit(1)
+          );
+          const snap = await getDocs(q);
+          targetObligationId = snap.docs[0]?.id;
+        }
+
+        if (targetObligationId) {
+          const obligationRef = doc(db, "accountingObligations", targetObligationId);
+          const obligationSnap = await getDoc(obligationRef);
+          if (obligationSnap.exists()) {
+            const ob = obligationSnap.data() as AccountingObligation;
+            const newAmountPaid = Math.round(((ob.amountPaid || 0) + ch.amount) * 100) / 100;
+            const newBalance = Math.max(0, Math.round((ob.amountTotal - newAmountPaid) * 100) / 100);
+            const newStatus = newBalance <= 0.05 ? "PAID" : "PARTIAL";
+            batch.update(obligationRef, {
+              amountPaid: newAmountPaid,
+              balance: newBalance,
+              status: newStatus,
+              lastPaymentDate: clearedDate,
+              paidOffDate: newStatus === "PAID" ? clearedDate : null,
+              updatedAt: serverTimestamp(),
+            });
+
+            if (ob.sourceDocId) {
+              const sourceDocRef = doc(db, "documents", ob.sourceDocId);
+              const sourceDocSnap = await getDoc(sourceDocRef);
+              if (sourceDocSnap.exists()) {
+                const sourceDoc = sourceDocSnap.data() as SalesDocument;
+                const currentPaidTotal = sourceDoc.paymentSummary?.paidTotal || 0;
+                const updatedPaidTotal = Math.round((currentPaidTotal + ch.amount) * 100) / 100;
+                const updatedBalance = Math.max(
+                  0,
+                  Math.round(((Number(sourceDoc.grandTotal) || 0) - updatedPaidTotal) * 100) / 100
+                );
+                const updatedStatus = updatedBalance <= 0.05 ? "PAID" : "PARTIAL";
+                batch.update(
+                  sourceDocRef,
+                  sanitizeForFirestore({
+                    status: updatedStatus,
+                    arStatus: updatedStatus,
+                    paymentSummary: {
+                      paidTotal: updatedPaidTotal,
+                      balance: updatedBalance,
+                      paymentStatus: updatedStatus,
+                    },
+                    paymentDate: clearedDate,
+                    paymentMethod: "CHECK",
+                    paymentInstrument: "CHECK",
+                    checkDueDate: ch.dueDate,
+                    receivedAccountId: ch.accountId,
+                    cashReceived: ch.amount,
+                    accountingEntryId: entryRef.id,
+                    updatedAt: serverTimestamp(),
+                  })
+                );
+              }
+            }
+
+            if (newStatus === "PAID" && ob.jobId) {
+              const jobRef = doc(db, "jobs", ob.jobId);
+              const jobSnap = await getDoc(jobRef);
+              if (jobSnap.exists()) {
+                batch.update(jobRef, {
+                  status: "CLOSED",
+                  updatedAt: serverTimestamp(),
+                  lastActivityAt: serverTimestamp(),
+                });
+              }
+            }
+          }
+        }
       } else {
+        const obligationRef = ch.obligationId ? doc(db, "accountingObligations", ch.obligationId) : null;
+        const obligationSnap = obligationRef ? await getDoc(obligationRef) : null;
+        const obligation = obligationSnap?.exists() ? (obligationSnap.data() as AccountingObligation) : null;
+        let whtAmount = 0;
+        let whtBase = ch.amount;
+
+        if (ch.withholdingEnabled && (ch.withholdingPercent || 0) > 0 && obligation && obligation.sourceDocType === "PURCHASE") {
+          const sourceSnap = await getDoc(doc(db, "purchaseDocs", obligation.sourceDocId));
+          const source = sourceSnap.exists() ? (sourceSnap.data() as PurchaseDoc) : null;
+          if (source) {
+            whtBase = source.withTax && (source.vatAmount || 0) > 0 ? source.subtotal : source.grandTotal;
+            whtAmount = Math.round(whtBase * ((ch.withholdingPercent || 0) / 100) * 100) / 100;
+            if (whtAmount > ch.amount) whtAmount = ch.amount;
+          }
+        }
+        const cashOutAmount = Math.max(0, Math.round((ch.amount - whtAmount) * 100) / 100);
+
+        if (whtAmount > 0 && obligation && obligation.sourceDocType === "PURCHASE") {
+          await runTransaction(db, async (tx) => {
+            const year = new Date(clearedDate).getFullYear();
+            const counterRef = doc(db, "documentCounters", String(year));
+            const settingsRef = doc(db, "settings", "documents");
+            const storeSettingsRef = doc(db, "settings", "store");
+            const [counterSnap, settingsSnap, storeSettingsSnap] = await Promise.all([
+              tx.get(counterRef),
+              tx.get(settingsRef),
+              tx.get(storeSettingsRef),
+            ]);
+            const settings = (settingsSnap.exists() ? settingsSnap.data() : {}) as DocumentSettings;
+            const storeSettings = (storeSettingsSnap.exists() ? storeSettingsSnap.data() : {}) as StoreSettings;
+            const prefix = settings.withholdingTaxPrefix || "WHT";
+            const counters = counterSnap.exists() ? (counterSnap.data() as any) : { year };
+            const lastPrefix = counters.withholdingTaxPrefix;
+            const lastCount = counters.withholdingTax || 0;
+            const nextCount = lastPrefix !== prefix ? 1 : lastCount + 1;
+            const whtDocNo = `${prefix}${year}-${String(nextCount).padStart(4, "0")}`;
+            const whtRef = doc(collection(db, "documents"));
+            whtDocId = whtRef.id;
+            tx.set(
+              whtRef,
+              sanitizeForFirestore({
+                id: whtDocId,
+                docType: "WITHHOLDING_TAX",
+                docNo: whtDocNo,
+                docDate: clearedDate,
+                payerSnapshot: storeSettings,
+                payeeSnapshot: {
+                  name: obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot,
+                },
+                vendorId: obligation.vendorId,
+                paidMonth: new Date(clearedDate).getMonth() + 1,
+                paidYear: year,
+                incomeTypeCode: "ITEM5",
+                paidAmountGross: whtBase,
+                withholdingPercent: ch.withholdingPercent || 0,
+                withholdingAmount: whtAmount,
+                paidAmountNet: whtBase - whtAmount,
+                status: "ISSUED",
+                senderName: profile.displayName,
+                receiverName: obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              })
+            );
+            tx.set(
+              counterRef,
+              { ...counters, withholdingTax: nextCount, withholdingTaxPrefix: prefix },
+              { merge: true }
+            );
+          });
+        }
+
         batch.set(
           entryRef,
           sanitizeForFirestore({
             entryType: "CASH_OUT",
             entryDate: clearedDate,
-            amount: ch.amount,
+            amount: cashOutAmount,
+            grossAmount: ch.amount,
             accountId: ch.accountId,
             paymentMethod: "TRANSFER",
             categoryMain: "ค่าใช้จ่าย",
@@ -294,13 +497,35 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
               ch.vendorNameSnapshot || ch.notes
                 ? `จ่ายเช็ค — ${ch.vendorNameSnapshot || ""} ${ch.notes || ""}`.trim()
                 : "จ่ายเช็ค",
-            sourceDocId: ch.purchaseDocId,
+            sourceDocType: ch.sourceDocType,
+            sourceDocId: ch.sourceDocId || ch.purchaseDocId,
+            sourceDocNo: ch.sourceDocNo,
+            obligationId: ch.obligationId,
+            vendorId: ch.vendorId,
             vendorNameSnapshot: ch.vendorNameSnapshot,
+            withholdingEnabled: !!ch.withholdingEnabled,
+            withholdingPercent: ch.withholdingPercent || 0,
+            withholdingAmount: whtAmount,
+            withholdingTaxDocId: whtDocId || undefined,
             createdAt: serverTimestamp(),
             createdByUid: profile.uid,
             createdByName: profile.displayName ?? "",
           })
         );
+
+        if (obligationRef && obligation) {
+          const newAmountPaid = Math.round(((obligation.amountPaid || 0) + ch.amount) * 100) / 100;
+          const newBalance = Math.max(0, Math.round((obligation.amountTotal - newAmountPaid) * 100) / 100);
+          const newStatus = newBalance <= 0.05 ? "PAID" : "PARTIAL";
+          batch.update(obligationRef, {
+            amountPaid: newAmountPaid,
+            balance: newBalance,
+            status: newStatus,
+            lastPaymentDate: clearedDate,
+            paidOffDate: newStatus === "PAID" ? clearedDate : null,
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
 
       batch.update(doc(db, "accountingCheckItems", ch.id), {
@@ -310,6 +535,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
         clearedDate,
         clearedByUid: profile.uid,
         clearedByName: profile.displayName ?? "",
+        withholdingAmount: ch.withholdingAmount ?? undefined,
         updatedAt: serverTimestamp(),
       });
 
@@ -425,6 +651,76 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
     }
   };
 
+  const handleAddPay = async () => {
+    if (!db || !profile) return;
+    const ob = apObligations.find((x) => x.id === addPayObligationId);
+    if (!ob) {
+      toast({ variant: "destructive", title: "กรุณาเลือกรายการเจ้าหนี้" });
+      return;
+    }
+    const amt = Math.round(parseFloat(addPayAmount) * 100) / 100;
+    if (!Number.isFinite(amt) || amt <= 0 || !addPayAccountId) {
+      toast({ variant: "destructive", title: "กรุณากรอกยอดและบัญชีจ่าย" });
+      return;
+    }
+    setSavingAddPay(true);
+    try {
+      await addDoc(
+        collection(db, "accountingCheckItems"),
+        sanitizeForFirestore({
+          direction: "PAY" as const,
+          status: "PENDING" as const,
+          amount: amt,
+          dueDate: addPayDue,
+          accountId: addPayAccountId,
+          obligationId: ob.id,
+          purchaseDocId: ob.sourceDocType === "PURCHASE" ? ob.sourceDocId : null,
+          sourceDocType: ob.sourceDocType,
+          sourceDocId: ob.sourceDocId,
+          sourceDocNo: ob.invoiceNo || ob.sourceDocNo,
+          vendorId: ob.vendorId,
+          vendorNameSnapshot: ob.vendorNameSnapshot || ob.vendorShortNameSnapshot,
+          withholdingEnabled: addPayWithholdingEnabled,
+          withholdingPercent: addPayWithholdingEnabled ? Number(addPayWithholdingPercent || 0) : null,
+          notes: addPayNotes.trim() || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdByUid: profile.uid,
+          createdByName: profile.displayName ?? "",
+        })
+      );
+      toast({ title: "สร้างรายการจ่ายเช็คแล้ว" });
+      setAddPayOpen(false);
+      resetAddPayForm();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: e.message });
+    } finally {
+      setSavingAddPay(false);
+    }
+  };
+
+  const handleCancelCheck = async (row: WithId<AccountingCheckItem>) => {
+    if (!db) return;
+    setBusyId(row.id);
+    try {
+      await updateDoc(
+        doc(db, "accountingCheckItems", row.id),
+        sanitizeForFirestore({
+          status: "CANCELLED",
+          updatedAt: serverTimestamp(),
+          notes: row.notes
+            ? `${row.notes} | ยกเลิกรายการเมื่อ ${format(new Date(), "yyyy-MM-dd")}`
+            : `ยกเลิกรายการเมื่อ ${format(new Date(), "yyyy-MM-dd")}`,
+        })
+      );
+      toast({ title: "ยกเลิกรายการเช็คแล้ว" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ยกเลิกไม่สำเร็จ", description: e.message });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-16">
@@ -442,22 +738,33 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             <CardDescription>
               เช็ครับต้องอ้างอิงจากใบส่งของชั่วคราว ใบวางบิล หรือใบเสร็จรับเงินเท่านั้น — ไม่ผูกใบกำกับภาษีโดยตรง (รับเงินจริงยึดใบเสร็จเป็นหลัก)
               ยอดจะตัดบัญชีเมื่อกดยืนยันที่นี่ตามวันที่เงินเข้าจริง
-              <span className="block mt-1 text-muted-foreground">
-                การเพิ่มเช็คจ่ายด้วยมือจะเปิดในขั้นถัดไป — ตอนนี้เน้นเช็ครับก่อน
-              </span>
             </CardDescription>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              resetAddForm();
-              setAddOpen(true);
-            }}
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            เพิ่มเช็ครับ
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                resetAddPayForm();
+                setAddPayOpen(true);
+              }}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              สร้างรายการจ่ายเช็ค
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                resetAddForm();
+                setAddOpen(true);
+              }}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              เพิ่มเช็ครับ
+            </Button>
+          </div>
         </CardHeader>
       </Card>
 
@@ -535,6 +842,15 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
                           >
                             <CheckCircle2 className="mr-2 h-4 w-4" />
                             ยืนยันรับเงิน
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-amber-700 focus:text-amber-700"
+                            onClick={() => handleCancelCheck(row)}
+                            disabled={busyId === row.id}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            ยกเลิกรายการ
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -630,6 +946,15 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
                           >
                             <CheckCircle2 className="mr-2 h-4 w-4" />
                             ยืนยันจ่าย
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-amber-700 focus:text-amber-700"
+                            onClick={() => handleCancelCheck(row)}
+                            disabled={busyId === row.id}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            ยกเลิกรายการ
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -885,6 +1210,111 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             </Button>
             <Button onClick={handleAdd} disabled={savingAdd}>
               {savingAdd ? <Loader2 className="h-4 w-4 animate-spin" /> : "บันทึก"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={addPayOpen}
+        onOpenChange={(open) => {
+          setAddPayOpen(open);
+          if (!open) resetAddPayForm();
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>สร้างรายการจ่ายเช็ค</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label>เจ้าหนี้อ้างอิง</Label>
+              <Select
+                value={addPayObligationId || "__none__"}
+                onValueChange={(v) => {
+                  const id = v === "__none__" ? "" : v;
+                  setAddPayObligationId(id);
+                  const ob = apObligations.find((x) => x.id === id);
+                  if (ob) {
+                    setAddPayAmount(String(Math.max(0, ob.balance || 0)));
+                    if (ob.dueDate) setAddPayDue(ob.dueDate);
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="เลือกเจ้าหนี้..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— เลือก —</SelectItem>
+                  {apObligations.map((ob) => (
+                    <SelectItem key={ob.id} value={ob.id}>
+                      {(ob.vendorNameSnapshot || ob.vendorShortNameSnapshot || "ไม่ระบุร้านค้า") +
+                        " • " +
+                        (ob.invoiceNo || ob.sourceDocNo || ob.id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>วันครบกำหนดเช็ค</Label>
+              <Input type="date" value={addPayDue} onChange={(e) => setAddPayDue(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>บัญชีที่จ่ายเช็ค</Label>
+              <Select value={addPayAccountId} onValueChange={setAddPayAccountId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="เลือกบัญชี" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts
+                    .filter((a) => a.isActive)
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>จำนวนเงิน</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={addPayAmount}
+                onChange={(e) => setAddPayAmount(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-primary">หักภาษี ณ ที่จ่าย (ตอนคอนเฟิร์ม)</Label>
+              <div className="flex items-center gap-2">
+                <Checkbox checked={addPayWithholdingEnabled} onCheckedChange={(v: any) => setAddPayWithholdingEnabled(!!v)} />
+                <span className="text-sm">เปิดใช้งาน WHT</span>
+              </div>
+              {addPayWithholdingEnabled ? (
+                <Select value={addPayWithholdingPercent} onValueChange={setAddPayWithholdingPercent}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1%</SelectItem>
+                    <SelectItem value="3">3%</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <Label>หมายเหตุ</Label>
+              <Textarea value={addPayNotes} onChange={(e) => setAddPayNotes(e.target.value)} rows={2} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddPayOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button onClick={handleAddPay} disabled={savingAddPay}>
+              {savingAddPay ? <Loader2 className="h-4 w-4 animate-spin" /> : "บันทึก"}
             </Button>
           </DialogFooter>
         </DialogContent>

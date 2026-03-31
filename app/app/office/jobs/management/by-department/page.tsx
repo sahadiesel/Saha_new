@@ -12,7 +12,8 @@ import { Search, Loader2 } from "lucide-react";
 import type { JobStatus } from "@/lib/types";
 
 // Stable constant to prevent infinite loops in children
-const EXCLUDE_CLOSED: JobStatus[] = ["CLOSED"];
+// ซ่อนงานที่ "รับสินค้าแล้ว/รอรับเงิน" ออกจากหน้าตามแผนก
+const EXCLUDE_DEPT_VIEW: JobStatus[] = ["CLOSED", "PICKED_UP"];
 
 function ByDepartmentContent() {
   const searchParams = useSearchParams();
@@ -56,7 +57,7 @@ function ByDepartmentContent() {
                         <JobList 
                             searchTerm={searchTerm}
                             department="CAR_SERVICE" 
-                            excludeStatus={EXCLUDE_CLOSED}
+                            excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกซ่อมหน้าร้าน"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
                         />
@@ -67,7 +68,7 @@ function ByDepartmentContent() {
                         <JobList 
                             searchTerm={searchTerm}
                             department="COMMONRAIL" 
-                            excludeStatus={EXCLUDE_CLOSED}
+                            excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกคอมมอนเรล"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
                         />
@@ -78,7 +79,7 @@ function ByDepartmentContent() {
                         <JobList 
                             searchTerm={searchTerm}
                             department="MECHANIC" 
-                            excludeStatus={EXCLUDE_CLOSED}
+                            excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกแมคคานิค"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
                         />
@@ -89,7 +90,7 @@ function ByDepartmentContent() {
                         <JobList 
                             searchTerm={searchTerm}
                             department="OUTSOURCE" 
-                            excludeStatus={EXCLUDE_CLOSED}
+                            excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานที่ส่งออกร้านนอก"
                             emptyDescription="ยังไม่มีการส่งต่องานสำหรับแผนกนี้"
                         />

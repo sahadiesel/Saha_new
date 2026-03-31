@@ -136,15 +136,6 @@ export function ReceiveArPaymentDialog({
       const newBalance = Math.max(0, Math.round((obligation.amountTotal - newAmountPaid) * 100) / 100);
       const newStatus = newBalance <= 0.05 ? "PAID" : "PARTIAL";
 
-      batch.update(obligationRef, {
-        amountPaid: newAmountPaid,
-        balance: newBalance,
-        status: newStatus,
-        lastPaymentDate: data.paymentDate,
-        paidOffDate: newStatus === "PAID" ? data.paymentDate : null,
-        updatedAt: serverTimestamp(),
-      });
-
       const anchorTypes = ["DELIVERY_NOTE", "TAX_INVOICE", "BILLING_NOTE"] as const;
       const canAnchorCheck = anchorTypes.includes(obligation.sourceDocType as (typeof anchorTypes)[number]);
 
@@ -163,10 +154,12 @@ export function ReceiveArPaymentDialog({
             amount: data.amount,
             dueDate: data.checkDueDate!.trim(),
             accountId: data.accountId,
+            obligationId: obligation.id,
             receiveAnchorDocType: obligation.sourceDocType as "DELIVERY_NOTE" | "TAX_INVOICE" | "BILLING_NOTE",
             receiveAnchorDocId: obligation.sourceDocId,
             receiveAnchorDocNo: obligation.sourceDocNo,
             customerNameSnapshot: obligation.customerNameSnapshot,
+            jobId: obligation.jobId,
             notes: data.notes?.trim() || null,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -174,7 +167,31 @@ export function ReceiveArPaymentDialog({
             createdByName: profile.displayName ?? "",
           })
         );
+
+        if (obligation.sourceDocId) {
+          const sourceDocRef = doc(db, "documents", obligation.sourceDocId);
+          batch.update(
+            sourceDocRef,
+            sanitizeForFirestore({
+              paymentInstrument: "CHECK",
+              checkDueDate: data.checkDueDate?.trim() || null,
+              receivedAccountId: data.accountId,
+              withholdingEnabled: data.withholdingEnabled,
+              withholdingAmount: data.withholdingAmount,
+              updatedAt: serverTimestamp(),
+            })
+          );
+        }
       } else {
+        batch.update(obligationRef, {
+          amountPaid: newAmountPaid,
+          balance: newBalance,
+          status: newStatus,
+          lastPaymentDate: data.paymentDate,
+          paidOffDate: newStatus === "PAID" ? data.paymentDate : null,
+          updatedAt: serverTimestamp(),
+        });
+
         const entryRef = doc(collection(db, "accountingEntries"));
         batch.set(entryRef, {
           entryType: "CASH_IN",
@@ -192,7 +209,7 @@ export function ReceiveArPaymentDialog({
         });
       }
 
-      if (obligation.sourceDocId) {
+      if (obligation.sourceDocId && data.paymentInstrument !== "CHECK") {
         const sourceDocRef = doc(db, "documents", obligation.sourceDocId);
         const sourceDocSnap = await getDoc(sourceDocRef);
         if (sourceDocSnap.exists()) {
@@ -220,7 +237,7 @@ export function ReceiveArPaymentDialog({
         }
       }
 
-      if (newStatus === "PAID" && obligation.jobId) {
+      if (data.paymentInstrument !== "CHECK" && newStatus === "PAID" && obligation.jobId) {
         const jobRef = doc(db, "jobs", obligation.jobId);
         const jobSnap = await getDoc(jobRef);
         if (jobSnap.exists())

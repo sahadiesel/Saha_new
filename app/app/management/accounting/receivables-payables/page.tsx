@@ -110,9 +110,19 @@ const apPaymentSchema = z.object({
   paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
   amount: z.coerce.number().positive("จำนวนเงินต้องมากกว่า 0"),
   accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
+  paymentInstrument: z.enum(["CASH", "TRANSFER", "CHECK"]).default("TRANSFER"),
+  checkDueDate: z.string().optional(),
   notes: z.string().optional(),
   withholdingEnabled: z.boolean().default(false),
   withholdingPercent: z.coerce.number().min(0).max(100).optional(),
+}).superRefine((data, ctx) => {
+  if (data.paymentInstrument === "CHECK" && !data.checkDueDate?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "กรุณาระบุวันครบกำหนดเช็ค",
+      path: ["checkDueDate"],
+    });
+  }
 });
 
 function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligation: WithId<AccountingObligation>; accounts: WithId<AccountingAccount>[]; isOpen: boolean; onClose: () => void; }) {
@@ -128,6 +138,8 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
       amount: obligation.balance,
       notes: "",
       accountId: accounts[0]?.id || "",
+      paymentInstrument: "TRANSFER",
+      checkDueDate: "",
       withholdingEnabled: false,
       withholdingPercent: 3,
     },
@@ -137,6 +149,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
   const watchedAmount = form.watch("amount") || 0;
   const watchedWhtEnabled = form.watch("withholdingEnabled");
   const watchedWhtPercent = form.watch("withholdingPercent") || 0;
+  const watchedInstrument = form.watch("paymentInstrument");
 
   const sourceDocRef = useMemo(() => {
       if (!db || !obligation.sourceDocId) return null;
@@ -186,7 +199,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
 
   useEffect(() => {
     if (isOpen) {
-        form.reset({ paymentDate: dfFormat(new Date(), "yyyy-MM-dd"), amount: obligation.balance, notes: "", accountId: accounts[0]?.id || "", withholdingEnabled: false, withholdingPercent: 3 });
+        form.reset({ paymentDate: dfFormat(new Date(), "yyyy-MM-dd"), amount: obligation.balance, notes: "", accountId: accounts[0]?.id || "", paymentInstrument: "TRANSFER", checkDueDate: "", withholdingEnabled: false, withholdingPercent: 3 });
     }
   }, [obligation, accounts, form, isOpen]);
 
@@ -202,8 +215,50 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
         }
     }
     setIsSubmitting(true);
-    const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
+    if (data.paymentInstrument === "CASH" && account.type !== "CASH") {
+      toast({ variant: "destructive", title: "บัญชีไม่ตรงกับวิธีจ่าย", description: "เลือกบัญชีเงินสดเมื่อจ่ายเงินสด" });
+      return;
+    }
+    if ((data.paymentInstrument === "TRANSFER" || data.paymentInstrument === "CHECK") && account.type === "CASH") {
+      toast({ variant: "destructive", title: "บัญชีไม่ตรงกับวิธีจ่าย", description: "เลือกบัญชีธนาคารเมื่อจ่ายโอนหรือจ่ายเช็ค" });
+      return;
+    }
+
+    const paymentMethod = data.paymentInstrument === "CASH" ? "CASH" : "TRANSFER";
     try {
+      if (data.paymentInstrument === "CHECK") {
+        const checkDue = data.checkDueDate?.trim();
+        if (!checkDue) {
+          toast({ variant: "destructive", title: "กรุณาระบุวันครบกำหนดเช็ค" });
+          return;
+        }
+
+        await addDoc(collection(db, "accountingCheckItems"), sanitizeForFirestore({
+          direction: "PAY",
+          status: "PENDING",
+          amount: data.amount,
+          dueDate: checkDue,
+          accountId: data.accountId,
+          obligationId: obligation.id,
+          purchaseDocId: obligation.sourceDocType === "PURCHASE" ? obligation.sourceDocId : undefined,
+          sourceDocType: obligation.sourceDocType,
+          sourceDocId: obligation.sourceDocId,
+          sourceDocNo: obligation.invoiceNo || obligation.sourceDocNo,
+          vendorId: obligation.vendorId,
+          vendorNameSnapshot: obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot,
+          withholdingEnabled: data.withholdingEnabled,
+          withholdingPercent: data.withholdingEnabled ? data.withholdingPercent : null,
+          notes: data.notes || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdByUid: profile.uid,
+          createdByName: profile.displayName ?? "",
+        }));
+        toast({ title: "บันทึกเช็คจ่ายแล้ว", description: "จะตัดบัญชีและตัดเจ้าหนี้เมื่อกดยืนยันในแท็บเช็ค" });
+        onClose();
+        return;
+      }
+
       await runTransaction(db, async (transaction) => {
         const year = new Date(data.paymentDate).getFullYear();
         const counterRef = doc(db, 'documentCounters', String(year));
@@ -221,7 +276,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
             const whtDocNo = `${whtPrefix}${year}-${String(newWhtCount).padStart(4, '0')}`;
             const whtRef = doc(collection(db, 'documents'));
             whtDocId = whtRef.id;
-            transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, docType: 'WITHDRAWAL', docNo: whtDocNo, docDate: data.paymentDate, payerSnapshot: storeSettings, payeeSnapshot: { name: purchase.vendorSnapshot.companyName, taxId: purchase.vendorSnapshot.taxId, address: purchase.vendorSnapshot.address }, vendorId: purchase.vendorId, paidMonth: new Date(data.paymentDate).getMonth() + 1, paidYear: year, incomeTypeCode: 'ITEM5', paidAmountGross: whtInfo.whtBase, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount, status: 'ISSUED', senderName: profile.displayName, receiverName: purchase.vendorSnapshot.companyName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+            transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, docType: 'WITHHOLDING_TAX', docNo: whtDocNo, docDate: data.paymentDate, payerSnapshot: storeSettings, payeeSnapshot: { name: purchase.vendorSnapshot.companyName, taxId: purchase.vendorSnapshot.taxId, address: purchase.vendorSnapshot.address }, vendorId: purchase.vendorId, paidMonth: new Date(data.paymentDate).getMonth() + 1, paidYear: year, incomeTypeCode: 'ITEM5', paidAmountGross: whtInfo.whtBase, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount, status: 'ISSUED', senderName: profile.displayName, receiverName: purchase.vendorSnapshot.companyName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
             transaction.set(counterRef, { ...currentCounters, withholdingTax: newWhtCount, withholdingTaxPrefix: whtPrefix }, { merge: true });
         }
         const entryRef = doc(collection(db, "accountingEntries"));
@@ -255,6 +310,29 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
               <div className="grid grid-cols-1 gap-4">
                 <FormField name="accountId" control={form.control} render={({ field }) => (<FormItem><FormLabel>หักจากบัญชี</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่ใช้จ่าย..."/></SelectTrigger></FormControl><SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent></Select><FormMessage/></FormItem>)} />
               </div>
+              <FormField control={form.control} name="paymentInstrument" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>วิธีจ่ายจริง</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="TRANSFER">โอนเงิน (ตัดบัญชีทันที)</SelectItem>
+                      <SelectItem value="CASH">เงินสด (ตัดบัญชีทันที)</SelectItem>
+                      <SelectItem value="CHECK">เช็คจ่าย (รอยืนยันในแท็บเช็ค)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              {watchedInstrument === "CHECK" ? (
+                <FormField control={form.control} name="checkDueDate" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>วันครบกำหนดเช็ค</FormLabel>
+                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              ) : null}
               <div className="p-4 border rounded-md bg-muted/20 space-y-4">
                   <FormField control={form.control} name="withholdingEnabled" render={({ field }) => (<FormItem className="flex items-center gap-2 space-y-0"><FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl><FormLabel className="font-semibold text-primary cursor-pointer">หักภาษี ณ ที่จ่าย (WHT)</FormLabel></FormItem>)} />
                   {watchedWhtEnabled && (<div className="space-y-3 pt-2 animate-in slide-in-from-top-1"><FormField control={form.control} name="withholdingPercent" render={({ field }) => (<FormItem><FormLabel>อัตราหัก (%)</FormLabel><Select onValueChange={(v) => field.onChange(Number(v))} value={field.value?.toString()}><FormControl><SelectTrigger className="h-8"><SelectValue/></SelectTrigger></FormControl><SelectContent><SelectItem value="1">1% (ขนส่ง)</SelectItem><SelectItem value="3">3% (บริการ)</SelectItem></SelectContent></Select></FormItem>)} />{sourceDoc?.withTax && (<div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 p-1 rounded"><Info className="h-3 w-3" />มี VAT: คำนวณ WHT จากยอดก่อนภาษี ({formatCurrency(sourceDoc.subtotal)})</div>)}<div className="flex justify-between text-xs font-medium text-destructive"><span>ยอดหักภาษี:</span><span>-{formatCurrency(whtInfo.whtAmount)}</span></div></div>)}
@@ -554,8 +632,8 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                             const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
                             const billDateRaw = ob.docDate || (ob as any).createdAt?.toDate?.();
                             const customerIdForReceipt = ob.customerId || details?.customerId || '';
-                            const canIssueReceipt = type === "AR" && ob.sourceDocType === "TAX_INVOICE";
-                            const requireReceiptBeforeReceive = ob.sourceDocType === "TAX_INVOICE";
+                            const canIssueReceipt = type === "AR" && (ob.sourceDocType === "TAX_INVOICE" || ob.sourceDocType === "DEBIT_NOTE");
+                            const requireReceiptBeforeReceive = ob.sourceDocType === "TAX_INVOICE" || ob.sourceDocType === "DEBIT_NOTE";
                             const receiptHref = (() => {
                               const q = new URLSearchParams();
                               q.set('tab', 'new');
@@ -626,7 +704,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                           </TooltipTrigger>
                                           {requireReceiptBeforeReceive && !isReceiptIssued && (
                                             <TooltipContent>
-                                              ใบกำกับภาษี: ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริง (เงินสด/โอน/เช็ค) ได้ — ใบส่งของรับเงินได้ทันที
+                                              เอกสารขายที่ต้องมีใบเสร็จ (ใบกำกับภาษี/ใบเพิ่มหนี้): ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริงได้
                                             </TooltipContent>
                                           )}
                                         </Tooltip>

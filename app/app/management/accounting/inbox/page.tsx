@@ -44,6 +44,25 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const docTypeThaiLabel = (docType?: string) => {
+  if (docType === "TAX_INVOICE") return "ใบกำกับภาษี";
+  if (docType === "DELIVERY_NOTE") return "ใบส่งของชั่วคราว";
+  if (docType === "CREDIT_NOTE") return "ใบลดหนี้";
+  if (docType === "DEBIT_NOTE") return "ใบเพิ่มหนี้";
+  return docType || "-";
+};
+
+const docViewHref = (doc?: Pick<DocumentType, "id" | "docType">, tab?: string) => {
+  if (!doc) return "#";
+  const base =
+    doc.docType === "DELIVERY_NOTE"
+      ? `/app/office/documents/delivery-note/${doc.id}`
+      : doc.docType === "TAX_INVOICE"
+      ? `/app/office/documents/tax-invoice/${doc.id}`
+      : `/app/office/documents/${doc.id}`;
+  return tab ? `${base}?from=inbox&tab=${tab}` : base;
+};
+
 /** ค้นหาเลขที่เอกสาร / ชื่อลูกค้า / ชื่อในใบกำกับ / เบอร์โทร */
 function matchesInboxSearch(
   doc: Pick<DocumentType, "docNo" | "customerSnapshot">,
@@ -116,7 +135,7 @@ function AccountingInboxPageContent() {
     return query(
         collection(db, "documents"),
         where("status", "==", "APPROVED"),
-        where("docType", "==", "TAX_INVOICE"),
+        where("docType", "in", ["TAX_INVOICE", "DEBIT_NOTE"]),
         limit(100)
     );
   }, [db, hasPermission]);
@@ -139,6 +158,7 @@ function AccountingInboxPageContent() {
           }
           if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
           if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
+          if (d.docType === 'CREDIT_NOTE' || d.docType === 'DEBIT_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
           if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
           return false;
       });
@@ -423,14 +443,65 @@ function AccountingInboxPageContent() {
   const handleCreateAR = async (docObj: WithId<DocumentType>) => {
     if (!db || !profile) return;
     setIsSubmitting(true);
-    const arId = `AR_${docObj.id}`;
-    const arRef = doc(db, 'accountingObligations', arId);
     const docRef = doc(db, 'documents', docObj.id);
     const customerName = docObj.customerSnapshot?.name || 'Unknown';
     const isDeliveryNote = docObj.docType === 'DELIVERY_NOTE';
+    const isDebitNote = docObj.docType === 'DEBIT_NOTE';
+    const isCreditNote = docObj.docType === 'CREDIT_NOTE';
+    const arId = `AR_${docObj.id}`;
+    const arRef = doc(db, 'accountingObligations', arId);
 
     try {
       await runTransaction(db, async (transaction) => {
+        if (isCreditNote) {
+          const referencedTaxInvoiceId = docObj.referencesDocIds?.[0];
+          if (!referencedTaxInvoiceId) throw new Error("ใบลดหนี้ต้องอ้างอิงใบกำกับภาษี");
+
+          const referencedDocRef = doc(db, "documents", referencedTaxInvoiceId);
+          const referencedDocSnap = await transaction.get(referencedDocRef);
+          if (!referencedDocSnap.exists()) throw new Error("ไม่พบใบกำกับภาษีอ้างอิง");
+          const referencedDoc = referencedDocSnap.data() as DocumentType;
+
+          const targetArId = referencedDoc.arObligationId || `AR_${referencedTaxInvoiceId}`;
+          const targetArRef = doc(db, "accountingObligations", targetArId);
+          const targetArSnap = await transaction.get(targetArRef);
+          if (!targetArSnap.exists()) throw new Error("ยังไม่พบยอดลูกหนี้ของใบกำกับภาษีอ้างอิง");
+          const targetAr = targetArSnap.data() as any;
+
+          const creditAmount = Math.max(0, docObj.grandTotal || 0);
+          const newAmountTotal = Math.max(0, Math.round(((targetAr.amountTotal || 0) - creditAmount) * 100) / 100);
+          const newAmountPaid = Math.min(Math.max(0, targetAr.amountPaid || 0), newAmountTotal);
+          const newBalance = Math.max(0, Math.round((newAmountTotal - newAmountPaid) * 100) / 100);
+          const newStatus = newBalance <= 0.05 ? "PAID" : newAmountPaid > 0 ? "PARTIAL" : "UNPAID";
+
+          transaction.update(targetArRef, {
+            amountTotal: newAmountTotal,
+            amountPaid: newAmountPaid,
+            balance: newBalance,
+            status: newStatus,
+            updatedAt: serverTimestamp(),
+          });
+
+          transaction.update(referencedDocRef, {
+            status: newStatus,
+            arStatus: newStatus,
+            paymentSummary: {
+              paidTotal: newAmountPaid,
+              balance: newBalance,
+              paymentStatus: newStatus,
+            },
+            updatedAt: serverTimestamp(),
+          });
+
+          transaction.update(docRef, {
+            status: "APPROVED",
+            arStatus: "PAID",
+            arObligationId: targetArId,
+            updatedAt: serverTimestamp(),
+          });
+          return;
+        }
+
         if (docObj.jobId) {
             transaction.update(doc(db, 'jobs', docObj.jobId), {
                 status: isDeliveryNote ? 'CLOSED' : 'PICKED_UP',
@@ -464,15 +535,16 @@ function AccountingInboxPageContent() {
           dueDate: docObj.dueDate || null,
         }));
 
+        const targetDocStatus = isDeliveryNote || isDebitNote ? 'UNPAID' : 'APPROVED';
         transaction.update(docRef, {
-          status: isDeliveryNote ? 'UNPAID' : 'APPROVED', 
+          status: targetDocStatus, 
           arStatus: 'UNPAID',
           paymentSummary: { paidTotal: 0, balance: docObj.grandTotal, paymentStatus: 'UNPAID' },
           arObligationId: arId,
           updatedAt: serverTimestamp()
         });
       });
-      toast({ title: "ตั้งยอดลูกหนี้สำเร็จ" });
+      toast({ title: isCreditNote ? "อนุมัติใบลดหนี้และปรับยอดลูกหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ" });
       if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
@@ -558,11 +630,11 @@ function AccountingInboxPageContent() {
                     <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตรวจสอบ (Cash)</TableCell></TableRow>
                   ) : filteredDocs.map(docItem => (
                     <TableRow key={docItem.id}>
-                      <TableCell>{safeFormat(docItem.docDate)}</TableCell>
+                      <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
                       <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                       <TableCell>
                         <div className="font-medium">{docItem.docNo}</div>
-                        <div className="text-xs text-muted-foreground">{docItem.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบส่งของชั่วคราว'}</div>
+                        <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
                       </TableCell>
                       <TableCell className="font-bold text-primary">{formatCurrency(docItem.grandTotal)}</TableCell>
@@ -577,7 +649,7 @@ function AccountingInboxPageContent() {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem asChild>
-                                  <Link href={(docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : `/app/office/documents/tax-invoice/${docItem.id}`) + `?from=inbox&tab=receive`}>
+                                  <Link href={docViewHref(docItem, "receive")}>
                                     <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                   </Link>
                                 </DropdownMenuItem>
@@ -615,11 +687,11 @@ function AccountingInboxPageContent() {
                     <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตั้งลูกหนี้ (Credit)</TableCell></TableRow>
                   ) : filteredDocs.map(docItem => (
                     <TableRow key={docItem.id}>
-                      <TableCell>{safeFormat(docItem.docDate)}</TableCell>
+                      <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
                       <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                       <TableCell>
                         <div className="font-medium">{docItem.docNo}</div>
-                        <div className="text-xs text-muted-foreground">{docItem.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบส่งของชั่วคราว'}</div>
+                        <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
                       </TableCell>
                       <TableCell className="font-bold text-amber-600">{formatCurrency(docItem.grandTotal)}</TableCell>
@@ -634,12 +706,12 @@ function AccountingInboxPageContent() {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem asChild>
-                                  <Link href={(docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : `/app/office/documents/tax-invoice/${docItem.id}`) + `?from=inbox&tab=ar`}>
+                                  <Link href={docViewHref(docItem, "ar")}>
                                     <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                   </Link>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => setArDocToConfirm(docItem)} disabled={isSubmitting} className="font-bold text-amber-600 focus:text-amber-600">
-                                  <HandCoins className="mr-2 h-4 w-4"/> ยืนยันตั้งลูกหนี้
+                                  <HandCoins className="mr-2 h-4 w-4"/> {docItem.docType === 'CREDIT_NOTE' ? "อนุมัติและปรับยอดลูกหนี้" : "ยืนยันตั้งลูกหนี้"}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => setDisputingDoc(docItem)} className="text-destructive focus:text-destructive">
                                   <Ban className="mr-2 h-4 w-4"/> ตีกลับให้แก้ไข
@@ -657,12 +729,12 @@ function AccountingInboxPageContent() {
             <TabsContent value="receipts" className="mt-0 space-y-8">
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b pb-2">
-                    <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. ใบกำกับภาษีที่ตรวจสอบแล้ว (รอออกใบเสร็จ)</h3>
+                    <h3 className="font-bold text-lg flex items-center gap-2"><Info className="h-5 w-5 text-primary"/> 1. เอกสารที่ตรวจสอบแล้ว (รอออกใบเสร็จ)</h3>
                     <Badge variant="outline" className="bg-primary/5">
                       {searchTerm.trim() ? `${filteredApprovedDocs.length} / ${approvedDocs.length}` : filteredApprovedDocs.length} รายการ
                     </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground -mt-2">ลิงก์เดียวกับหน้าลูกหนี้/เจ้าหนี้ — ออกใบเสร็จได้เฉพาะใบกำกับภาษี ใบส่งของลูกหนี้รับเงินที่หน้าลูกหนี้เท่านั้น</p>
+                <p className="text-xs text-muted-foreground -mt-2">ลิงก์เดียวกับหน้าลูกหนี้/เจ้าหนี้ — ออกใบเสร็จได้จากใบกำกับภาษี/ใบเพิ่มหนี้ ส่วนใบส่งของรับเงินที่หน้าลูกหนี้</p>
                 <Table>
                     <TableHeader className="bg-muted/30">
                         <TableRow>
@@ -729,7 +801,7 @@ function AccountingInboxPageContent() {
                         </TableRow>
                     ) : filteredDocs.map(docItem => (
                         <TableRow key={docItem.id}>
-                        <TableCell>{safeFormat(docItem.docDate)}</TableCell>
+                        <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
                         <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                         <TableCell>
                             <div className="font-medium">{docItem.docNo}</div>
@@ -900,7 +972,9 @@ function AccountingInboxPageContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>ยืนยันตั้งยอดลูกหนี้</AlertDialogTitle>
             <AlertDialogDescription>
-              ยืนยันการตั้งยอดค้างชำระ (AR) จำนวน {formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า {arDocToConfirm?.customerSnapshot?.name}
+              {arDocToConfirm?.docType === 'CREDIT_NOTE'
+                ? `ยืนยันการอนุมัติใบลดหนี้และหักยอดลูกหนี้จำนวน ${formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`
+                : `ยืนยันการตั้งยอดค้างชำระ (AR) จำนวน ${formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`}
               {arDocToConfirm?.docType === 'DELIVERY_NOTE' && <p className="mt-2 font-bold text-primary">ระบบจะทำการปิดงานซ่อมนี้ให้ทันทีหลังจากตั้งลูกหนี้ค่ะ</p>}
             </AlertDialogDescription>
           </AlertDialogHeader>

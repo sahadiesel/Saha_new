@@ -197,6 +197,7 @@ function JobDetailsPageContent() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -745,7 +746,6 @@ function JobDetailsPageContent() {
 
   const handleRejectJob = async () => {
     if (!db || !profile || !job) return;
-    if (!confirm("ยืนยันลูกค้าไม่อนุมัติงานนี้? งานจะถูกเปลี่ยนสถานะเป็นรอทำบิลเพื่อให้ฝ่ายออฟฟิศตรวจสอบค่าใช้จ่ายค่ะ")) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -768,19 +768,66 @@ function JobDetailsPageContent() {
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
-    batch.update(jobDocRef, { 
-      status: 'IN_REPAIR_PROCESS', 
-      lastActivityAt: serverTimestamp(), 
-      updatedAt: serverTimestamp() 
+    batch.update(jobDocRef, {
+      status: 'IN_REPAIR_PROCESS',
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     });
-    batch.set(doc(collection(jobDocRef, "activities")), { 
-      text: `อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม`, 
-      userName: profile.displayName, 
-      userId: profile.uid, 
-      createdAt: serverTimestamp() 
+    batch.set(doc(collection(jobDocRef, "activities")), {
+      text: `อะไหล่มาครบแล้ว เริ่มดำเนินการซ่อม`,
+      userName: profile.displayName,
+      userId: profile.uid,
+      createdAt: serverTimestamp()
     });
     batch.commit().then(() => toast({ title: "เริ่มดำเนินการซ่อมแล้ว" })).finally(() => setIsSubmittingNote(false));
   };
+
+  const statusConfirmConfig = useMemo(() => {
+    return {
+      REQUEST_QUOTATION: {
+        title: "ยืนยันแจ้งเสนอราคา",
+        description: "คุณได้ใส่รายการที่ต้องการให้เสนอราคาให้เรียบร้อยโดยบันทึกไว้ในส่วนสมุดบันทึกแล้ว ใช่ไหม?",
+        confirmText: "ใช่, แจ้งเสนอราคา",
+        onConfirm: handleRequestQuotation,
+      },
+      FINISH_JOB: {
+        title: "ยืนยันแจ้งงานเสร็จทำบิล",
+        description: "เก็บรายละเอียดงาน และตรวจสอบสินค้าเรียบร้อย พร้อมที่จะส่งให้ลูกค้าแล้วใช่ไหม?",
+        confirmText: "ใช่, งานเสร็จแจ้งทำบิล",
+        onConfirm: handleFinishJob,
+      },
+      RETURN_TO_MAIN: {
+        title: "ยืนยันส่งงานกลับแผนกหลัก",
+        description: "ยืนยันว่าแผนกย่อยดำเนินการเสร็จแล้ว และพร้อมส่งงานกลับแผนกหลักใช่ไหม?",
+        confirmText: "ยืนยันส่งกลับแผนกหลัก",
+        onConfirm: handleReturnToMain,
+      },
+      APPROVE_JOB: {
+        title: "ยืนยันอนุมัติเริ่มซ่อม",
+        description: "ยืนยันว่าลูกค้าอนุมัติแล้ว และพร้อมเปลี่ยนสถานะไปจัดเตรียมอะไหล่ใช่ไหม?",
+        confirmText: "ยืนยันอนุมัติ",
+        onConfirm: handleApproveJob,
+      },
+      REJECT_JOB: {
+        title: "ยืนยันลูกค้าไม่อนุมัติ/ยกเลิก",
+        description: "ยืนยันว่าลูกค้าไม่อนุมัติงานนี้ และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
+        confirmText: "ยืนยันไม่อนุมัติ",
+        onConfirm: handleRejectJob,
+      },
+      PARTS_READY: {
+        title: "ยืนยันอะไหล่มาครบ",
+        description: "ตรวจสอบว่าอะไหล่ครบแล้ว และพร้อมเริ่มดำเนินการซ่อมใช่ไหม?",
+        confirmText: "ยืนยันเริ่มซ่อม",
+        onConfirm: handlePartsReady,
+      },
+      REQUEST_MORE_PARTS: {
+        title: "ยืนยันแจ้งเบิกอะไหล่เพิ่ม",
+        description: "ยืนยันว่าจำเป็นต้องเบิกอะไหล่เพิ่ม และพร้อมเปลี่ยนสถานะไปรออะไหล่ใช่ไหม?",
+        confirmText: "ยืนยันแจ้งเบิกเพิ่ม",
+        onConfirm: handleRequestMoreParts,
+      },
+    } as const;
+  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToMain]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -1091,10 +1138,10 @@ function JobDetailsPageContent() {
                     {/* Approve/Reject for WAITING_APPROVE */}
                     {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
                         <>
-                            <Button className="w-full bg-green-600 hover:bg-green-700 font-bold" onClick={handleApproveJob} disabled={isSubmittingNote}>
+                            <Button className="w-full bg-green-600 hover:bg-green-700 font-bold" onClick={() => setStatusConfirmAction('APPROVE_JOB')} disabled={isSubmittingNote}>
                                 <Check className="mr-2 h-4 w-4" /> อนุมัติเริ่มซ่อม
                             </Button>
-                            <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/10 font-bold" onClick={handleRejectJob} disabled={isSubmittingNote}>
+                            <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/10 font-bold" onClick={() => setStatusConfirmAction('REJECT_JOB')} disabled={isSubmittingNote}>
                                 <Ban className="mr-2 h-4 w-4" /> ลูกค้าไม่อนุมัติ/ยกเลิก
                             </Button>
                         </>
@@ -1102,7 +1149,7 @@ function JobDetailsPageContent() {
 
                     {/* Parts Ready for PENDING_PARTS */}
                     {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
-                        <Button className="w-full bg-blue-600 hover:bg-blue-700 font-bold" onClick={handlePartsReady} disabled={isSubmittingNote}>
+                        <Button className="w-full bg-blue-600 hover:bg-blue-700 font-bold" onClick={() => setStatusConfirmAction('PARTS_READY')} disabled={isSubmittingNote}>
                             <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
                         </Button>
                     )}
@@ -1111,7 +1158,7 @@ function JobDetailsPageContent() {
                     {job.status === 'IN_PROGRESS' && (
                         <Button 
                           variant="outline"
-                          onClick={handleRequestQuotation} 
+                          onClick={() => setStatusConfirmAction('REQUEST_QUOTATION')} 
                           disabled={isSubmittingNote} 
                           className="w-full border-blue-600 text-blue-600 hover:bg-blue-50 font-bold"
                         >
@@ -1123,7 +1170,7 @@ function JobDetailsPageContent() {
                     {/* Finish / Return to Main */}
                     {['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
                         <Button 
-                          onClick={isSubTask ? handleReturnToMain : handleFinishJob} 
+                          onClick={() => setStatusConfirmAction(isSubTask ? 'RETURN_TO_MAIN' : 'FINISH_JOB')} 
                           disabled={isSubmittingNote} 
                           className="w-full bg-green-600 hover:bg-green-700 text-white font-bold"
                         >
@@ -1150,7 +1197,7 @@ function JobDetailsPageContent() {
                     {job.status === 'IN_REPAIR_PROCESS' && (
                         <Button 
                           variant="outline"
-                          onClick={handleRequestMoreParts}
+                          onClick={() => setStatusConfirmAction('REQUEST_MORE_PARTS')}
                           disabled={isSubmittingNote}
                           className="w-full border-amber-600 text-amber-600 hover:bg-amber-50 font-bold"
                         >
@@ -1276,6 +1323,33 @@ function JobDetailsPageContent() {
             <Button variant="outline" onClick={() => setIsBillingSelectionOpen(false)} className="w-full sm:w-auto">ยกเลิก</Button>
             <Button variant="secondary" onClick={() => { if (job) router.push(`/app/office/documents/delivery-note/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">ใบส่งของชั่วคราว</Button>
             <Button onClick={() => { if (job) router.push(`/app/office/documents/tax-invoice/new?jobId=${job.id}`); setIsBillingSelectionOpen(false); }} className="w-full sm:w-auto">ใบกำกับภาษี</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!statusConfirmAction} onOpenChange={(open) => !open && setStatusConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction].title : "ยืนยันการดำเนินการ"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction].description : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSubmittingNote}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSubmittingNote}
+              onClick={async () => {
+                if (!statusConfirmAction) return;
+                await statusConfirmConfig[statusConfirmAction].onConfirm();
+                setStatusConfirmAction(null);
+              }}
+            >
+              {isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {statusConfirmAction ? statusConfirmConfig[statusConfirmAction].confirmText : "ยืนยัน"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
