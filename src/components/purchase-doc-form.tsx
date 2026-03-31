@@ -40,7 +40,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
-import { getNextAvailablePurchaseDocNo } from "@/firebase/purchases";
+import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
 import type { PurchaseDoc, Vendor, AccountingAccount, Part } from "@/lib/types";
@@ -199,6 +199,13 @@ export function PurchaseDocForm() {
       form.setValue("docDate", format(new Date(), "yyyy-MM-dd"));
     }
   }, [editDocId, form]);
+
+  useEffect(() => {
+    if (!editDocId || !docToEdit || isLoadingDoc) return;
+    if (isPurchaseDocServiceLike(docToEdit)) {
+      router.replace(`/app/office/parts/purchases/service/new?editDocId=${editDocId}`);
+    }
+  }, [editDocId, docToEdit, isLoadingDoc, router]);
 
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "items" });
   const watchedItems = useWatch({ control: form.control, name: "items" });

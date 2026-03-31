@@ -20,6 +20,15 @@ export function normalizeYear(year: number): number {
   return year > 2400 ? year - 543 : year;
 }
 
+/** Service purchases use `purchaseType: 'SERVICE'`; legacy docs may omit it (no partId on lines). */
+export function isPurchaseDocServiceLike(
+  d: Pick<PurchaseDoc, 'purchaseType' | 'items'> & { purchaseType?: string }
+): boolean {
+  if (d.purchaseType === 'SERVICE') return true;
+  if (d.purchaseType === 'PARTS') return false;
+  return !d.items?.some((i) => i.partId && String(i.partId).trim());
+}
+
 function extractSequence(docNo: string): number {
   if (!docNo) return 0;
   const parts = docNo.split('-');

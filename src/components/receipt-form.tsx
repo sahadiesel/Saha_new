@@ -16,6 +16,7 @@ import {
   writeBatch,
   deleteField,
   getDoc,
+  Timestamp,
 } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -84,6 +85,8 @@ export function ReceiptForm() {
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [extraSourceDocs, setExtraSourceDocs] = useState<DocumentType[]>([]);
+  /** เอกสารแรกจากลิงก์ (sourceDocId) — ใช้ซิงก์ customerId / แสดงชื่อเมื่อไม่มีใน collection customers */
+  const [bootstrapSourceDoc, setBootstrapSourceDoc] = useState<DocumentType | null>(null);
 
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -117,6 +120,26 @@ export function ReceiptForm() {
     if (editDocId || urlSourceDocIds.length === 0) return;
     form.setValue("sourceDocIds", urlSourceDocIds);
   }, [editDocId, urlSourceKey, form]);
+
+  useEffect(() => {
+    if (!db || editDocId || urlSourceDocIds.length === 0) {
+      setBootstrapSourceDoc(null);
+      return;
+    }
+    let cancelled = false;
+    setBootstrapSourceDoc(null);
+    (async () => {
+      const s = await getDoc(doc(db, "documents", urlSourceDocIds[0]));
+      if (cancelled || !s.exists()) return;
+      const d = { id: s.id, ...s.data() } as DocumentType;
+      setBootstrapSourceDoc(d);
+      const cid = d.customerId || d.customerSnapshot?.id;
+      if (cid) form.setValue("customerId", cid);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, editDocId, urlSourceKey, form]);
 
   useEffect(() => {
     if (!db) return;
@@ -227,6 +250,46 @@ export function ReceiptForm() {
     }
   }, [watchedSourceDocIds, displaySourceDocs, form, editDocId, presetAmountParam]);
 
+  const customerDisplayName = useMemo(() => {
+    if (!selectedCustomerId) return "";
+    const fromList = customers.find((c) => c.id === selectedCustomerId)?.name;
+    if (fromList) return fromList;
+    const snap = displaySourceDocs.find(
+      (d) => (d.customerId || d.customerSnapshot?.id) === selectedCustomerId
+    )?.customerSnapshot;
+    if (snap?.name || snap?.taxName) return snap.name || snap.taxName || "";
+    if (bootstrapSourceDoc) {
+      const bid = bootstrapSourceDoc.customerId || bootstrapSourceDoc.customerSnapshot?.id;
+      if (bid === selectedCustomerId) {
+        return (
+          bootstrapSourceDoc.customerSnapshot?.name ||
+          bootstrapSourceDoc.customerSnapshot?.taxName ||
+          ""
+        );
+      }
+    }
+    return "";
+  }, [selectedCustomerId, customers, displaySourceDocs, bootstrapSourceDoc]);
+
+  const bootstrappingCustomer = !editDocId && urlSourceDocIds.length > 0 && !bootstrapSourceDoc;
+
+  const buildCustomerFromSnapshot = (id: string, snap: DocumentType["customerSnapshot"]): Customer => ({
+    id,
+    name: snap?.name || snap?.taxName || "ลูกค้า",
+    phone: (snap?.phone as string) || "",
+    detail: "",
+    useTax: !!(snap?.taxId || snap?.taxName),
+    taxName: snap?.taxName,
+    taxAddress: snap?.taxAddress,
+    taxId: snap?.taxId,
+    taxPhone: snap?.taxPhone,
+    taxBranchType: snap?.taxBranchType,
+    taxBranchNo: snap?.taxBranchNo,
+    taxProfileId: snap?.taxProfileId,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  });
+
   const handleToggleDoc = (docId: string) => {
     const currentIds = form.getValues('sourceDocIds');
     if (currentIds.includes(docId)) {
@@ -239,12 +302,26 @@ export function ReceiptForm() {
   const handleProcessSubmission = async (data: ReceiptFormData) => {
     if (isSubmitting) return;
     
-    const customer = customers.find(c => c.id === data.customerId);
     const selectedDocs = displaySourceDocs.filter(d => data.sourceDocIds.includes(d.id));
     const account = accounts.find(a => a.id === data.accountId);
 
+    const canonicalCustomerId =
+      selectedDocs[0]?.customerId || selectedDocs[0]?.customerSnapshot?.id || data.customerId;
+
+    let customer: Customer | undefined = customers.find((c) => c.id === canonicalCustomerId);
+    if (!customer && selectedDocs.length > 0) {
+      const snap = selectedDocs[0].customerSnapshot;
+      if (snap && (snap.name || snap.taxName)) {
+        customer = buildCustomerFromSnapshot(canonicalCustomerId, snap);
+      }
+    }
+
     if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || !account) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบถ้วน", description: "กรุณาเลือกข้อมูลลูกค้า บัญชี และเลือกบิลอย่างน้อย 1 ใบก่อนบันทึก" });
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลไม่ครบถ้วน",
+        description: "กรุณาเลือกบัญชีและบิลอย่างน้อย 1 ใบ — ถ้าไม่มีชื่อลูกค้า ให้ตรวจว่าใบกำกับมีข้อมูลลูกค้าครบ",
+      });
       return;
     }
     
@@ -263,8 +340,8 @@ export function ReceiptForm() {
     try {
       const docData = {
         docDate: data.paymentDate,
-        customerId: data.customerId,
-        customerSnapshot: { ...customer },
+        customerId: canonicalCustomerId,
+        customerSnapshot: { ...customer, id: canonicalCustomerId },
         storeSnapshot: { ...storeSettings },
         items,
         subtotal: amount2dec,
@@ -333,8 +410,12 @@ export function ReceiptForm() {
       });
       await batch.commit();
 
-      toast({ title: "ออกใบเสร็จรับเงินสำเร็จ", description: `เลขที่ใบเสร็จ: ${finalDocNo}` });
-      router.push(`/app/management/accounting/inbox`);
+      toast({
+        title: "ออกใบเสร็จรับเงินสำเร็จ",
+        description: `เลขที่ ${finalDocNo} — ไปขั้นตอนยืนยันรับเงินเข้าบัญชี (บันทึกรายรับ / ปิดลูกหนี้ / ปิดงาน)`,
+      });
+      setIsSubmitting(false);
+      router.push(`/app/management/accounting/documents/receipt/${finalDocId}/confirm`);
     } catch (error: any) {
       toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: error.message });
       setIsSubmitting(false);
@@ -380,7 +461,13 @@ export function ReceiptForm() {
                     <PopoverTrigger asChild>
                         <FormControl>
                         <Button variant="outline" role="combobox" className="w-full md:w-[400px] justify-between font-normal" disabled={!!editDocId || isSubmitting}>
-                            <span className="truncate">{field.value ? (customers.find(c => c.id === field.value)?.name || "กำลังโหลด...") : "ค้นหาชื่อลูกค้า..."}</span>
+                            <span className="truncate text-left">
+                              {!field.value
+                                ? "ค้นหาชื่อลูกค้า..."
+                                : bootstrappingCustomer
+                                  ? "กำลังโหลดชื่อจากบิลอ้างอิง..."
+                                  : customerDisplayName || "ลูกค้า (จากใบกำกับภาษี)"}
+                            </span>
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                         </FormControl>

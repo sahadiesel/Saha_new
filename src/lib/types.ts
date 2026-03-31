@@ -825,6 +825,11 @@ export interface PurchaseDoc {
   apObligationId?: string;
   note?: string;
   billPhotos?: string[];
+  /** แยกรายการซื้องานบริการ (ไม่ตัดสต็อก) กับซื้ออะไหล่ */
+  purchaseType?: 'SERVICE' | 'PARTS';
+  isReceived?: boolean;
+  suggestedAccountId?: string;
+  suggestedPaymentMethod?: 'CASH' | 'TRANSFER';
 }
 
 export interface PurchaseClaim {

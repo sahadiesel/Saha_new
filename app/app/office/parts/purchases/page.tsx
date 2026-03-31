@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import type { PurchaseDoc } from "@/lib/types";
+import { isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { WithId } from "@/firebase/firestore/use-collection";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import { useRouter } from "next/navigation";
@@ -210,7 +211,7 @@ export default function PurchaseDocsListPage() {
                               
                               {canEdit && (
                                 <DropdownMenuItem asChild>
-                                    <Link href={`/app/office/parts/purchases/new?editDocId=${purchaseDoc.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link>
+                                    <Link href={isPurchaseDocServiceLike(purchaseDoc) ? `/app/office/parts/purchases/service/new?editDocId=${purchaseDoc.id}` : `/app/office/parts/purchases/new?editDocId=${purchaseDoc.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link>
                                 </DropdownMenuItem>
                               )}
 
