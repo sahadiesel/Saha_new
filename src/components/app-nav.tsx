@@ -393,6 +393,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                         <SubNavLink href="/app/office/jobs/management/by-status?status=done" label="งานตามสถานะ" onClick={onLinkClick} />
                         <ManagementAccountingSubMenu onLinkClick={onLinkClick} />
                         <HRSubMenu onLinkClick={onLinkClick} />
+                        <SettingsSubMenu onLinkClick={onLinkClick} />
                     </>
                 )}
                 {department === 'CAR_SERVICE' && (

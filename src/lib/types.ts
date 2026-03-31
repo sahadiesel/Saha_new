@@ -710,6 +710,8 @@ export interface ARPayment {
     netCashApplied: number;
     withholdingAmount: number;
     grossApplied: number;
+    /** แถวนี้คิดหัก ณ ที่จ่ายตาม % ด้านบนหรือไม่ */
+    withholdingApplied?: boolean;
   }[];
   createdAt: Timestamp;
 }

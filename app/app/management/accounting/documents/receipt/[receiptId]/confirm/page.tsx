@@ -36,6 +36,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 
@@ -64,6 +66,8 @@ function ConfirmReceiptPageContent() {
   const [invoices, setInvoices] = useState<WithId<DocumentType>[]>([]);
   const [obligations, setObligations] = useState<Record<string, WithId<AccountingObligation>>>({});
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
+  /** แต่ละบิลว่าคิดหัก ณ ที่จ่าย (ใช้ % จากฟอร์ม) หรือไม่ — ขายสินค้า/บิลที่ไม่ต้องหัก ปิดได้ */
+  const [invoiceWhtApply, setInvoiceWhtApply] = useState<Record<string, boolean>>({});
   
   const [showFinalConfirm, setShowFinalConfirm] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<ConfirmReceiptFormData | null>(null);
@@ -136,15 +140,22 @@ function ConfirmReceiptPageContent() {
         setInvoices(fetchedInvoices);
         setObligations(fetchedObligations);
 
+        const whtApplyDefaults = Object.fromEntries(
+          fetchedInvoices.map((inv) => [inv.id, inv.docType === "TAX_INVOICE"])
+        ) as Record<string, boolean>;
+        setInvoiceWhtApply(whtApplyDefaults);
+
         const accountsQuery = query(collection(db, "accountingAccounts"), where("isActive", "==", true));
         const accountsSnap = await getDocs(accountsQuery);
         const accountsData = accountsSnap.docs.map(d => ({id: d.id, ...d.data()}) as WithId<AccountingAccount>);
         setAccounts(accountsData);
         
         const initialNetTotal = fetchedInvoices.reduce((sum, inv) => {
-            const gross = obligations[inv.id]?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal;
+            const ob = fetchedObligations[inv.id];
+            const gross = ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal;
             const whtBase = inv.withTax ? (gross / 1.07) : gross;
-            const initialWhtRate = inv.docType === 'TAX_INVOICE' ? 0.03 : 0; 
+            const applyWht = inv.docType === "TAX_INVOICE";
+            const initialWhtRate = applyWht ? 0.03 : 0;
             return sum + (gross - (whtBase * initialWhtRate));
         }, 0);
 
@@ -152,7 +163,7 @@ function ConfirmReceiptPageContent() {
             accountId: receiptData.receivedAccountId || accountsData[0]?.id || "",
             paymentDate: receiptData.paymentDate || dfFormat(new Date(), "yyyy-MM-dd"),
             netReceivedTotal: Math.round(initialNetTotal * 100) / 100,
-            whtPercent: fetchedInvoices.some(inv => inv.docType === 'TAX_INVOICE') ? 3 : 0
+            whtPercent: fetchedInvoices.some((inv) => whtApplyDefaults[inv.id]) ? 3 : 0
         });
 
       } catch (err: any) {
@@ -168,7 +179,9 @@ function ConfirmReceiptPageContent() {
     return invoices.map(inv => {
         const ob = obligations[inv.id];
         const gross = Math.round((ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal) * 100) / 100;
-        const whtRate = watchedWhtPercent / 100;
+        const applyWht =
+          invoiceWhtApply[inv.id] !== undefined ? invoiceWhtApply[inv.id] : inv.docType === "TAX_INVOICE";
+        const whtRate = applyWht ? watchedWhtPercent / 100 : 0;
         const whtBase = inv.withTax ? (gross / 1.07) : gross;
         const whtAmount = Math.round(whtBase * whtRate * 100) / 100;
         const netCash = Math.round((gross - whtAmount) * 100) / 100;
@@ -176,13 +189,15 @@ function ConfirmReceiptPageContent() {
         return {
             invoiceId: inv.id,
             invoiceDocNo: inv.docNo,
+            docType: inv.docType,
             withTax: inv.withTax ?? false,
             gross,
             whtAmount,
-            netCash
+            netCash,
+            withholdingApplied: applyWht,
         };
     });
-  }, [invoices, obligations, watchedWhtPercent]);
+  }, [invoices, obligations, watchedWhtPercent, invoiceWhtApply]);
 
   const totals = useMemo(() => {
     const totalNetCalculated = Math.round(calculatedAllocations.reduce((sum, a) => sum + a.netCash, 0) * 100) / 100;
@@ -241,6 +256,7 @@ function ConfirmReceiptPageContent() {
                     netCashApplied: a.netCash,
                     withholdingAmount: a.whtAmount,
                     grossApplied: a.gross,
+                    withholdingApplied: a.withholdingApplied,
                 })),
                 createdAt: serverTimestamp(),
             }));
@@ -430,7 +446,9 @@ function ConfirmReceiptPageContent() {
                                             <Percent className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-amber-400" />
                                         </div>
                                     </FormControl>
-                                    <FormDescription className="text-[10px]">ระบุ % เพื่อให้ระบบคำนวณยอดหักภาษีอัตโนมัติ (ปกติคือ 3%)</FormDescription>
+                                    <FormDescription className="text-[10px]">
+                                      ใช้กับแถวในตารางด้านล่างที่ติ๊ก &quot;หัก WHT&quot; เท่านั้น (ปกติบริการ 3% — ขายสินค้าที่ไม่ต้องหักให้ปิดติ๊กที่บิลนั้น)
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )} />
@@ -440,14 +458,14 @@ function ConfirmReceiptPageContent() {
 
                 <Card>
                     <CardHeader className="flex flex-row justify-between items-center">
-                        <CardTitle className="text-base">2. รายละเอียดการจัดสรรยอดตามบิล (Display Only)</CardTitle>
+                        <CardTitle className="text-base">2. รายละเอียดการจัดสรรยอดตามบิล</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <Alert variant="secondary" className="bg-blue-50 border-blue-200">
                             <Info className="h-4 w-4 text-blue-600" />
                             <AlertTitle className="text-blue-800 text-xs font-bold">ข้อมูลการคำนวณ</AlertTitle>
                             <AlertDescription className="text-blue-700 text-[10px]">
-                                ตารางนี้แสดงว่ายอดเงินที่ได้รับจริง ถูกแบ่งไปหักลบหนี้ในแต่ละบิลอย่างไรบ้างค่ะ
+                                เลือกว่าแต่ละบิลจะคิดหัก ณ ที่จ่ายหรือไม่ — บิลขายสินค้าที่ไม่ต้องหัก ให้ปิดติ๊ก &quot;หัก WHT&quot; ยอดเงินเข้าบัญชีจะตรงกับที่ลูกค้าโอนจริง
                             </AlertDescription>
                         </Alert>
 
@@ -456,29 +474,55 @@ function ConfirmReceiptPageContent() {
                                 <TableHeader>
                                     <TableRow className="bg-muted/50">
                                         <TableHead>เลขที่บิล</TableHead>
+                                        <TableHead className="text-center w-[100px]">หัก WHT</TableHead>
                                         <TableHead className="text-right">ยอดค้าง (Gross)</TableHead>
-                                        <TableHead className="text-right">หัก ({watchedWhtPercent}%)</TableHead>
+                                        <TableHead className="text-right">หัก ณ ที่จ่าย</TableHead>
                                         <TableHead className="text-right">ยอดเงินโอน (Net)</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {calculatedAllocations.map((a) => (
+                                    {calculatedAllocations.map((a) => {
+                                        const rowApplyWht =
+                                          invoiceWhtApply[a.invoiceId] !== undefined
+                                            ? invoiceWhtApply[a.invoiceId]
+                                            : a.docType === "TAX_INVOICE";
+                                        return (
                                         <TableRow key={a.invoiceId} className="hover:bg-transparent">
                                             <TableCell>
-                                                <div className="flex flex-col">
+                                                <div className="flex flex-col gap-0.5">
                                                     <span className="font-bold text-sm">{a.invoiceDocNo}</span>
+                                                    <span className="text-[10px] text-muted-foreground">{a.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : a.docType === "DELIVERY_NOTE" ? "ใบส่งของ" : a.docType}</span>
                                                     {a.withTax && <Badge variant="outline" className="w-fit text-[8px] h-3 px-1 border-blue-200 text-blue-600 uppercase">Vat 7%</Badge>}
                                                 </div>
                                             </TableCell>
+                                            <TableCell className="text-center">
+                                                <div className="flex flex-col items-center gap-1">
+                                                  <Checkbox
+                                                    id={`wht-${a.invoiceId}`}
+                                                    checked={rowApplyWht}
+                                                    onCheckedChange={(checked) => {
+                                                      setInvoiceWhtApply((prev) => ({
+                                                        ...prev,
+                                                        [a.invoiceId]: checked === true,
+                                                      }));
+                                                    }}
+                                                  />
+                                                  <Label htmlFor={`wht-${a.invoiceId}`} className="text-[9px] text-muted-foreground font-normal cursor-pointer max-w-[72px] text-center leading-tight">
+                                                    {rowApplyWht ? `${watchedWhtPercent}%` : "ไม่หัก"}
+                                                  </Label>
+                                                </div>
+                                            </TableCell>
                                             <TableCell className="text-right font-mono text-sm">{formatCurrency(a.gross)}</TableCell>
-                                            <TableCell className="text-right text-xs text-destructive font-medium">-{formatCurrency(a.whtAmount)}</TableCell>
+                                            <TableCell className="text-right text-xs text-destructive font-medium">
+                                              {a.whtAmount > 0 ? `-${formatCurrency(a.whtAmount)}` : "—"}
+                                            </TableCell>
                                             <TableCell className="text-right font-bold text-primary">{formatCurrency(a.netCash)}</TableCell>
                                         </TableRow>
-                                    ))}
+                                    );})}
                                 </TableBody>
                                 <TableFooter>
                                     <TableRow className="bg-muted/20">
-                                        <TableCell colSpan={3} className="text-xs text-muted-foreground italic">
+                                        <TableCell colSpan={4} className="text-xs text-muted-foreground italic">
                                             ส่วนต่างยอดโอน (Unallocated Cash):
                                         </TableCell>
                                         <TableCell className={cn("text-right font-black text-lg", Math.abs(totals.unallocated) > 0.06 ? 'text-destructive' : 'text-green-600')}>
