@@ -52,6 +52,13 @@ service firebase.storage {
       allow write: if signedIn() && isImageUnder5MB();
     }
 
+    // เอกสารแนบใบลา: พนักงานสร้างได้เฉพาะโฟลเดอร์ของตนเอง ไม่อนุญาตแก้ไข/ลบไฟล์
+    match /hrLeaveAttachments/{userId}/{leaveId}/{fileName} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == userId && isImageUnder5MB();
+      allow update, delete: if false;
+    }
+
     // Default deny for other paths
     match /{allPaths=**} {
       allow read: if signedIn();

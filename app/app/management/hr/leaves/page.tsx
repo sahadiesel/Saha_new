@@ -305,6 +305,11 @@ export default function ManagementHRLeavesPage() {
   const { data: allLeaves, isLoading: isLoadingLeaves } = useCollection<LeaveRequest>(leavesQuery);
   const { data: hrSettings, isLoading: isLoadingSettings } = useDoc<HRSettings>(settingsDocRef);
 
+  const pendingSubmittedCount = useMemo(
+    () => (allLeaves ?? []).filter((l) => l.status === "SUBMITTED").length,
+    [allLeaves]
+  );
+
   useEffect(() => {
     if (!db || !selectedYear || !selectedMonth) return;
     
@@ -397,7 +402,6 @@ export default function ManagementHRLeavesPage() {
 
         let sickDays = 0;
         let businessDays = 0;
-        let vacationDays = 0;
         let totalLeaveCount = 0;
         let absentDays = 0;
 
@@ -431,9 +435,8 @@ export default function ManagementHRLeavesPage() {
                 
                 if (onLeaveOnThisDay.leaveType === 'SICK') sickDays += leaveUnits;
                 else if (onLeaveOnThisDay.leaveType === 'BUSINESS') businessDays += leaveUnits;
-                else if (onLeaveOnThisDay.leaveType === 'VACATION') vacationDays += leaveUnits;
                 totalLeaveCount += leaveUnits;
-                
+
                 if (leaveUnits === 1) return;
             }
 
@@ -448,7 +451,6 @@ export default function ManagementHRLeavesPage() {
             user,
             SICK: sickDays,
             BUSINESS: businessDays,
-            VACATION: vacationDays,
             TOTAL: totalLeaveCount,
             ABSENT: absentDays
         };
@@ -565,7 +567,16 @@ export default function ManagementHRLeavesPage() {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
             <TabsTrigger value="summary">สรุปวันลาและวันขาด</TabsTrigger>
-            <TabsTrigger value="requests">คำขอทั้งหมด</TabsTrigger>
+            <TabsTrigger value="requests" className="gap-2">
+              <span>คำขอทั้งหมด</span>
+              {pendingSubmittedCount > 0 && (
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-2 border-black bg-yellow-400 animate-leave-pending-blink"
+                  title={`มี ${pendingSubmittedCount} คำขอรออนุมัติ`}
+                  aria-label={`มี ${pendingSubmittedCount} คำขอรออนุมัติ`}
+                />
+              )}
+            </TabsTrigger>
         </TabsList>
         <TabsContent value="summary" className="space-y-4">
             <Card>
@@ -589,14 +600,13 @@ export default function ManagementHRLeavesPage() {
             </CardHeader>
             <CardContent>
                 <Table>
-                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead className="text-center">ป่วย (วัน)</TableHead><TableHead className="text-center">กิจ (วัน)</TableHead><TableHead className="text-center">พักร้อน (วัน)</TableHead><TableHead className="text-center">รวมลา (วัน)</TableHead><TableHead className="text-center text-destructive font-bold">วันขาด (Absent)</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead className="text-center">ป่วย (วัน)</TableHead><TableHead className="text-center">กิจ (วัน)</TableHead><TableHead className="text-center">รวมลา (วัน)</TableHead><TableHead className="text-center text-destructive font-bold">วันขาด (Absent)</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
                 <TableBody>
                     {leaveSummary.length > 0 ? leaveSummary.map(s => (
                     <TableRow key={s.userId} className="hover:bg-muted/30 transition-colors">
                         <TableCell className="font-medium">{s.userName}<p className="text-[10px] text-muted-foreground">{deptLabel(s.user.department)}</p></TableCell>
                         <TableCell className="text-center">{s.SICK}</TableCell>
                         <TableCell className="text-center">{s.BUSINESS}</TableCell>
-                        <TableCell className="text-center">{s.VACATION}</TableCell>
                         <TableCell className="text-center font-semibold text-primary">{s.TOTAL}</TableCell>
                         <TableCell className="text-center font-bold text-destructive bg-destructive/5">{s.ABSENT}</TableCell>
                         <TableCell className="text-right">
@@ -609,7 +619,7 @@ export default function ManagementHRLeavesPage() {
                             </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground">ไม่พบข้อมูลพนักงาน</TableCell></TableRow>}
+                    )) : <TableRow><TableCell colSpan={6} className="text-center h-24 text-muted-foreground">ไม่พบข้อมูลพนักงาน</TableCell></TableRow>}
                 </TableBody>
                 </Table>
             </CardContent>
@@ -625,9 +635,22 @@ export default function ManagementHRLeavesPage() {
                 <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]"><Label className="text-xs">พนักงาน</Label><Select value={filters.userId} onValueChange={(v) => setFilters(f => ({...f, userId: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>{users?.map(u=><SelectItem key={u.id} value={u.id}>{u.displayName}</SelectItem>)}</SelectContent></Select></div>
                 </div>
                 <Table>
-                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead>ประเภท</TableHead><TableHead>วันที่ลา</TableHead><TableHead className="text-center">จำนวนวัน</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead>ประเภท</TableHead><TableHead>วันที่ลา</TableHead><TableHead className="text-center">จำนวนวัน</TableHead><TableHead>สถานะ</TableHead><TableHead className="min-w-[100px]">เอกสาร</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
                 <TableBody>{filteredLeaves.length > 0 ? filteredLeaves.map(leave => (
                     <TableRow key={leave.id}><TableCell className="font-medium">{leave.userName}</TableCell><TableCell>{leaveTypeLabel(leave.leaveType)}{leave.isHalfDay && <Badge variant="outline" className="ml-2 text-[9px] h-4">0.5 วัน</Badge>}</TableCell><TableCell className="text-sm">{dfFormat(parseISO(leave.startDate), 'dd/MM/yy')} {!leave.isHalfDay && leave.endDate !== leave.startDate && ` - ${dfFormat(parseISO(leave.endDate), 'dd/MM/yy')}`}</TableCell><TableCell className="text-center">{leave.days}</TableCell><TableCell><Badge variant={leave.status === 'APPROVED' ? 'default' : leave.status === 'REJECTED' ? 'destructive' : 'secondary'}>{leaveStatusLabel(leave.status)}</Badge></TableCell>
+                        <TableCell className="text-xs">
+                          {leave.attachmentUrls && leave.attachmentUrls.length > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              {leave.attachmentUrls.map((url, i) => (
+                                <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                                  <ExternalLink className="h-3 w-3 shrink-0" />รูป {i + 1}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
@@ -640,7 +663,7 @@ export default function ManagementHRLeavesPage() {
                           </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
+                    )) : <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
                 </Table>
             </CardContent>
             </Card>
@@ -655,7 +678,20 @@ export default function ManagementHRLeavesPage() {
         )}
 
         <AlertDialog open={!!approvingLeave} onOpenChange={(open) => !open && setApprovingLeave(null)}>
-            <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยืนยันการอนุมัติ</AlertDialogTitle><AlertDialogDescription>ต้องการอนุมัติใบลาของ <span className="font-bold">{approvingLeave?.userName}</span> หรือไม่?</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยืนยันการอนุมัติ</AlertDialogTitle><AlertDialogDescription className="space-y-2">ต้องการอนุมัติใบลาของ <span className="font-bold">{approvingLeave?.userName}</span> หรือไม่?
+            {approvingLeave?.attachmentUrls && approvingLeave.attachmentUrls.length > 0 && (
+              <span className="block pt-2 text-foreground">
+                <span className="font-medium">เอกสารแนบ:</span>
+                <span className="flex flex-col gap-1 mt-1">
+                  {approvingLeave.attachmentUrls.map((url, i) => (
+                    <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1 w-fit">
+                      <ExternalLink className="h-3.5 w-3.5" /> เปิดรูป {i + 1}
+                    </a>
+                  ))}
+                </span>
+              </span>
+            )}
+            </AlertDialogDescription></AlertDialogHeader>
             <AlertDialogFooter><AlertDialogCancel>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={handleApprove}>ยืนยัน</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
         </AlertDialog>
         

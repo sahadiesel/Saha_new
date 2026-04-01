@@ -27,61 +27,9 @@ import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
 import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode, Building2, User, Search } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import { compressImageIfNeeded } from "@/lib/image-compress";
 import { deptLabel } from "@/lib/ui-labels";
 import { createJob } from "@/firebase/jobs";
-
-const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
-
-const compressImageIfNeeded = async (file: File): Promise<File> => {
-  if (file.size <= FILE_SIZE_THRESHOLD) return file;
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new window.Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(file);
-          return;
-        }
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        let quality = 0.9;
-        const attemptCompression = (q: number) => {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
-                  const compressedFile = new File([blob], file.name, {
-                    type: "image/jpeg",
-                    lastModified: Date.now(),
-                  });
-                  resolve(compressedFile);
-                } else {
-                  attemptCompression(q - 0.1);
-                }
-              } else {
-                resolve(file); 
-              }
-            },
-            "image/jpeg",
-            q
-          );
-        };
-        attemptCompression(quality);
-      };
-      img.onerror = () => resolve(file);
-    };
-    reader.onerror = () => resolve(file);
-  });
-};
 
 const intakeSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),

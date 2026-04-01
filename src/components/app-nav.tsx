@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import React, { useMemo, useState, useEffect } from "react"
 import {
-  collection, query, where, getDocs
+  collection, query, where, getDocs, onSnapshot, limit,
 } from "firebase/firestore"
 
 import {
@@ -37,23 +37,82 @@ const departmentNames: Record<Department, string> = {
     WEB_MANAGEMENT: "จัดการเว็บไซต์",
 };
 
-const SubNavLink = ({ href, label, icon: Icon, onClick }: { href: string; label: string; icon?: React.ElementType; onClick?: () => void }) => {
+const SubNavLink = ({
+  href,
+  label,
+  icon: Icon,
+  onClick,
+  trailing,
+}: {
+  href: string;
+  label: string;
+  icon?: React.ElementType;
+  onClick?: () => void;
+  trailing?: React.ReactNode;
+}) => {
     const pathname = usePathname();
     const isActive = pathname === href;
     return (
         <Button
             asChild
             variant={isActive ? "secondary" : "ghost"}
-            className="w-full justify-start text-muted-foreground text-sm h-9"
+            className="w-full justify-start text-muted-foreground text-sm h-9 px-2"
             onClick={onClick}
         >
-            <Link href={href}>
-                {Icon && <Icon className="mr-2 h-3.5 w-3.5" />}
-                {label}
+            <Link href={href} className="flex w-full min-w-0 items-center gap-2">
+                {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+                <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+                {trailing != null && (
+                  <span className="ml-auto flex shrink-0 items-center justify-center">{trailing}</span>
+                )}
             </Link>
         </Button>
     );
 };
+
+/** ไฟเหลืองกระพริบเมื่อมีใบลา status SUBMITTED (เฉพาะผู้ที่ดูรายการ HR ได้) */
+function HrPendingLeaveNavDot() {
+  const { db } = useFirebase();
+  const { profile } = useAuth();
+  const [hasPending, setHasPending] = useState(false);
+
+  const canListen = useMemo(() => {
+    if (!profile || profile.role === "VIEWER") return false;
+    return (
+      profile.role === "ADMIN" ||
+      profile.role === "MANAGER" ||
+      profile.department === "MANAGEMENT" ||
+      profile.department === "ACCOUNTING_HR"
+    );
+  }, [profile]);
+
+  useEffect(() => {
+    if (!db || !canListen) {
+      setHasPending(false);
+      return;
+    }
+    const q = query(
+      collection(db, "hrLeaves"),
+      where("status", "==", "SUBMITTED"),
+      limit(1)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => setHasPending(!snap.empty),
+      () => setHasPending(false)
+    );
+    return () => unsub();
+  }, [db, canListen]);
+
+  if (!hasPending) return null;
+  return (
+    <span
+      className="inline-block h-2.5 w-2.5 rounded-full border-2 border-black bg-yellow-400 animate-leave-pending-blink"
+      title="มีคำขอลารออนุมัติ"
+      aria-label="มีคำขอลารออนุมัติ"
+    />
+  );
+}
 
 const OfficeJobManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
@@ -140,7 +199,12 @@ const HRSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
             </CollapsibleTrigger>
             <CollapsibleContent className="py-1 pl-4 space-y-1">
                 <SubNavLink href="/app/management/hr/employees" label="จัดการพนักงาน" onClick={onLinkClick} />
-                <SubNavLink href="/app/management/hr/leaves" label="จัดการวันลาพนักงาน" onClick={onLinkClick} />
+                <SubNavLink
+                  href="/app/management/hr/leaves"
+                  label="จัดการวันลาพนักงาน"
+                  onClick={onLinkClick}
+                  trailing={<HrPendingLeaveNavDot />}
+                />
                 <SubNavLink href="/app/management/hr/attendance-summary" label="จัดการการลงเวลา" onClick={onLinkClick} />
                 <SubNavLink href="/app/management/hr/payroll" label="สลิปเงินเดือน" onClick={onLinkClick} />
             </CollapsibleContent>

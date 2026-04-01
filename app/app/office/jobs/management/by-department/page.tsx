@@ -60,6 +60,8 @@ function ByDepartmentContent() {
                             excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกซ่อมหน้าร้าน"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
+                            sortByOldestInSystem
+                            showSystemAgeBadge
                         />
                     )}
                 </TabsContent>
@@ -71,6 +73,8 @@ function ByDepartmentContent() {
                             excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกคอมมอนเรล"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
+                            sortByOldestInSystem
+                            showSystemAgeBadge
                         />
                     )}
                 </TabsContent>
@@ -82,6 +86,8 @@ function ByDepartmentContent() {
                             excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานในแผนกแมคคานิค"
                             emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
+                            sortByOldestInSystem
+                            showSystemAgeBadge
                         />
                     )}
                 </TabsContent>
@@ -93,6 +99,8 @@ function ByDepartmentContent() {
                             excludeStatus={EXCLUDE_DEPT_VIEW}
                             emptyTitle="ไม่มีงานที่ส่งออกร้านนอก"
                             emptyDescription="ยังไม่มีการส่งต่องานสำหรับแผนกนี้"
+                            sortByOldestInSystem
+                            showSystemAgeBadge
                         />
                     )}
                 </TabsContent>

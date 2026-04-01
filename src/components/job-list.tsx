@@ -108,6 +108,37 @@ const getStatusStyles = (status: Job['status']) => {
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const getJobAgeDays = (job: Job) => {
+  const anyJob = job as Job & {
+    createdAt?: { toDate?: () => Date } | Date | string;
+    lastActivityAt?: { toDate?: () => Date } | Date | string;
+  };
+  const source = anyJob.createdAt ?? anyJob.lastActivityAt;
+  if (!source) return 0;
+
+  let start: Date | null = null;
+  if (source instanceof Date) start = source;
+  else if (typeof source === "string") {
+    const d = new Date(source);
+    start = Number.isNaN(d.getTime()) ? null : d;
+  } else if (typeof source === "object" && source && "toDate" in source && typeof source.toDate === "function") {
+    start = source.toDate();
+  }
+
+  if (!start || Number.isNaN(start.getTime())) return 0;
+  const diff = Math.floor((Date.now() - start.getTime()) / MS_PER_DAY) + 1;
+  return Math.max(1, diff);
+};
+
+const getStaleAgeBadgeClass = (days: number) => {
+  if (days >= 15) return "bg-red-600 text-white";
+  if (days >= 8) return "bg-orange-500 text-white";
+  if (days >= 1) return "bg-green-600 text-white";
+  return "bg-slate-500 text-white";
+};
+
 interface JobListProps {
   department?: JobDepartment;
   status?: JobStatus | JobStatus[];
@@ -117,6 +148,8 @@ interface JobListProps {
   emptyDescription?: string;
   searchTerm?: string;
   actionPreset?: string;
+  sortByOldestInSystem?: boolean;
+  showSystemAgeBadge?: boolean;
 }
 
 export function JobList({ 
@@ -127,6 +160,8 @@ export function JobList({
   emptyTitle = "ไม่พบรายการงาน", 
   emptyDescription = "ยังไม่มีรายการงานในระบบ",
   searchTerm = "",
+  sortByOldestInSystem = false,
+  showSystemAgeBadge = false,
 }: JobListProps) {
   type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
@@ -202,7 +237,7 @@ export function JobList({
     const q = query(
       collection(db, "jobs"), 
       and(...filters),
-      orderBy('lastActivityAt', 'desc'),
+      orderBy(sortByOldestInSystem ? 'createdAt' : 'lastActivityAt', sortByOldestInSystem ? 'asc' : 'desc'),
       limit(200)
     );
 
@@ -225,6 +260,9 @@ export function JobList({
           (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
       }
+      if (sortByOldestInSystem) {
+        jobsData = [...jobsData].sort((a, b) => getJobAgeDays(b) - getJobAgeDays(a));
+      }
       setJobs(jobsData);
       setLoading(false);
     }, (err) => {
@@ -236,7 +274,7 @@ export function JobList({
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status]);
+  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status, sortByOldestInSystem]);
 
   useEffect(() => {
     if (!db || !canSeeAccounts) return;
@@ -482,12 +520,18 @@ export function JobList({
           const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
           const hasQuotation = !!job.salesDocId && job.salesDocType === 'QUOTATION';
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
+          const ageDays = getJobAgeDays(job);
           
           return (
             <Card key={job.id} className="flex flex-col overflow-hidden hover:shadow-md transition-shadow">
               <div className="relative aspect-video bg-muted">
                 {job.photos?.[0] ? (<Image src={job.photos[0]} alt={job.description} fill className="object-cover" />) : (<div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>)}
                 <Badge className={cn("absolute top-2 right-2 shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
+                {showSystemAgeBadge && ageDays > 0 && (
+                  <Badge className={cn("absolute top-2 left-2 shadow-sm border border-black/80 font-bold", getStaleAgeBadgeClass(ageDays))}>
+                    ค้าง {ageDays} วัน
+                  </Badge>
+                )}
               </div>
               <CardHeader className="p-4 space-y-1">
                 <CardTitle className="text-base line-clamp-1">{job.customerSnapshot.name}</CardTitle>

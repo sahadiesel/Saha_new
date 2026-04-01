@@ -282,6 +282,8 @@ export interface LeaveRequest {
   rejectedAt?: Timestamp;
   rejectReason?: string;
   overLimit?: boolean;
+  /** URL รูปเอกสารแนบจาก Storage (พนักงานอัปโหลดได้สูงสุด 2 รูปต่อใบลา) */
+  attachmentUrls?: string[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

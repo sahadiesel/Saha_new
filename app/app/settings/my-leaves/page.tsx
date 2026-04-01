@@ -1,18 +1,21 @@
 "use client";
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import Image from "next/image";
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from "zod";
-import { addDoc, collection, query, where, orderBy, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { addDoc, collection, query, where, orderBy, serverTimestamp, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { format as dfFormat, differenceInCalendarDays, getYear, isBefore, parseISO } from 'date-fns';
 
 import { useFirebase, useCollection, useDoc } from '@/firebase';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
-import { LEAVE_TYPES, type LeaveStatus } from '@/lib/constants';
+import type { LeaveStatus } from '@/lib/constants';
 import type { LeaveRequest, HRSettings } from '@/lib/types';
 import { leaveTypeLabel, leaveStatusLabel } from '@/lib/ui-labels';
+import { compressImageIfNeeded } from "@/lib/image-compress";
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,14 +36,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
-import { Loader2, Send, Trash2, AlertCircle, ExternalLink, CalendarDays } from 'lucide-react';
+import { Loader2, Send, Trash2, AlertCircle, ExternalLink, CalendarDays, Camera, ImageIcon, X, Paperclip } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from '@/lib/utils';
 
+/** พนักงานยื่นได้เฉพาะลาป่วย / ลากิจ (ไม่มีลาพักร้อน) */
+const EMPLOYEE_LEAVE_TYPES = ["SICK", "BUSINESS"] as const;
+
+const MAX_LEAVE_ATTACHMENTS = 2;
+
 const leaveRequestSchema = z.object({
-  leaveType: z.enum(LEAVE_TYPES, { required_error: 'กรุณาเลือกประเภทการลา' }),
+  leaveType: z.enum(EMPLOYEE_LEAVE_TYPES, { required_error: 'กรุณาเลือกประเภทการลา' }),
   startDate: z.string().min(1, 'กรุณาเลือกวันเริ่มลา'),
   endDate: z.string().min(1, 'กรุณาเลือกวันสิ้นสุด'),
   reason: z.string().min(1, 'กรุณาระบุเหตุผลการลา'),
@@ -59,21 +67,29 @@ const leaveRequestSchema = z.object({
 type LeaveFormData = z.infer<typeof leaveRequestSchema>;
 
 export default function MyLeavesPage() {
-  const { db } = useFirebase();
+  const { db, storage } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
   
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingLeaveData, setPendingLeaveData] = useState<LeaveFormData | null>(null);
+  const [pendingLeaveFiles, setPendingLeaveFiles] = useState<File[]>([]);
   const [isOverLimitConfirmOpen, setIsOverLimitConfirmOpen] = useState(false);
   const [indexCreationUrl, setIndexCreationUrl] = useState<string | null>(null);
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
+  const [isCompressingAttachments, setIsCompressingAttachments] = useState(false);
 
-  const employeeLeaveTypes = LEAVE_TYPES.filter(t => t === 'SICK' || t === 'BUSINESS' || t === 'VACATION');
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  const employeeLeaveTypes = [...EMPLOYEE_LEAVE_TYPES];
 
   const form = useForm<LeaveFormData>({
     resolver: zodResolver(leaveRequestSchema),
     defaultValues: {
+      leaveType: "SICK",
       startDate: "",
       endDate: "",
       reason: '',
@@ -82,9 +98,18 @@ export default function MyLeavesPage() {
     },
   });
 
+  const clearLocalAttachments = () => {
+    setAttachmentPreviews((prev) => {
+      prev.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
+    setAttachmentFiles([]);
+  };
+
   useEffect(() => {
     const todayStr = dfFormat(new Date(), 'yyyy-MM-dd');
     form.reset({
+      leaveType: "SICK",
       startDate: todayStr,
       endDate: todayStr,
       reason: '',
@@ -129,8 +154,49 @@ export default function MyLeavesPage() {
     }
   }, [error]);
 
-  const submitToFirestore = async (data: LeaveFormData) => {
+  const handleAttachmentChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    const picked = Array.from(e.target.files);
+    if (attachmentFiles.length + picked.length > MAX_LEAVE_ATTACHMENTS) {
+      toast({
+        variant: "destructive",
+        title: `แนบได้สูงสุด ${MAX_LEAVE_ATTACHMENTS} รูป`,
+        description: "กรุณาเลือกใหม่หรือลบรูปเดิมก่อน",
+      });
+      e.target.value = "";
+      return;
+    }
+    setIsCompressingAttachments(true);
+    try {
+      const processed: File[] = [];
+      for (const file of picked) {
+        processed.push(await compressImageIfNeeded(file));
+      }
+      setAttachmentFiles((prev) => [...prev, ...processed]);
+      setAttachmentPreviews((prev) => [...prev, ...processed.map((f) => URL.createObjectURL(f))]);
+    } catch {
+      toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ" });
+    } finally {
+      setIsCompressingAttachments(false);
+      e.target.value = "";
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachmentPreviews((prev) => {
+      const url = prev[index];
+      if (url) URL.revokeObjectURL(url);
+      return prev.filter((_, i) => i !== index);
+    });
+    setAttachmentFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const submitToFirestore = async (data: LeaveFormData, files: File[]) => {
     if (!db || !profile || !data.startDate) return;
+    if (files.length > 0 && !storage) {
+      toast({ variant: "destructive", title: "ไม่สามารถอัปโหลดเอกสารได้", description: "ระบบจัดเก็บไฟล์ยังไม่พร้อมใช้งาน" });
+      return;
+    }
     setIsSubmitting(true);
 
     const { leaveType, startDate, endDate, reason, isHalfDay, halfDaySession } = data;
@@ -138,7 +204,7 @@ export default function MyLeavesPage() {
     if (isHalfDay) days = 0.5;
 
     try {
-      await addDoc(collection(db, 'hrLeaves'), {
+      const docRef = await addDoc(collection(db, "hrLeaves"), {
         userId: profile.uid,
         userName: profile.displayName,
         leaveType,
@@ -146,34 +212,59 @@ export default function MyLeavesPage() {
         endDate,
         days,
         reason,
-        status: 'SUBMITTED',
+        status: "SUBMITTED",
         isHalfDay,
         halfDaySession: isHalfDay ? halfDaySession : null,
         year: getYear(parseISO(startDate)),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      
-      toast({ title: 'ส่งใบลาสำเร็จ', description: 'คำขอของคุณถูกส่งไปรอการพิจารณาแล้ว' });
-      form.reset({ 
-          reason: '', 
-          startDate: dfFormat(new Date(), 'yyyy-MM-dd'), 
-          endDate: dfFormat(new Date(), 'yyyy-MM-dd'), 
-          isHalfDay: false, 
-          halfDaySession: 'MORNING' 
+
+      if (files.length > 0 && storage) {
+        try {
+          const urls: string[] = [];
+          for (let i = 0; i < files.length; i++) {
+            const processed = await compressImageIfNeeded(files[i]);
+            const photoRef = ref(
+              storage,
+              `hrLeaveAttachments/${profile.uid}/${docRef.id}/${Date.now()}_${i}.jpg`
+            );
+            await uploadBytes(photoRef, processed);
+            urls.push(await getDownloadURL(photoRef));
+          }
+          await updateDoc(docRef, {
+            attachmentUrls: urls,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (uploadErr: any) {
+          await deleteDoc(docRef);
+          throw uploadErr;
+        }
+      }
+
+      toast({ title: "ส่งใบลาสำเร็จ", description: "คำขอของคุณถูกส่งไปรอการพิจารณาแล้ว" });
+      clearLocalAttachments();
+      form.reset({
+        leaveType: "SICK",
+        reason: "",
+        startDate: dfFormat(new Date(), "yyyy-MM-dd"),
+        endDate: dfFormat(new Date(), "yyyy-MM-dd"),
+        isHalfDay: false,
+        halfDaySession: "MORNING",
       });
     } catch (error: any) {
-      toast({ variant: 'destructive', title: 'ส่งใบลาไม่สำเร็จ', description: error.message });
+      toast({ variant: "destructive", title: "ส่งใบลาไม่สำเร็จ", description: error.message });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const onSubmit = async (data: LeaveFormData) => {
+    const files = [...attachmentFiles];
     if (!hrSettings || !myLeaves || !data.startDate) {
-      await submitToFirestore(data);
+      await submitToFirestore(data, files);
       return;
-    };
+    }
 
     const approvedLeavesThisYear = myLeaves.filter(l => l.year === getYear(parseISO(data.startDate)) && l.leaveType === data.leaveType && l.status === 'APPROVED');
     const daysTaken = approvedLeavesThisYear.reduce((sum, l) => sum + l.days, 0);
@@ -185,16 +276,18 @@ export default function MyLeavesPage() {
 
     if (entitlement > 0 && (daysTaken + daysInRequest) > entitlement) {
       setPendingLeaveData(data);
+      setPendingLeaveFiles(files);
       setIsOverLimitConfirmOpen(true);
     } else {
-      await submitToFirestore(data);
+      await submitToFirestore(data, files);
     }
   };
 
   const handleConfirmOverLimit = async () => {
     if (pendingLeaveData) {
-      await submitToFirestore(pendingLeaveData);
+      await submitToFirestore(pendingLeaveData, pendingLeaveFiles);
       setPendingLeaveData(null);
+      setPendingLeaveFiles([]);
       setIsOverLimitConfirmOpen(false);
     }
   };
@@ -232,7 +325,7 @@ export default function MyLeavesPage() {
     if (isLoading) {
       return (
         <TableRow>
-          <TableCell colSpan={5} className="h-24 text-center">
+          <TableCell colSpan={6} className="h-24 text-center">
             <Loader2 className="mx-auto animate-spin text-muted-foreground" />
           </TableCell>
         </TableRow>
@@ -242,7 +335,7 @@ export default function MyLeavesPage() {
     if (indexCreationUrl) {
       return (
         <TableRow>
-          <TableCell colSpan={5} className="text-center p-8">
+          <TableCell colSpan={6} className="text-center p-8">
             <div className="flex flex-col items-center gap-4 bg-muted/50 p-6 rounded-lg border border-dashed">
               <AlertCircle className="h-10 w-10 text-destructive" />
               <h3 className="font-semibold text-lg">ต้องสร้างดัชนี (Index) ก่อน</h3>
@@ -272,6 +365,26 @@ export default function MyLeavesPage() {
           <TableCell className="text-center">{leave.days}</TableCell>
           <TableCell>
             <Badge variant={getStatusVariant(leave.status)}>{leaveStatusLabel(leave.status)}</Badge>
+          </TableCell>
+          <TableCell className="text-sm">
+            {leave.attachmentUrls && leave.attachmentUrls.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                {leave.attachmentUrls.map((url, i) => (
+                  <a
+                    key={url}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline-offset-2 hover:underline inline-flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                    รูป {i + 1}
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
           </TableCell>
           <TableCell className="text-right">
             {leave.status === 'SUBMITTED' && (
@@ -304,7 +417,7 @@ export default function MyLeavesPage() {
 
     return (
       <TableRow>
-        <TableCell colSpan={5} className="h-24 text-center text-muted-foreground italic">
+        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground italic">
           ยังไม่มีประวัติการลา
         </TableCell>
       </TableRow>
@@ -459,7 +572,94 @@ export default function MyLeavesPage() {
                       </FormItem>
                     )}
                   />
-                  <Button type="submit" className="w-full" disabled={isSubmitting || isLoading}>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-primary/25 bg-muted/20 p-4">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <Paperclip className="h-4 w-4 text-primary" />
+                      แนบเอกสารการลา
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      ถ่ายรูปหรือเลือกจากอัลบั้ม (สูงสุด {MAX_LEAVE_ATTACHMENTS} รูป) ระบบจะลดขนาดอัตโนมัติหากใหญ่กว่า ~500 KB
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-24 flex-col gap-2 border-2 border-dashed"
+                        disabled={
+                          attachmentFiles.length >= MAX_LEAVE_ATTACHMENTS ||
+                          isSubmitting ||
+                          isCompressingAttachments
+                        }
+                        onClick={() => cameraInputRef.current?.click()}
+                      >
+                        {isCompressingAttachments ? (
+                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        ) : (
+                          <Camera className="h-8 w-8 text-primary" />
+                        )}
+                        <span className="text-xs font-bold uppercase tracking-wide">
+                          {isCompressingAttachments ? "กำลังประมวลผล..." : "ถ่ายรูป"}
+                        </span>
+                        <input
+                          type="file"
+                          ref={cameraInputRef}
+                          className="hidden"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handleAttachmentChange}
+                        />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-24 flex-col gap-2 border-2 border-dashed"
+                        disabled={
+                          attachmentFiles.length >= MAX_LEAVE_ATTACHMENTS ||
+                          isSubmitting ||
+                          isCompressingAttachments
+                        }
+                        onClick={() => galleryInputRef.current?.click()}
+                      >
+                        <ImageIcon className="h-8 w-8 text-primary" />
+                        <span className="text-xs font-bold uppercase tracking-wide">อัลบั้ม</span>
+                        <input
+                          type="file"
+                          ref={galleryInputRef}
+                          className="hidden"
+                          multiple
+                          accept="image/*"
+                          onChange={handleAttachmentChange}
+                        />
+                      </Button>
+                    </div>
+                    {attachmentPreviews.length > 0 && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {attachmentPreviews.map((src, index) => (
+                          <div key={src} className="relative aspect-square rounded-md border bg-background overflow-hidden">
+                            <Image src={src} alt="" fill className="object-cover" unoptimized />
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="icon"
+                              className="absolute right-1 top-1 h-7 w-7 rounded-full shadow-md"
+                              disabled={isSubmitting}
+                              onClick={() => removeAttachment(index)}
+                              title="ลบรูปนี้ (ก่อนส่งเท่านั้น)"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isSubmitting || isLoading || isCompressingAttachments}
+                  >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4"/>}
                     ส่งคำขอลา
                   </Button>
@@ -482,6 +682,7 @@ export default function MyLeavesPage() {
                                 <TableHead>ประเภท</TableHead>
                                 <TableHead className="text-center">วัน</TableHead>
                                 <TableHead>สถานะ</TableHead>
+                                <TableHead>เอกสารแนบ</TableHead>
                                 <TableHead className="text-right">จัดการ</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -493,7 +694,16 @@ export default function MyLeavesPage() {
             </Card>
         </div>
       </div>
-       <AlertDialog open={isOverLimitConfirmOpen} onOpenChange={setIsOverLimitConfirmOpen}>
+       <AlertDialog
+        open={isOverLimitConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingLeaveData(null);
+            setPendingLeaveFiles([]);
+          }
+          setIsOverLimitConfirmOpen(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>จำนวนวันลาของคุณเกินสิทธิ์ที่กำหนด</AlertDialogTitle>
@@ -502,7 +712,14 @@ export default function MyLeavesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingLeaveData(null)}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogCancel
+              onClick={() => {
+                setPendingLeaveData(null);
+                setPendingLeaveFiles([]);
+              }}
+            >
+              ยกเลิก
+            </AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmOverLimit} disabled={isSubmitting}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "ยืนยันส่งใบลา"}
             </AlertDialogAction>
