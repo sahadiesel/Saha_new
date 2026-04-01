@@ -68,11 +68,14 @@ const customerSchema = z
     detail: z.string().optional().default(""),
     useTax: z.boolean().default(false),
     taxProfiles: z.array(taxProfileRowSchema),
-    acquisitionSource: z.enum(ACQUISITION_SOURCES, {
-      errorMap: () => ({
-        message: "กรุณาเลือกช่องทางที่ลูกค้ารู้จักร้าน เพื่อใช้ทำสถิติในแดชบอร์ด",
-      }),
-    }),
+    /** ลูกค้าเก่าอาจไม่มีฟิลด์นี้ — default ตอน parse เพื่อไม่บล็อกการแก้ภาษี/ข้อมูลอื่น */
+    acquisitionSource: z
+      .enum(ACQUISITION_SOURCES, {
+        errorMap: () => ({
+          message: "กรุณาเลือกช่องทางที่ลูกค้ารู้จักร้าน เพื่อใช้ทำสถิติในแดชบอร์ด",
+        }),
+      })
+      .default("OTHER"),
   })
   .superRefine((data, ctx) => {
     const trimmed = data.phones.map((p) => p.trim()).filter(Boolean);
@@ -150,7 +153,21 @@ function CustomersContent() {
   const [currentPage, setCurrentPage] = useState(0);
   const PAGE_SIZE = 20;
 
-  const canEdit = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT' || profile?.department === 'OFFICE';
+  /** สอดคล้องกับ canEditJobs() ใน firestore.rules — รวม OFFICER (พนักงานออฟฟิศที่อาจไม่มี department ในโปรไฟล์) */
+  const canEdit =
+    !!profile &&
+    profile.role !== "VIEWER" &&
+    (profile.role === "ADMIN" ||
+      profile.role === "MANAGER" ||
+      profile.role === "OFFICER" ||
+      profile.department === "MANAGEMENT" ||
+      profile.department === "OFFICE" ||
+      profile.department === "PURCHASING" ||
+      profile.department === "ACCOUNTING_HR" ||
+      profile.department === "CAR_SERVICE" ||
+      profile.department === "COMMONRAIL" ||
+      profile.department === "MECHANIC" ||
+      profile.department === "OUTSOURCE");
   const isAdmin = profile?.role === 'ADMIN';
 
   const form = useForm<z.infer<typeof customerSchema>>({
@@ -161,7 +178,7 @@ function CustomersContent() {
       detail: "",
       useTax: false,
       taxProfiles: [],
-      acquisitionSource: undefined,
+      acquisitionSource: "OTHER",
     },
   });
 
@@ -286,7 +303,7 @@ function CustomersContent() {
           detail: editingCustomer.detail || "",
           useTax: editingCustomer.useTax || false,
           taxProfiles: taxProfilesForForm,
-          acquisitionSource: editingCustomer.acquisitionSource || undefined,
+          acquisitionSource: editingCustomer.acquisitionSource ?? "OTHER",
         });
       }
     } else {
@@ -297,7 +314,7 @@ function CustomersContent() {
         detail: "",
         useTax: false,
         taxProfiles: [],
-        acquisitionSource: undefined,
+        acquisitionSource: "OTHER",
       });
     }
   }, [isDialogOpen, editingCustomer, form]);

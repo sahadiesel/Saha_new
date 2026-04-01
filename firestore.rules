@@ -53,6 +53,7 @@ service cloud.firestore {
       return signedIn() && role() != "VIEWER" && (
         role() == "ADMIN" || 
         role() == "MANAGER" || 
+        role() == "OFFICER" ||
         dept() == "MANAGEMENT" || 
         dept() == "OFFICE" || 
         dept() == "PURCHASING" || 
