@@ -46,7 +46,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
-import { cn } from "@/lib/utils";
+import { cn, sanitizeForFirestore } from "@/lib/utils";
 
 export const dynamic = 'force-dynamic';
 
@@ -349,17 +349,21 @@ function CustomersContent() {
 
       const primary = dedupedPhones[0];
       const profiles: CustomerTaxProfile[] = values.useTax
-        ? values.taxProfiles.map((p) => ({
-            id: p.id || (typeof crypto !== "undefined" ? crypto.randomUUID() : `tp_${Date.now()}`),
-            label: (p.label || "").trim(),
-            taxName: p.taxName.trim(),
-            taxAddress: p.taxAddress.trim(),
-            taxId: p.taxId.trim(),
-            taxPhone: (p.taxPhone || "").trim() || undefined,
-            taxBranchType: p.taxBranchType,
-            taxBranchNo:
-              p.taxBranchType === "BRANCH" ? (p.taxBranchNo || "").trim() : "00000",
-          }))
+        ? values.taxProfiles.map((p) => {
+            const taxPhoneTrim = (p.taxPhone || "").trim();
+            const base: CustomerTaxProfile = {
+              id: p.id || (typeof crypto !== "undefined" ? crypto.randomUUID() : `tp_${Date.now()}`),
+              label: (p.label || "").trim(),
+              taxName: p.taxName.trim(),
+              taxAddress: p.taxAddress.trim(),
+              taxId: p.taxId.trim(),
+              taxBranchType: p.taxBranchType,
+              taxBranchNo:
+                p.taxBranchType === "BRANCH" ? (p.taxBranchNo || "").trim() || "00000" : "00000",
+            };
+            if (taxPhoneTrim) base.taxPhone = taxPhoneTrim;
+            return base;
+          })
         : [];
 
       const first = profiles[0];
@@ -371,7 +375,7 @@ function CustomersContent() {
         phones: dedupedPhones,
         detail: values.detail || "",
         useTax: values.useTax,
-        acquisitionSource: values.acquisitionSource,
+        acquisitionSource: values.acquisitionSource ?? "OTHER",
         updatedAt: serverTimestamp(),
       };
 
@@ -380,10 +384,10 @@ function CustomersContent() {
         updateData.taxName = first.taxName;
         updateData.taxAddress = first.taxAddress;
         updateData.taxId = first.taxId;
-        updateData.taxPhone = first.taxPhone || primary;
+        updateData.taxPhone = (first.taxPhone && String(first.taxPhone).trim()) || primary;
         updateData.taxBranchType = first.taxBranchType;
         updateData.taxBranchNo =
-          first.taxBranchType === "BRANCH" ? first.taxBranchNo : "00000";
+          first.taxBranchType === "BRANCH" ? first.taxBranchNo || "00000" : "00000";
       } else {
         updateData.taxProfiles = deleteField();
         updateData.taxName = "";
@@ -394,7 +398,7 @@ function CustomersContent() {
         updateData.taxBranchNo = null;
       }
 
-      await updateDoc(customerDoc, updateData);
+      await updateDoc(customerDoc, sanitizeForFirestore(updateData));
       toast({ title: "อัปเดตข้อมูลลูกค้าสำเร็จ" });
       setIsDialogOpen(false);
     } catch (error: any) {

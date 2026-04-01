@@ -22,6 +22,10 @@ export function sanitizeForFirestore(data: any): any {
   }
   
   if (data !== null && typeof data === 'object') {
+    // FieldValue / sentinel จาก Firestore บางเวอร์ชันอาจดูเหมือน plain object — ห้าม reduce เข้าไป
+    if ('_methodName' in data && typeof (data as { _methodName?: unknown })._methodName === 'string') {
+      return data;
+    }
     // Skip sanitization for Date, Timestamp, or other non-plain objects (like Firestore FieldValues)
     const isPlainObject = Object.getPrototypeOf(data) === Object.prototype;
     const isTimestamp = typeof data.toDate === 'function';
