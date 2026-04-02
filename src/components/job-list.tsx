@@ -166,7 +166,7 @@ export function JobList({
   type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
   const { db } = useFirebase();
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
 
@@ -218,7 +218,9 @@ export function JobList({
   }, [profile]);
 
   useEffect(() => {
-    if (!db) return;
+    // รอ auth พร้อมก่อน subscribe — ถ้า subscribe เร็วเกินไปจะได้ permission-denied แล้ว effect ไม่รันซ้ำ
+    // (เพราะ db ไม่เปลี่ยน) ทำให้หน้าว่างจนกว่าจะ remount จากการนำทางไปหน้าอื่น
+    if (!db || !user) return;
     setLoading(true);
     setError(null);
     
@@ -266,6 +268,13 @@ export function JobList({
       setJobs(jobsData);
       setLoading(false);
     }, (err) => {
+      const code = (err as FirestoreError)?.code;
+      if (code === 'permission-denied') {
+        errorEmitter.emit(
+          'permission-error',
+          new FirestorePermissionError({ path: 'jobs', operation: 'list' } satisfies SecurityRuleContext)
+        );
+      }
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) setIndexUrl(urlMatch[0]);
@@ -274,7 +283,7 @@ export function JobList({
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [db, department, assigneeUid, statusConfig.key, searchTerm, status, sortByOldestInSystem]);
+  }, [db, user, department, assigneeUid, statusConfig.key, searchTerm, status, sortByOldestInSystem]);
 
   useEffect(() => {
     if (!db || !canSeeAccounts) return;
@@ -509,7 +518,23 @@ export function JobList({
   };
 
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md"><ExternalLink className="h-4 w-4" />สร้าง Index</a></Button></div>);
+  if (!user) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
   if (loading) return (<div className="flex justify-center p-12"><Loader2 className="animate-spin h-8 w-8" /></div>);
+  if (error && !indexUrl) {
+    return (
+      <Card className="border-destructive/50 bg-destructive/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-5 w-5" />
+            โหลดรายการงานไม่สำเร็จ
+          </CardTitle>
+          <CardDescription className="text-destructive/90">
+            {error?.message || String(error)}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
   if (jobs.length === 0) return (<Card className="text-center py-12"><CardHeader><CardTitle className="text-muted-foreground">{emptyTitle}</CardTitle><CardDescription>{emptyDescription}</CardDescription></CardHeader></Card>);
 
   return (

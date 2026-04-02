@@ -875,6 +875,8 @@ export interface PurchaseClaim {
 export interface BillingRun {
   id?: string; // YYYY-MM
   monthId: string; // YYYY-MM
+  /** bucketId ของแถวที่ถูกรวม -> bucketId หัวกลุ่ม (รวมด้วยมือในหน้าวางบิล) */
+  billingMergedBuckets?: Record<string, string>;
   deferredInvoices?: Record<string, boolean>;
   separateInvoiceGroups?: Record<string, string>;
   createdBillingNotes?: Record<string, { main?: string; separate?: Record<string, string> }>;

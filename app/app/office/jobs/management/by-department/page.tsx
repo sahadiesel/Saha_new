@@ -5,15 +5,48 @@ import { useState, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { JobList } from "@/components/job-list";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Search, Loader2 } from "lucide-react";
-import type { JobStatus } from "@/lib/types";
+import type { JobDepartment, JobStatus } from "@/lib/types";
 
 // Stable constant to prevent infinite loops in children
 // ซ่อนงานที่ "รับสินค้าแล้ว/รอรับเงิน" ออกจากหน้าตามแผนก
 const EXCLUDE_DEPT_VIEW: JobStatus[] = ["CLOSED", "PICKED_UP"];
+
+const DEPT_TAB_TO_DEPARTMENT = {
+  "car-service": "CAR_SERVICE",
+  commonrail: "COMMONRAIL",
+  mechanic: "MECHANIC",
+  outsource: "OUTSOURCE",
+} as const satisfies Record<string, JobDepartment>;
+
+type DeptTab = keyof typeof DEPT_TAB_TO_DEPARTMENT;
+
+const TAB_EMPTY: Record<DeptTab, { title: string; description: string }> = {
+  "car-service": {
+    title: "ไม่มีงานในแผนกซ่อมหน้าร้าน",
+    description: "ยังไม่มีการเปิดงานสำหรับแผนกนี้",
+  },
+  commonrail: {
+    title: "ไม่มีงานในแผนกคอมมอนเรล",
+    description: "ยังไม่มีการเปิดงานสำหรับแผนกนี้",
+  },
+  mechanic: {
+    title: "ไม่มีงานในแผนกแมคคานิค",
+    description: "ยังไม่มีการเปิดงานสำหรับแผนกนี้",
+  },
+  outsource: {
+    title: "ไม่มีงานที่ส่งออกร้านนอก",
+    description: "ยังไม่มีการส่งต่องานสำหรับแผนกนี้",
+  },
+};
+
+function normalizeDeptTab(raw: string | null): DeptTab {
+  if (raw && raw in DEPT_TAB_TO_DEPARTMENT) return raw as DeptTab;
+  return "car-service";
+}
 
 function ByDepartmentContent() {
   const searchParams = useSearchParams();
@@ -21,7 +54,8 @@ function ByDepartmentContent() {
   const pathname = usePathname();
   const [searchTerm, setSearchTerm] = useState("");
 
-  const activeTab = searchParams.get("dept") || "car-service";
+  const deptQuery = searchParams.get("dept");
+  const activeTab = useMemo(() => normalizeDeptTab(deptQuery), [deptQuery]);
 
   const handleTabChange = (value: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -52,58 +86,19 @@ function ByDepartmentContent() {
         </div>
         <Card>
             <CardContent className="p-0">
-                <TabsContent value="car-service" className="mt-0">
-                    {activeTab === 'car-service' && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            department="CAR_SERVICE" 
-                            excludeStatus={EXCLUDE_DEPT_VIEW}
-                            emptyTitle="ไม่มีงานในแผนกซ่อมหน้าร้าน"
-                            emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
-                            sortByOldestInSystem
-                            showSystemAgeBadge
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="commonrail" className="mt-0">
-                    {activeTab === 'commonrail' && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            department="COMMONRAIL" 
-                            excludeStatus={EXCLUDE_DEPT_VIEW}
-                            emptyTitle="ไม่มีงานในแผนกคอมมอนเรล"
-                            emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
-                            sortByOldestInSystem
-                            showSystemAgeBadge
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="mechanic" className="mt-0">
-                    {activeTab === 'mechanic' && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            department="MECHANIC" 
-                            excludeStatus={EXCLUDE_DEPT_VIEW}
-                            emptyTitle="ไม่มีงานในแผนกแมคคานิค"
-                            emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
-                            sortByOldestInSystem
-                            showSystemAgeBadge
-                        />
-                    )}
-                </TabsContent>
-                <TabsContent value="outsource" className="mt-0">
-                    {activeTab === 'outsource' && (
-                        <JobList 
-                            searchTerm={searchTerm}
-                            department="OUTSOURCE" 
-                            excludeStatus={EXCLUDE_DEPT_VIEW}
-                            emptyTitle="ไม่มีงานที่ส่งออกร้านนอก"
-                            emptyDescription="ยังไม่มีการส่งต่องานสำหรับแผนกนี้"
-                            sortByOldestInSystem
-                            showSystemAgeBadge
-                        />
-                    )}
-                </TabsContent>
+                {/* JobList เดียว + key ตามแท็บ — หลีกเลี่ยงการ mount ซ้ำ/ช้าเมื่อ Radix Tabs + Suspense */}
+                <div className="p-0">
+                  <JobList
+                    key={activeTab}
+                    searchTerm={searchTerm}
+                    department={DEPT_TAB_TO_DEPARTMENT[activeTab]}
+                    excludeStatus={EXCLUDE_DEPT_VIEW}
+                    emptyTitle={TAB_EMPTY[activeTab].title}
+                    emptyDescription={TAB_EMPTY[activeTab].description}
+                    sortByOldestInSystem
+                    showSystemAgeBadge
+                  />
+                </div>
             </CardContent>
         </Card>
       </Tabs>

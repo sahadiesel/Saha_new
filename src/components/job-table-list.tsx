@@ -90,7 +90,7 @@ export function JobTableList({
   year = new Date().getFullYear(),
 }: JobTableListProps) {
   const { db } = useFirebase();
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const { toast } = useToast();
 
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -115,7 +115,7 @@ export function JobTableList({
   }, [status, excludeStatus]);
 
   const fetchData = useCallback(async () => {
-    if (!db) return;
+    if (!db || !user) return;
 
     setLoading(true);
     setError(null);
@@ -173,7 +173,7 @@ export function JobTableList({
     } finally {
       setLoading(false);
     }
-  }, [db, source, year, department, orderByField, orderByDirection, filterConfig.key, searchTerm]);
+  }, [db, user, source, year, department, orderByField, orderByDirection, filterConfig.key, searchTerm]);
 
   useEffect(() => {
     fetchData();
@@ -194,6 +194,15 @@ export function JobTableList({
       setIsDeleting(false);
     }
   };
+
+  if (!user) {
+    return (
+      <div className="flex flex-col justify-center items-center h-64 gap-4">
+        <Loader2 className="animate-spin h-10 w-10 text-primary" />
+        <p className="text-sm text-muted-foreground font-medium">กำลังเตรียมข้อมูล...</p>
+      </div>
+    );
+  }
 
   if (indexUrl) {
     return (

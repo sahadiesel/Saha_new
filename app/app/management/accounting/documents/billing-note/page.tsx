@@ -51,7 +51,10 @@ import {
   MoreHorizontal,
   PlusCircle,
   AlertTriangle,
-  Info
+  Info,
+  Link2,
+  Unlink,
+  Trash2,
 } from 'lucide-react';
 import type { Customer, Document, BillingRun, StoreSettings } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
@@ -61,6 +64,8 @@ import { safeFormat } from '@/lib/date-utils';
 import { DocumentList } from '@/components/document-list';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { Checkbox } from '@/components/ui/checkbox';
+import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -73,6 +78,7 @@ interface GroupedCustomerData {
   totalIncludedAmount: number;
   createdNoteIds?: { main?: string; separate?: Record<string, string> };
   warnings?: string[];
+  mergedFollowerCount?: number;
 }
 
 function BillingNoteBatchTab() {
@@ -89,6 +95,11 @@ function BillingNoteBatchTab() {
   
   const [isBulkCreating, setIsBulkCreating] = useState(false);
   const [isResetting, setIsResetting] = useState<string | null>(null);
+  const [selectedBucketIds, setSelectedBucketIds] = useState<string[]>([]);
+  const [isSavingMerge, setIsSavingMerge] = useState(false);
+  const [isPurgingBucket, setIsPurgingBucket] = useState<string | null>(null);
+
+  const isAdminUser = profile?.role === 'ADMIN';
   
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -134,20 +145,25 @@ function BillingNoteBatchTab() {
       const docNoCount: Record<string, number> = {};
 
       unpaidInvoices.forEach(inv => {
-        const customerId = inv.customerId || inv.customerSnapshot.id || inv.customerSnapshot.phone;
-        if (!customerId) return;
-        
+        const bucket = billingBucketId(inv);
+
         docNoCount[inv.docNo] = (docNoCount[inv.docNo] || 0) + 1;
 
-        if (!groupedByCustomer[customerId]) {
-          groupedByCustomer[customerId] = {
-            customer: { id: customerId, ...inv.customerSnapshot } as Customer,
+        if (!groupedByCustomer[bucket]) {
+          groupedByCustomer[bucket] = {
+            customer: {
+              ...inv.customerSnapshot,
+              id: bucket,
+            } as Customer,
             invoices: [],
           };
         }
-        groupedByCustomer[customerId].invoices.push(inv);
+        groupedByCustomer[bucket].invoices.push(inv);
       });
 
+      collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
+
+      const mergedMap = billingRun?.billingMergedBuckets || {};
       const finalData = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
         const includedInvoices: Document[] = [];
         const deferredInvoices: Document[] = [];
@@ -177,6 +193,8 @@ function BillingNoteBatchTab() {
           }
         });
         
+        const mergedFollowerCount = Object.entries(mergedMap).filter(([, leader]) => leader === customer.id).length;
+
         return {
           customer,
           includedInvoices,
@@ -185,6 +203,7 @@ function BillingNoteBatchTab() {
           totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0),
           createdNoteIds: billingRun?.createdBillingNotes?.[customer.id],
           warnings: Array.from(new Set(warnings)),
+          mergedFollowerCount,
         };
       });
 
@@ -220,7 +239,102 @@ function BillingNoteBatchTab() {
 
     toast({ title: 'บันทึกการตั้งค่าแล้ว' });
   };
-  
+
+  const toggleBucketSelect = (bucketId: string) => {
+    setSelectedBucketIds((prev) =>
+      prev.includes(bucketId) ? prev.filter((x) => x !== bucketId) : [...prev, bucketId]
+    );
+  };
+
+  const handleMergeSelectedBuckets = async () => {
+    if (!profile || !billingRunRef) return;
+    const ids = [...selectedBucketIds];
+    if (ids.length < 2) {
+      toast({
+        variant: "destructive",
+        title: "เลือกอย่างน้อย 2 แถว",
+        description: "จึงจะรวมเป็นหนึ่งกลุ่มสำหรับใบวางบิลได้",
+      });
+      return;
+    }
+    for (const id of ids) {
+      const row = customerData.find((d) => d.customer.id === id);
+      if (row?.createdNoteIds) {
+        toast({
+          variant: "destructive",
+          title: "ไม่สามารถรวมกลุ่ม",
+          description: "มีแถวที่สร้างใบวางบิลแล้ว — รีเซ็ตสถานะการสร้างก่อน",
+        });
+        return;
+      }
+    }
+    const order = new Map(customerData.map((d, i) => [d.customer.id, i]));
+    ids.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    const leader = ids[0]!;
+    const followers = ids.slice(1);
+    const existing = { ...(billingRun?.billingMergedBuckets || {}) };
+    for (const f of followers) {
+      existing[f] = leader;
+    }
+    setIsSavingMerge(true);
+    try {
+      await setDoc(
+        billingRunRef,
+        {
+          monthId,
+          billingMergedBuckets: existing,
+          updatedAt: serverTimestamp(),
+          updatedByUid: profile.uid,
+          updatedByName: profile.displayName,
+        },
+        { merge: true }
+      );
+      setSelectedBucketIds([]);
+      toast({
+        title: "รวมกลุ่มแล้ว",
+        description: `ใช้แถวบนสุดของรายการที่เลือกเป็นหัวกลุ่ม — รวมอีก ${followers.length} แถว`,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "บันทึกการรวมไม่สำเร็จ", description: msg });
+    } finally {
+      setIsSavingMerge(false);
+    }
+  };
+
+  const handleUnmergeBucketLeader = async (leaderId: string) => {
+    if (!profile || !billingRunRef) return;
+    const existing = { ...(billingRun?.billingMergedBuckets || {}) };
+    let n = 0;
+    for (const k of Object.keys(existing)) {
+      if (existing[k] === leaderId) {
+        delete existing[k];
+        n++;
+      }
+    }
+    if (n === 0) return;
+    setIsSavingMerge(true);
+    try {
+      await setDoc(
+        billingRunRef,
+        {
+          monthId,
+          billingMergedBuckets: existing,
+          updatedAt: serverTimestamp(),
+          updatedByUid: profile.uid,
+          updatedByName: profile.displayName,
+        },
+        { merge: true }
+      );
+      toast({ title: "ยกเลิกการรวมกลุ่ม", description: `คืน ${n} แถวแยกกลับมา` });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ล้มเหลว", description: msg });
+    } finally {
+      setIsSavingMerge(false);
+    }
+  };
+
   const createBillingNotesForCustomer = async (targetCustomerData: GroupedCustomerData) => {
     if (!profile || !storeSettings || !db || !billingRunRef) return { success: false, error: "Required data missing." };
     
@@ -346,6 +460,71 @@ function BillingNoteBatchTab() {
     }
   };
 
+  /** Admin: ล้างทุกอย่างที่ผูกแถวนี้กับ billing run + ถอดลิงก์ใบวางบิลจากบิลต้นทาง (ไม่ลบเอกสาร BILLING_NOTE) */
+  const handleAdminPurgeRow = async (data: GroupedCustomerData) => {
+    if (!profile || profile.role !== 'ADMIN' || !db || !billingRunRef) return;
+    const bucketId = data.customer.id;
+    const allInvoices = [
+      ...data.includedInvoices,
+      ...data.deferredInvoices,
+      ...Object.values(data.separateGroups).flat(),
+    ];
+    const displayName = data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name;
+    if (
+      !window.confirm(
+        `ลบข้อมูลการวางบิลของ “${displayName}” ในเดือน ${monthId} ออกจากรันนี้\n\n` +
+          `จะล้าง: การรวมกลุ่ม เลื่อน แยกเล่ม และสถานะสร้างใบวางบิล พร้อมถอดลิงก์จากบิลต้นทางในแถวนี้\n` +
+          `ไม่ลบไฟล์ใบวางบิลในระบบ — ตรวจจากเมนูเอกสารหากต้องการลบจริง`
+      )
+    ) {
+      return;
+    }
+
+    setIsPurgingBucket(bucketId);
+    try {
+      const snap = await getDoc(billingRunRef);
+      const br = (snap.exists() ? snap.data() : {}) as Partial<BillingRun>;
+      const batch = writeBatch(db);
+      const runPatch: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+        updatedByUid: profile.uid,
+        updatedByName: profile.displayName,
+      };
+      runPatch[`createdBillingNotes.${bucketId}`] = deleteField();
+
+      const merged = br.billingMergedBuckets || {};
+      for (const [k, v] of Object.entries(merged)) {
+        if (k === bucketId || v === bucketId) {
+          runPatch[`billingMergedBuckets.${k}`] = deleteField();
+        }
+      }
+
+      for (const inv of allInvoices) {
+        runPatch[`deferredInvoices.${inv.id}`] = deleteField();
+        runPatch[`separateInvoiceGroups.${inv.id}`] = deleteField();
+      }
+
+      for (const inv of allInvoices) {
+        batch.update(doc(db, 'documents', inv.id), {
+          billingNoteId: deleteField(),
+          billingNoteNo: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      batch.update(billingRunRef, runPatch as Parameters<typeof updateDoc>[1]);
+      await batch.commit();
+
+      setSelectedBucketIds((prev) => prev.filter((id) => id !== bucketId));
+      toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: msg });
+    } finally {
+      setIsPurgingBucket(null);
+    }
+  };
+
   const summary = useMemo(() => {
     const totalCustomers = customerData.length;
     const totalInvoices = customerData.reduce((sum, d) => sum + d.includedInvoices.length + d.deferredInvoices.length + Object.values(d.separateGroups).flat().length, 0);
@@ -367,11 +546,27 @@ function BillingNoteBatchTab() {
           <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}><ChevronRight /></Button>
           <Button onClick={fetchData} variant="outline" size="icon" disabled={isLoading}><RefreshCw className={isLoading ? "animate-spin" : ""} /></Button>
         </div>
-        <Button onClick={handleBulkCreate} disabled={isLoading || isBulkCreating}>
-          {isBulkCreating ? <Loader2 className="animate-spin mr-2" /> : <Rocket className="mr-2" />}
-          สร้างใบวางบิลทั้งหมด ({summary.totalCustomers} ราย)
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={isLoading || isSavingMerge || selectedBucketIds.length < 2}
+            onClick={() => void handleMergeSelectedBuckets()}
+          >
+            {isSavingMerge ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}
+            รวมกลุ่มที่เลือก ({selectedBucketIds.length})
+          </Button>
+          <Button onClick={handleBulkCreate} disabled={isLoading || isBulkCreating}>
+            {isBulkCreating ? <Loader2 className="animate-spin mr-2" /> : <Rocket className="mr-2" />}
+            สร้างใบวางบิลทั้งหมด ({summary.totalCustomers} ราย)
+          </Button>
+        </div>
       </div>
+
+      <p className="text-xs text-muted-foreground max-w-3xl">
+        รวมกลุ่มด้วยมือเมื่อคนละคน/คนละเบอร์มาส่งงานแต่เจ้าของบิลเดียวกัน — เลือกหลายแถวแล้วกด &quot;รวมกลุ่มที่เลือก&quot;
+        (แถวบนสุดของลำดับในตารางจะเป็นหัวกลุ่ม) ใช้ได้ทั้งใบกำกับและใบส่งของชั่วคราว ไม่กระทบการรับเงิน/ใบเสร็จจนกว่าจะสร้างใบวางบิล
+      </p>
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
         <Card className="bg-primary/5 border-primary/20"><CardHeader className="p-4"><CardTitle className="text-xl">{summary.totalCustomers}</CardTitle><CardDescription className="text-xs">ลูกค้าที่ต้องวางบิล</CardDescription></CardHeader></Card>
@@ -385,16 +580,29 @@ function BillingNoteBatchTab() {
         <Card>
           <CardContent className="pt-6">
             <Table>
-              <TableHeader><TableRow><TableHead>ลูกค้า (Customer)</TableHead><TableHead className="text-center">จำนวนบิล</TableHead><TableHead className="text-right">ยอดรวมสะสม</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="w-10" /><TableHead>ลูกค้า (Customer)</TableHead><TableHead className="text-center">จำนวนบิล</TableHead><TableHead className="text-right">ยอดรวมสะสม</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow><TableCell colSpan={5} className="h-24 text-center"><Loader2 className="animate-spin" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="h-24 text-center"><Loader2 className="animate-spin" /></TableCell></TableRow>
                 ) : customerData.length > 0 ? (
                   customerData.map(data => (
                     <TableRow key={data.customer.id} className="hover:bg-muted/30 transition-colors">
+                      <TableCell className="align-middle">
+                        <Checkbox
+                          checked={selectedBucketIds.includes(data.customer.id)}
+                          onCheckedChange={() => toggleBucketSelect(data.customer.id)}
+                          disabled={!!data.createdNoteIds}
+                          aria-label="เลือกแถวเพื่อรวมกลุ่ม"
+                        />
+                      </TableCell>
                       <TableCell className="font-semibold">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           {data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name}
+                          {(data.mergedFollowerCount ?? 0) > 0 && (
+                            <Badge variant="outline" className="text-[10px] h-5 border-primary/40 text-primary">
+                              รวมกลุ่ม +{data.mergedFollowerCount}
+                            </Badge>
+                          )}
                           {data.warnings && data.warnings.length > 0 && (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -434,6 +642,14 @@ function BillingNoteBatchTab() {
                                 <DropdownMenuItem onClick={() => setEditingCustomerData(data)}>
                                   <Edit className="mr-2 h-4 w-4" /> แก้ไขการรวบรวม
                                 </DropdownMenuItem>
+                                {(data.mergedFollowerCount ?? 0) > 0 && (
+                                  <DropdownMenuItem
+                                    onClick={() => void handleUnmergeBucketLeader(data.customer.id)}
+                                    disabled={isSavingMerge}
+                                  >
+                                    <Unlink className="mr-2 h-4 w-4" /> เลิกรวมกลุ่มย่อย
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem 
                                   onClick={() => createBillingNotesForCustomer(data)}
                                   disabled={(data.includedInvoices.length + Object.keys(data.separateGroups).length) === 0}
@@ -476,13 +692,30 @@ function BillingNoteBatchTab() {
                                 </DropdownMenuItem>
                               </>
                             )}
+                            {isAdminUser && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  disabled={isPurgingBucket === data.customer.id}
+                                  onClick={() => void handleAdminPurgeRow(data)}
+                                >
+                                  {isPurgingBucket === data.customer.id ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                  )}
+                                  ลบรายการออกจากรัน (Admin)
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))
                 ) : (
-                  <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">ไม่พบเอกสารเครดิตที่ต้องวางบิลในเดือนนี้</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">ไม่พบเอกสารเครดิตที่ต้องวางบิลในเดือนนี้</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>

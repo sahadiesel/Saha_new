@@ -20,7 +20,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ChevronDown, Menu, User, Briefcase, Globe, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut } from "lucide-react";
+import { ChevronDown, Menu, User, Briefcase, Globe, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function PublicHeader() {
@@ -67,6 +67,10 @@ export function PublicHeader() {
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
             <Link href="/services">งานบริการ</Link>
+          </Button>
+
+          <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
+            <Link href="/contact">ติดต่อเรา</Link>
           </Button>
 
           <DropdownMenu>
@@ -156,6 +160,13 @@ export function PublicHeader() {
                   <Link href="/services">
                     <Wrench className="mr-3 h-5 w-5 text-primary" />
                     งานบริการ
+                  </Link>
+                </Button>
+
+                <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
+                  <Link href="/contact">
+                    <MapPin className="mr-3 h-5 w-5 text-primary" />
+                    ติดต่อเรา
                   </Link>
                 </Button>
 

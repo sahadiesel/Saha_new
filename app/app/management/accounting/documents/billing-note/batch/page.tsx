@@ -17,6 +17,7 @@ import {
   serverTimestamp,
   onSnapshot,
   deleteField,
+  writeBatch,
 } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
 import { PageHeader } from '@/components/page-header';
@@ -42,13 +43,16 @@ import {
   Printer,
   ChevronDown,
   RotateCcw,
-  AlertCircle
+  AlertCircle,
+  MoreHorizontal,
+  Trash2,
 } from 'lucide-react';
 import type { Customer, Document, BillingRun, StoreSettings } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
 import { BillingNoteBatchEditDialog } from '@/components/billing-note-batch-edit-dialog';
 import { createDocument } from '@/firebase/documents';
 import { safeFormat } from '@/lib/date-utils';
+import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -76,6 +80,9 @@ export default function BatchBillingNotePage() {
   
   const [isBulkCreating, setIsBulkCreating] = useState(false);
   const [isResetting, setIsResetting] = useState<string | null>(null);
+  const [isPurgingBucket, setIsPurgingBucket] = useState<string | null>(null);
+
+  const isAdminUser = profile?.role === 'ADMIN';
   
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -123,16 +130,20 @@ export default function BatchBillingNotePage() {
 
       const groupedByCustomer: Record<string, { customer: Customer; invoices: Document[] }> = {};
       unpaidInvoices.forEach(inv => {
-        const customerId = inv.customerId || inv.customerSnapshot.id || inv.customerSnapshot.phone;
-        if (!customerId) return;
-        if (!groupedByCustomer[customerId]) {
-          groupedByCustomer[customerId] = {
-            customer: { id: customerId, ...inv.customerSnapshot } as Customer,
+        const bucket = billingBucketId(inv);
+        if (!groupedByCustomer[bucket]) {
+          groupedByCustomer[bucket] = {
+            customer: {
+              ...inv.customerSnapshot,
+              id: bucket,
+            } as Customer,
             invoices: [],
           };
         }
-        groupedByCustomer[customerId].invoices.push(inv);
+        groupedByCustomer[bucket].invoices.push(inv);
       });
+
+      collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
 
       // Map grouped customers to final data using current state of billingRun
       const finalData = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
@@ -320,6 +331,69 @@ export default function BatchBillingNotePage() {
     }
   };
 
+  const handleAdminPurgeRow = async (data: GroupedCustomerData) => {
+    if (!profile || profile.role !== 'ADMIN' || !db || !billingRunRef) return;
+    const bucketId = data.customer.id;
+    const allInvoices = [
+      ...data.includedInvoices,
+      ...data.deferredInvoices,
+      ...Object.values(data.separateGroups).flat(),
+    ];
+    const displayName = data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name;
+    if (
+      !window.confirm(
+        `ลบข้อมูลการวางบิลของ “${displayName}” ในเดือน ${monthId} ออกจากรันนี้\n\n` +
+          `จะล้าง: การรวมกลุ่ม เลื่อน แยกเล่ม และสถานะสร้างใบวางบิล พร้อมถอดลิงก์จากบิลต้นทางในแถวนี้\n` +
+          `ไม่ลบไฟล์ใบวางบิลในระบบ — ตรวจจากเมนูเอกสารหากต้องการลบจริง`
+      )
+    ) {
+      return;
+    }
+
+    setIsPurgingBucket(bucketId);
+    try {
+      const snap = await getDoc(billingRunRef);
+      const br = (snap.exists() ? snap.data() : {}) as Partial<BillingRun>;
+      const batch = writeBatch(db);
+      const runPatch: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+        updatedByUid: profile.uid,
+        updatedByName: profile.displayName,
+      };
+      runPatch[`createdBillingNotes.${bucketId}`] = deleteField();
+
+      const merged = br.billingMergedBuckets || {};
+      for (const [k, v] of Object.entries(merged)) {
+        if (k === bucketId || v === bucketId) {
+          runPatch[`billingMergedBuckets.${k}`] = deleteField();
+        }
+      }
+
+      for (const inv of allInvoices) {
+        runPatch[`deferredInvoices.${inv.id}`] = deleteField();
+        runPatch[`separateInvoiceGroups.${inv.id}`] = deleteField();
+      }
+
+      for (const inv of allInvoices) {
+        batch.update(doc(db, 'documents', inv.id), {
+          billingNoteId: deleteField(),
+          billingNoteNo: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      batch.update(billingRunRef, runPatch as Parameters<typeof updateDoc>[1]);
+      await batch.commit();
+
+      toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: msg });
+    } finally {
+      setIsPurgingBucket(null);
+    }
+  };
+
   const summary = useMemo(() => {
     const totalCustomers = customerData.length;
     const totalInvoices = customerData.reduce((sum, d) => sum + d.includedInvoices.length + d.deferredInvoices.length + Object.values(d.separateGroups).flat().length, 0);
@@ -380,9 +454,35 @@ export default function BatchBillingNotePage() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1 flex-wrap">
                         <Button variant="outline" size="sm" className="mr-2" onClick={() => setEditingCustomerData(data)} disabled={!!data.createdNoteIds}><Edit className="mr-2 h-3 w-3"/> แก้ไข</Button>
                         {!data.createdNoteIds ? (
+                            <>
                             <Button size="sm" onClick={() => createBillingNotesForCustomer(data)} disabled={(data.includedInvoices.length + Object.keys(data.separateGroups).length) === 0}>สร้างใบวางบิล</Button>
+                            {isAdminUser && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button type="button" variant="ghost" size="icon" aria-label="เมนู Admin">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    disabled={isPurgingBucket === data.customer.id}
+                                    onClick={() => void handleAdminPurgeRow(data)}
+                                  >
+                                    {isPurgingBucket === data.customer.id ? (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                    )}
+                                    ลบรายการออกจากรัน (Admin)
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                            </>
                         ) : (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -403,9 +503,27 @@ export default function BatchBillingNotePage() {
                                         {isResetting === data.customer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RotateCcw className="mr-2 h-4 w-4"/>}
                                         ล้างสถานะการสร้าง (Reset)
                                     </DropdownMenuItem>
+                                    {isAdminUser && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          disabled={isPurgingBucket === data.customer.id}
+                                          onClick={() => void handleAdminPurgeRow(data)}
+                                        >
+                                          {isPurgingBucket === data.customer.id ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Trash2 className="mr-2 h-4 w-4" />
+                                          )}
+                                          ลบรายการออกจากรัน (Admin)
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   </Fragment>
