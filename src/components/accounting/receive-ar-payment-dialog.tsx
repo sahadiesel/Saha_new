@@ -4,10 +4,15 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import type { Firestore } from "firebase/firestore";
 import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  query,
+  where,
+  limit,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
@@ -33,6 +38,72 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Loader2, CalendarDays } from "lucide-react";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import { isArPaymentSiblingObligation } from "@/lib/accounting-ar-dedupe";
+import { validateAccountingEntryDate, validateCheckDueDate } from "@/lib/accounting-entry-date";
+
+/**
+ * หลังรับชำระ — อัปเดต obligation/เอกสารซ้ำ (หลาย id ชี้บิลเดียวกัน หรือเลขที่เดียวกันแต่คีย์ลูกค้าไม่ตรง) ให้สอดคล้องกับแถวที่บันทึก
+ */
+async function syncSiblingArObligationsAfterPayment(
+  db: Firestore,
+  paid: WithId<AccountingObligation>,
+  synced: {
+    amountPaid: number;
+    balance: number;
+    status: "UNPAID" | "PARTIAL" | "PAID";
+    paymentDate: string;
+    accountId: string;
+    paymentMethod: string;
+    cashReceived: number;
+    withholdingEnabled: boolean;
+    withholdingAmount: number;
+  }
+): Promise<number> {
+  const snap = await getDocs(query(collection(db, "accountingObligations"), where("type", "==", "AR"), limit(1000)));
+  const batch2 = writeBatch(db);
+  let n = 0;
+  for (const d of snap.docs) {
+    const ob = { id: d.id, ...d.data() } as WithId<AccountingObligation>;
+    if (ob.status !== "UNPAID" && ob.status !== "PARTIAL") continue;
+    if (!isArPaymentSiblingObligation(paid, ob)) continue;
+
+    batch2.update(doc(db, "accountingObligations", ob.id), {
+      amountPaid: synced.amountPaid,
+      balance: synced.balance,
+      status: synced.status,
+      lastPaymentDate: synced.paymentDate,
+      paidOffDate: synced.status === "PAID" ? synced.paymentDate : null,
+      updatedAt: serverTimestamp(),
+    });
+
+    const sid = (ob.sourceDocId || "").trim();
+    const paidSid = (paid.sourceDocId || "").trim();
+    if (sid && sid !== paidSid) {
+      batch2.update(
+        doc(db, "documents", sid),
+        sanitizeForFirestore({
+          status: synced.status,
+          arStatus: synced.status,
+          paymentSummary: {
+            paidTotal: synced.amountPaid,
+            balance: synced.balance,
+            paymentStatus: synced.status,
+          },
+          paymentDate: synced.paymentDate,
+          paymentMethod: synced.paymentMethod,
+          receivedAccountId: synced.accountId,
+          cashReceived: synced.cashReceived,
+          withholdingEnabled: synced.withholdingEnabled,
+          withholdingAmount: synced.withholdingAmount,
+          updatedAt: serverTimestamp(),
+        })
+      );
+    }
+    n++;
+  }
+  if (n > 0) await batch2.commit();
+  return n;
+}
 
 const formatCurrency = (value: number | null | undefined) =>
   (value ?? 0).toLocaleString("th-TH", {
@@ -126,6 +197,24 @@ export function ReceiveArPaymentDialog({
       return;
     }
 
+    let paymentDateYmd = data.paymentDate;
+    let checkDueYmd = (data.checkDueDate || "").trim();
+    if (data.paymentInstrument === "CHECK") {
+      const vc = validateCheckDueDate(data.checkDueDate || "");
+      if (!vc.ok) {
+        toast({ variant: "destructive", title: "วันครบกำหนดเช็คไม่ถูกต้อง", description: vc.message });
+        return;
+      }
+      checkDueYmd = vc.normalized;
+    } else {
+      const vd = validateAccountingEntryDate(data.paymentDate);
+      if (!vd.ok) {
+        toast({ variant: "destructive", title: "วันที่รับชำระไม่ถูกต้อง", description: vd.message });
+        return;
+      }
+      paymentDateYmd = vd.normalized;
+    }
+
     setIsSubmitting(true);
     const paymentMethod = data.paymentInstrument === "CASH" ? "CASH" : "TRANSFER";
 
@@ -152,7 +241,7 @@ export function ReceiveArPaymentDialog({
             direction: "RECEIVE",
             status: "PENDING",
             amount: data.amount,
-            dueDate: data.checkDueDate!.trim(),
+            dueDate: checkDueYmd,
             accountId: data.accountId,
             obligationId: obligation.id,
             receiveAnchorDocType: obligation.sourceDocType as "DELIVERY_NOTE" | "TAX_INVOICE" | "BILLING_NOTE",
@@ -174,7 +263,7 @@ export function ReceiveArPaymentDialog({
             sourceDocRef,
             sanitizeForFirestore({
               paymentInstrument: "CHECK",
-              checkDueDate: data.checkDueDate?.trim() || null,
+              checkDueDate: checkDueYmd || null,
               receivedAccountId: data.accountId,
               withholdingEnabled: data.withholdingEnabled,
               withholdingAmount: data.withholdingAmount,
@@ -187,15 +276,15 @@ export function ReceiveArPaymentDialog({
           amountPaid: newAmountPaid,
           balance: newBalance,
           status: newStatus,
-          lastPaymentDate: data.paymentDate,
-          paidOffDate: newStatus === "PAID" ? data.paymentDate : null,
+          lastPaymentDate: paymentDateYmd,
+          paidOffDate: newStatus === "PAID" ? paymentDateYmd : null,
           updatedAt: serverTimestamp(),
         });
 
         const entryRef = doc(collection(db, "accountingEntries"));
         batch.set(entryRef, {
           entryType: "CASH_IN",
-          entryDate: data.paymentDate,
+          entryDate: paymentDateYmd,
           amount: cashReceived,
           accountId: data.accountId,
           paymentMethod,
@@ -226,7 +315,7 @@ export function ReceiveArPaymentDialog({
               balance: updatedBalance,
               paymentStatus: updatedStatus,
             },
-            paymentDate: data.paymentDate,
+            paymentDate: paymentDateYmd,
             paymentMethod: data.paymentInstrument === "CHECK" ? "CHECK" : paymentMethod,
             receivedAccountId: data.accountId,
             cashReceived,
@@ -244,14 +333,42 @@ export function ReceiveArPaymentDialog({
           batch.update(jobRef, { status: "CLOSED", updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
       }
       await batch.commit();
+
+      let siblingSynced = 0;
+      let siblingSyncErr: string | null = null;
+      if (data.paymentInstrument !== "CHECK") {
+        try {
+          siblingSynced = await syncSiblingArObligationsAfterPayment(db, obligation, {
+            amountPaid: newAmountPaid,
+            balance: newBalance,
+            status: newStatus,
+            paymentDate: paymentDateYmd,
+            accountId: data.accountId,
+            paymentMethod,
+            cashReceived,
+            withholdingEnabled: data.withholdingEnabled,
+            withholdingAmount: data.withholdingAmount || 0,
+          });
+        } catch (e: unknown) {
+          siblingSyncErr = e instanceof Error ? e.message : String(e);
+        }
+      }
+
+      const okDesc =
+        data.paymentInstrument === "CHECK"
+          ? "สร้างรายการเช็ครับแล้ว — ยืนยันเมื่อเช็คขึ้นเงินในแท็บเช็ค"
+          : newStatus === "PAID"
+            ? siblingSynced > 0
+              ? `ปิดงานซ่อมเรียบร้อย — อัปเดตรายการลูกหนี้ซ้ำอีก ${siblingSynced} รายการให้ตรงกัน`
+              : "ปิดงานซ่อมเรียบร้อยแล้วค่ะ"
+            : siblingSynced > 0
+              ? `อัปเดตรายการลูกหนี้ซ้ำอีก ${siblingSynced} รายการให้ตรงกัน`
+              : "";
+
       toast({
-        title: "บันทึกการรับชำระสำเร็จ",
-        description:
-          data.paymentInstrument === "CHECK"
-            ? "สร้างรายการเช็ครับแล้ว — ยืนยันเมื่อเช็คขึ้นเงินในแท็บเช็ค"
-            : newStatus === "PAID"
-              ? "ปิดงานซ่อมเรียบร้อยแล้วค่ะ"
-              : "",
+        variant: siblingSyncErr ? "destructive" : "default",
+        title: siblingSyncErr ? "รับชำระแล้ว แต่ซิงค์รายการลูกหนี้ซ้ำไม่สำเร็จ" : "บันทึกการรับชำระสำเร็จ",
+        description: siblingSyncErr ?? okDesc,
       });
       onClose();
     } catch (e: unknown) {

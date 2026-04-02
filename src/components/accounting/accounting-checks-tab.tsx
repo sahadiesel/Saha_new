@@ -55,6 +55,7 @@ import type { AccountingAccount, AccountingCheckItem, DocType } from "@/lib/type
 import type { Firestore } from "firebase/firestore";
 import type { WithId } from "@/firebase/index";
 import { sanitizeForFirestore } from "@/lib/utils";
+import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -246,6 +247,12 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
 
   const confirmClear = async () => {
     if (!db || !profile || !confirmItem) return;
+    const vd = validateAccountingEntryDate(clearedDate);
+    if (!vd.ok) {
+      toast({ variant: "destructive", title: "วันที่ตัดเช็คไม่ถูกต้อง", description: vd.message });
+      return;
+    }
+    const clearedYmd = vd.normalized;
     setBusyId(confirmItem.id);
     try {
       const ch = confirmItem;
@@ -264,7 +271,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             entryRef,
             sanitizeForFirestore({
               entryType: "RECEIPT",
-              entryDate: clearedDate,
+              entryDate: clearedYmd,
               amount: ch.amount,
               accountId: ch.accountId,
               paymentMethod: "TRANSFER",
@@ -296,7 +303,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             entryRef,
             sanitizeForFirestore({
               entryType: "CASH_IN",
-              entryDate: clearedDate,
+              entryDate: clearedYmd,
               amount: ch.amount,
               accountId: ch.accountId,
               paymentMethod: "TRANSFER",
@@ -317,7 +324,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             entryRef,
             sanitizeForFirestore({
               entryType: "CASH_IN",
-              entryDate: clearedDate,
+              entryDate: clearedYmd,
               amount: ch.amount,
               accountId: ch.accountId,
               paymentMethod: "TRANSFER",
@@ -356,8 +363,8 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
               amountPaid: newAmountPaid,
               balance: newBalance,
               status: newStatus,
-              lastPaymentDate: clearedDate,
-              paidOffDate: newStatus === "PAID" ? clearedDate : null,
+              lastPaymentDate: clearedYmd,
+              paidOffDate: newStatus === "PAID" ? clearedYmd : null,
               updatedAt: serverTimestamp(),
             });
 
@@ -383,7 +390,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
                       balance: updatedBalance,
                       paymentStatus: updatedStatus,
                     },
-                    paymentDate: clearedDate,
+                    paymentDate: clearedYmd,
                     paymentMethod: "CHECK",
                     paymentInstrument: "CHECK",
                     checkDueDate: ch.dueDate,
@@ -429,7 +436,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
 
         if (whtAmount > 0 && obligation && obligation.sourceDocType === "PURCHASE") {
           await runTransaction(db, async (tx) => {
-            const year = new Date(clearedDate).getFullYear();
+            const year = +clearedYmd.slice(0, 4);
             const counterRef = doc(db, "documentCounters", String(year));
             const settingsRef = doc(db, "settings", "documents");
             const storeSettingsRef = doc(db, "settings", "store");
@@ -454,13 +461,13 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
                 id: whtDocId,
                 docType: "WITHHOLDING_TAX",
                 docNo: whtDocNo,
-                docDate: clearedDate,
+                docDate: clearedYmd,
                 payerSnapshot: storeSettings,
                 payeeSnapshot: {
                   name: obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot,
                 },
                 vendorId: obligation.vendorId,
-                paidMonth: new Date(clearedDate).getMonth() + 1,
+                paidMonth: +clearedYmd.slice(5, 7),
                 paidYear: year,
                 incomeTypeCode: "ITEM5",
                 paidAmountGross: whtBase,
@@ -486,7 +493,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
           entryRef,
           sanitizeForFirestore({
             entryType: "CASH_OUT",
-            entryDate: clearedDate,
+            entryDate: clearedYmd,
             amount: cashOutAmount,
             grossAmount: ch.amount,
             accountId: ch.accountId,
@@ -521,8 +528,8 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
             amountPaid: newAmountPaid,
             balance: newBalance,
             status: newStatus,
-            lastPaymentDate: clearedDate,
-            paidOffDate: newStatus === "PAID" ? clearedDate : null,
+            lastPaymentDate: clearedYmd,
+            paidOffDate: newStatus === "PAID" ? clearedYmd : null,
             updatedAt: serverTimestamp(),
           });
         }
@@ -532,7 +539,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
         status: "CLEARED",
         clearedAt: serverTimestamp(),
         clearedEntryId: entryRef.id,
-        clearedDate,
+        clearedDate: clearedYmd,
         clearedByUid: profile.uid,
         clearedByName: profile.displayName ?? "",
         withholdingAmount: ch.withholdingAmount ?? undefined,

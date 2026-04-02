@@ -124,10 +124,9 @@ function BillingNoteBatchTab() {
       const invoicesSnap = await getDocs(invoicesQuery);
       const allDocs = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Document));
       
-      const unpaidInvoices = allDocs.filter(doc => 
+      const unpaidInvoices = allDocs.filter(doc =>
         (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
         doc.paymentTerms === 'CREDIT' &&
-        doc.billingRequired === true &&
         !['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)
       );
 

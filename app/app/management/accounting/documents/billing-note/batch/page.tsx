@@ -114,12 +114,11 @@ export default function BatchBillingNotePage() {
       const invoicesSnap = await getDocs(invoicesQuery);
       const allDocs = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Document));
       
-      // Strict filtering based on business rules
-      const unpaidInvoices = allDocs.filter(doc => 
+      // ดึงบิลเครดิตที่ยังไม่ปิดยอดทั้งหมด แล้วค่อยให้ผู้ใช้ตัดสินใจแยก/เลื่อนในหน้าวางบิล
+      const unpaidInvoices = allDocs.filter(doc =>
         (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
         doc.paymentTerms === 'CREDIT' &&
-        doc.billingRequired === true &&
-        doc.status !== 'PAID'
+        !['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)
       );
 
       const groupedByCustomer: Record<string, { customer: Customer; invoices: Document[] }> = {};

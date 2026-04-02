@@ -66,6 +66,12 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { ReceiveArPaymentDialog } from "@/components/accounting/receive-ar-payment-dialog";
+import {
+  arInvoiceDedupeKey,
+  dedupeUnpaidArBySalesDocNo,
+  isArDedupeDocType,
+} from "@/lib/accounting-ar-dedupe";
+import { validateAccountingEntryDate, validateCheckDueDate } from "@/lib/accounting-entry-date";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', {
@@ -214,7 +220,6 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
             if (!purchase.vendorSnapshot.taxId || !purchase.vendorSnapshot.address) { toast({ variant: 'destructive', title: 'ข้อมูลร้านค้าไม่ครบถ้วน', description: 'ร้านค้าต้องมีเลขผู้เสียภาษีและที่อยู่เพื่อออกใบหัก ณ ที่จ่าย'}); return; }
         }
     }
-    setIsSubmitting(true);
     if (data.paymentInstrument === "CASH" && account.type !== "CASH") {
       toast({ variant: "destructive", title: "บัญชีไม่ตรงกับวิธีจ่าย", description: "เลือกบัญชีเงินสดเมื่อจ่ายเงินสด" });
       return;
@@ -224,20 +229,38 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
       return;
     }
 
+    let payYmd = data.paymentDate;
+    let checkDueNormalized = "";
+    if (data.paymentInstrument === "CHECK") {
+      const checkDue = data.checkDueDate?.trim();
+      if (!checkDue) {
+        toast({ variant: "destructive", title: "กรุณาระบุวันครบกำหนดเช็ค" });
+        return;
+      }
+      const vc = validateCheckDueDate(checkDue);
+      if (!vc.ok) {
+        toast({ variant: "destructive", title: "วันครบกำหนดเช็คไม่ถูกต้อง", description: vc.message });
+        return;
+      }
+      checkDueNormalized = vc.normalized;
+    } else {
+      const vd = validateAccountingEntryDate(data.paymentDate);
+      if (!vd.ok) {
+        toast({ variant: "destructive", title: "วันที่จ่ายไม่ถูกต้อง", description: vd.message });
+        return;
+      }
+      payYmd = vd.normalized;
+    }
+
+    setIsSubmitting(true);
     const paymentMethod = data.paymentInstrument === "CASH" ? "CASH" : "TRANSFER";
     try {
       if (data.paymentInstrument === "CHECK") {
-        const checkDue = data.checkDueDate?.trim();
-        if (!checkDue) {
-          toast({ variant: "destructive", title: "กรุณาระบุวันครบกำหนดเช็ค" });
-          return;
-        }
-
         await addDoc(collection(db, "accountingCheckItems"), sanitizeForFirestore({
           direction: "PAY",
           status: "PENDING",
           amount: data.amount,
-          dueDate: checkDue,
+          dueDate: checkDueNormalized,
           accountId: data.accountId,
           obligationId: obligation.id,
           purchaseDocId: obligation.sourceDocType === "PURCHASE" ? obligation.sourceDocId : undefined,
@@ -260,7 +283,7 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
       }
 
       await runTransaction(db, async (transaction) => {
-        const year = new Date(data.paymentDate).getFullYear();
+        const year = Number(payYmd.slice(0, 4));
         const counterRef = doc(db, 'documentCounters', String(year));
         const docSettingsRef = doc(db, 'settings', 'documents');
         const [counterSnap, settingsSnap] = await Promise.all([ transaction.get(counterRef), transaction.get(docSettingsRef) ]);
@@ -276,16 +299,16 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
             const whtDocNo = `${whtPrefix}${year}-${String(newWhtCount).padStart(4, '0')}`;
             const whtRef = doc(collection(db, 'documents'));
             whtDocId = whtRef.id;
-            transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, docType: 'WITHHOLDING_TAX', docNo: whtDocNo, docDate: data.paymentDate, payerSnapshot: storeSettings, payeeSnapshot: { name: purchase.vendorSnapshot.companyName, taxId: purchase.vendorSnapshot.taxId, address: purchase.vendorSnapshot.address }, vendorId: purchase.vendorId, paidMonth: new Date(data.paymentDate).getMonth() + 1, paidYear: year, incomeTypeCode: 'ITEM5', paidAmountGross: whtInfo.whtBase, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount, status: 'ISSUED', senderName: profile.displayName, receiverName: purchase.vendorSnapshot.companyName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+            transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, docType: 'WITHHOLDING_TAX', docNo: whtDocNo, docDate: payYmd, payerSnapshot: storeSettings, payeeSnapshot: { name: purchase.vendorSnapshot.companyName, taxId: purchase.vendorSnapshot.taxId, address: purchase.vendorSnapshot.address }, vendorId: purchase.vendorId, paidMonth: Number(payYmd.slice(5, 7)), paidYear: year, incomeTypeCode: 'ITEM5', paidAmountGross: whtInfo.whtBase, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount, status: 'ISSUED', senderName: profile.displayName, receiverName: purchase.vendorSnapshot.companyName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
             transaction.set(counterRef, { ...currentCounters, withholdingTax: newWhtCount, withholdingTaxPrefix: whtPrefix }, { merge: true });
         }
         const entryRef = doc(collection(db, "accountingEntries"));
-        transaction.set(entryRef, sanitizeForFirestore({ entryType: "CASH_OUT", entryDate: data.paymentDate, amount: cashOutAmount, grossAmount: data.amount, accountId: data.accountId, paymentMethod: paymentMethod, description: `จ่ายเจ้าหนี้: ${obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot} (บิล: ${obligation.invoiceNo || obligation.sourceDocNo})`, notes: data.notes, vendorId: obligation.vendorId, vendorShortNameSnapshot: obligation.vendorShortNameSnapshot, vendorNameSnapshot: obligation.vendorNameSnapshot, sourceDocNo: obligation.invoiceNo || obligation.sourceDocNo, obligationId: obligation.id, sourceDocType: obligation.sourceDocType, sourceDocId: obligation.sourceDocId, withholdingEnabled: data.withholdingEnabled, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, withholdingTaxDocId: whtDocId, vatAmount: sourceDoc?.vatAmount || 0, netAmount: sourceDoc?.subtotal || data.amount, createdAt: serverTimestamp() }));
+        transaction.set(entryRef, sanitizeForFirestore({ entryType: "CASH_OUT", entryDate: payYmd, amount: cashOutAmount, grossAmount: data.amount, accountId: data.accountId, paymentMethod: paymentMethod, description: `จ่ายเจ้าหนี้: ${obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot} (บิล: ${obligation.invoiceNo || obligation.sourceDocNo})`, notes: data.notes, vendorId: obligation.vendorId, vendorShortNameSnapshot: obligation.vendorShortNameSnapshot, vendorNameSnapshot: obligation.vendorNameSnapshot, sourceDocNo: obligation.invoiceNo || obligation.sourceDocNo, obligationId: obligation.id, sourceDocType: obligation.sourceDocType, sourceDocId: obligation.sourceDocId, withholdingEnabled: data.withholdingEnabled, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, withholdingTaxDocId: whtDocId, vatAmount: sourceDoc?.vatAmount || 0, netAmount: sourceDoc?.subtotal || data.amount, createdAt: serverTimestamp() }));
         const obligationRef = doc(db, 'accountingObligations', obligation.id);
         const newAmountPaid = Math.round(((obligation.amountPaid || 0) + data.amount) * 100) / 100;
         const newBalance = Math.max(0, Math.round((obligation.amountTotal - newAmountPaid) * 100) / 100);
         const newStatus = newBalance <= 0.05 ? 'PAID' : 'PARTIAL';
-        transaction.update(obligationRef, { amountPaid: newAmountPaid, balance: newBalance, status: newStatus, lastPaymentDate: data.paymentDate, paidOffDate: newStatus === 'PAID' ? data.paymentDate : null, updatedAt: serverTimestamp() });
+        transaction.update(obligationRef, { amountPaid: newAmountPaid, balance: newBalance, status: newStatus, lastPaymentDate: payYmd, paidOffDate: newStatus === 'PAID' ? payYmd : null, updatedAt: serverTimestamp() });
         if (obligation.sourceDocId) {
             const col = obligation.sourceDocType === 'PURCHASE' ? 'purchaseDocs' : 'documents';
             transaction.update(doc(db, col, obligation.sourceDocId), { status: newStatus, updatedAt: serverTimestamp(), accountingEntryId: entryRef.id });
@@ -456,11 +479,34 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 }
                 if (cancelled) return;
 
+                const arAll = await getDocs(query(collection(db, 'accountingObligations'), where('type', '==', 'AR'), limit(1000)));
+                if (cancelled) return;
+
+                const pendingArKeys = new Set<string>();
+                for (const snap of arAll.docs) {
+                    const ob = { id: snap.id, ...snap.data() } as WithId<AccountingObligation>;
+                    if (ob.status !== 'UNPAID' && ob.status !== 'PARTIAL') continue;
+                    if (!isArDedupeDocType(ob.sourceDocType) || !(ob.sourceDocNo || '').trim()) continue;
+                    pendingArKeys.add(
+                        arInvoiceDedupeKey({
+                            sourceDocNo: ob.sourceDocNo,
+                            customerId: ob.customerId,
+                            customerNameSnapshot: ob.customerNameSnapshot,
+                        })
+                    );
+                }
+
                 const batchMissing = writeBatch(db);
                 let nMissing = 0;
                 for (const d of invDocs) {
                     const docData = { id: d.id, ...d.data() } as DocumentType;
                     if (docData.receiptDocId) continue;
+                    const dupKey = arInvoiceDedupeKey({
+                        sourceDocNo: docData.docNo,
+                        customerId: docData.customerId || docData.customerSnapshot?.id,
+                        customerNameSnapshot: docData.customerSnapshot?.name || '',
+                    });
+                    if (pendingArKeys.has(dupKey)) continue;
                     const arId = `AR_${d.id}`;
                     const arRef = doc(db, 'accountingObligations', arId);
                     const arExisting = await getDoc(arRef);
@@ -493,6 +539,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                         arStatus: docData.arStatus || 'UNPAID',
                         updatedAt: serverTimestamp(),
                     });
+                    pendingArKeys.add(dupKey);
                     nMissing++;
                 }
                 if (nMissing > 0 && !cancelled) {
@@ -501,7 +548,6 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 }
 
                 // ชื่อลูกค้าว่างบน obligation → ค้นหาตามชื่อไม่เจอ; ดึงจากเอกสารต้นทางแล้วอัปเดต
-                const arAll = await getDocs(query(collection(db, 'accountingObligations'), where('type', '==', 'AR'), limit(1000)));
                 if (cancelled) return;
                 const batchNames = writeBatch(db);
                 let nNames = 0;
@@ -613,8 +659,11 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 return names.includes(lowerSearch) || nums.includes(lowerSearch);
             });
         }
+        if (type === 'AR') {
+            result = dedupeUnpaidArBySalesDocNo(result);
+        }
         return result;
-    }, [obligations, searchTerm, monthFilter, docDetails]);
+    }, [obligations, searchTerm, monthFilter, docDetails, type]);
 
     useEffect(() => {
         const total = filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);

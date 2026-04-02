@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AccountingAccount, AccountingEntry } from "@/lib/types";
 import { computeCashAccountCurrentBalance } from "@/lib/accounting-balance";
+import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 import type { WithId } from "@/firebase/index";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
@@ -163,17 +164,23 @@ function ManagementAccountingAccountsPageContent() {
 
   const onTransferSubmit = async (values: TransferFormData) => {
     if (!db || !profile) return;
-    setIsTransferring(true);
 
     const fromAccount = accounts.find(a => a.id === values.fromAccountId);
     const toAccount = accounts.find(a => a.id === values.toAccountId);
 
     if (!fromAccount || !toAccount) {
         toast({ variant: 'destructive', title: 'ไม่พบข้อมูลบัญชี' });
-        setIsTransferring(false);
         return;
     }
 
+    const vd = validateAccountingEntryDate(values.transferDate);
+    if (!vd.ok) {
+        toast({ variant: "destructive", title: "วันที่โอนไม่ถูกต้อง", description: vd.message });
+        return;
+    }
+    const transferYmd = vd.normalized;
+
+    setIsTransferring(true);
     try {
         const batch = writeBatch(db);
         const sourceEntryRef = doc(collection(db, "accountingEntries"));
@@ -182,7 +189,7 @@ function ManagementAccountingAccountsPageContent() {
         // 1. Source Account: Cash Out
         batch.set(sourceEntryRef, {
             entryType: 'CASH_OUT',
-            entryDate: values.transferDate,
+            entryDate: transferYmd,
             amount: values.amount,
             accountId: values.fromAccountId,
             paymentMethod: fromAccount.type === 'CASH' ? 'CASH' : 'TRANSFER',
@@ -199,7 +206,7 @@ function ManagementAccountingAccountsPageContent() {
         // 2. Destination Account: Cash In
         batch.set(destEntryRef, {
             entryType: 'CASH_IN',
-            entryDate: values.transferDate,
+            entryDate: transferYmd,
             amount: values.amount,
             accountId: values.toAccountId,
             paymentMethod: toAccount.type === 'CASH' ? 'CASH' : 'TRANSFER',

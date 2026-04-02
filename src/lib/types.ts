@@ -789,6 +789,8 @@ export interface AccountingObligation {
   dueDate?: string; // YYYY-MM-DD
   lastPaymentDate?: string; // YYYY-MM-DD
   paidOffDate?: string; // YYYY-MM-DD
+  /** วันที่เอกสารต้นทาง (ใบกำกับ ฯลฯ) YYYY-MM-DD */
+  docDate?: string;
   note?: string;
   jobId?: string;
   /** สำหรับลิงก์ออกใบเสร็จจากหน้าลูกหนี้ */

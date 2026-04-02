@@ -65,6 +65,7 @@ import {
   ChevronLeft, ChevronRight, Filter, AlertCircle, FileText, Wallet, Save, ExternalLink, CalendarDays
 } from "lucide-react";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
+import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -229,10 +230,17 @@ export default function CashbookPage() {
     const account = accounts.find(a => a.id === values.accountId);
     if (!account) return;
 
+    const vd = validateAccountingEntryDate(values.entryDate);
+    if (!vd.ok) {
+      toast({ variant: "destructive", title: "วันที่รายการไม่ถูกต้อง", description: vd.message });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const entryData = sanitizeForFirestore({
         ...values,
+        entryDate: vd.normalized,
         paymentMethod: account.type === 'CASH' ? 'CASH' : 'TRANSFER',
         updatedAt: serverTimestamp(),
       });
@@ -409,7 +417,17 @@ export default function CashbookPage() {
                     </TableRow>
                   ))
                 ) : (
-                  <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการในช่วงเวลานี้</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                      <p className="italic">ไม่พบรายการในช่วงเวลานี้</p>
+                      {searchTerm.trim() ? (
+                        <p className="text-xs mt-2 max-w-md mx-auto text-left">
+                          รายการรับเงินจากลูกหนี้ใช้ <span className="font-mono">entryDate</span> เป็นปฏิทิน — ลองเลื่อนเดือนที่หัวหน้า
+                          หรือล้างช่องค้นหา หากรายการอาจอยู่เดือนอื่น
+                        </p>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
                 )}
               </TableBody>
             </Table>

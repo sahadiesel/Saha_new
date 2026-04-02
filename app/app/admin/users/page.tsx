@@ -204,16 +204,43 @@ export default function AdminUsersPage() {
   };
 
   const handleUpdateJobManual = async (jobId: string, updates: any, logText: string) => {
-    if (!db || !profile) return;
+    if (!db || !profile || !editingJob) return;
     setIsSaving(true);
     try {
       const batch = writeBatch(db);
       const colName = searchInArchive ? `jobsArchive_${new Date().getFullYear()}` : "jobs";
       const jobRef = doc(db, colName, jobId);
-      batch.update(jobRef, { ...updates, updatedAt: serverTimestamp(), lastActivityAt: serverTimestamp() });
+
+      const jobPayload: Record<string, unknown> = {
+        ...updates,
+        updatedAt: serverTimestamp(),
+        lastActivityAt: serverTimestamp(),
+      };
+
+      // แท็บ "รอลูกค้ารับสินค้า" ใน JobList ซ่อนงานที่ salesDocStatus เป็น PENDING_REVIEW/APPROVED/PAID
+      if (updates.status === "WAITING_CUSTOMER_PICKUP") {
+        jobPayload.salesDocStatus = deleteField();
+        const sid = (editingJob.salesDocId || "").trim();
+        if (sid) {
+          batch.update(doc(db, "documents", sid), {
+            status: "PENDING_REVIEW",
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      batch.update(jobRef, jobPayload);
       batch.set(doc(collection(jobRef, "activities")), { text: `[Admin Manual Fix] ${logText}`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
-      toast({ title: "ปรับปรุงข้อมูลสำเร็จ" });
+      toast({
+        title: "ปรับปรุงข้อมูลสำเร็จ",
+        description:
+          updates.status === "WAITING_CUSTOMER_PICKUP" && editingJob.salesDocId
+            ? "คืนสถานะใบขายเป็นรอบัญชีตรวจสอบ และล้าง salesDocStatus บนงานแล้ว — งานจะแสดงในแท็บรอรับของ"
+            : updates.status === "WAITING_CUSTOMER_PICKUP"
+              ? "ล้าง salesDocStatus บนงานแล้ว — งานจะแสดงในแท็บรอรับของ"
+              : undefined,
+      });
       setEditingJob(null);
       handleSearchJobs();
     } catch (e: any) {
@@ -542,10 +569,18 @@ export default function AdminUsersPage() {
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             <div className="space-y-2">
               <Label className="font-bold">บังคับเปลี่ยนสถานะจ๊อบ</Label>
-              <Select defaultValue={editingJob?.status} onValueChange={(val) => handleUpdateJobManual(editingJob!.id, { status: val }, `แก้ไขสถานะเป็น ${jobStatusLabel(val)}`)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select
+                key={editingJob?.id}
+                value={JOB_STATUSES.includes(editingJob?.status as (typeof JOB_STATUSES)[number]) ? editingJob!.status : undefined}
+                onValueChange={(val) => handleUpdateJobManual(editingJob!.id, { status: val }, `แก้ไขสถานะเป็น ${jobStatusLabel(val)}`)}
+              >
+                <SelectTrigger><SelectValue placeholder="เลือกสถานะ" /></SelectTrigger>
                 <SelectContent>{JOB_STATUSES.map(s => (<SelectItem key={s} value={s}>{jobStatusLabel(s)}</SelectItem>))}</SelectContent>
               </Select>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                เมื่อเลือก <span className="font-medium">รอลูกค้ารับสินค้า</span> ระบบจะล้าง <span className="font-mono">salesDocStatus</span> บนงาน
+                (เพื่อไม่ให้ถูกซ่อนในแท็บรอรับของ) และถ้ามีบิลผูกอยู่จะตั้งสถานะเอกสารเป็น <span className="font-medium">รอบัญชีตรวจสอบ</span> อีกครั้ง
+              </p>
             </div>
             <Separator />
             <div className="space-y-4">

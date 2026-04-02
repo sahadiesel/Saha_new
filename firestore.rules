@@ -139,7 +139,12 @@ service cloud.firestore {
     match /jobs/{jobId} {
       allow read: if signedIn();
       allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4;
-      allow update: if canEditJobs() && request.resource.data.photos.size() <= 4;
+      // ฝ่ายบริหาร/แอดมินอัปเดตงานได้แม้รูปเกิน 4 (เครื่องมือแก้สถานะจะไม่ถูกบล็อก)
+      allow update: if canEditJobs() && (
+        isMgmt() ||
+        !('photos' in request.resource.data) ||
+        (request.resource.data.photos is list && request.resource.data.photos.size() <= 4)
+      );
       allow delete: if isMgmt();
       match /activities/{activityId} {
         allow read: if signedIn();

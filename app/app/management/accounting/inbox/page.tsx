@@ -41,6 +41,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -277,6 +278,12 @@ function AccountingInboxPageContent() {
   const handleApproveSaleDocument = async () => {
     if (!db || !profile || !confirmingDoc) return;
     setConfirmError(null);
+    const vdPay = validateAccountingEntryDate(selectedPaymentDate);
+    if (!vdPay.ok) {
+      setConfirmError(vdPay.message);
+      return;
+    }
+    const payYmd = vdPay.normalized;
     setIsSubmitting(true);
     const jobId = confirmingDoc.jobId;
     const isDeliveryNote = confirmingDoc.docType === 'DELIVERY_NOTE';
@@ -306,7 +313,7 @@ function AccountingInboxPageContent() {
 
             transaction.set(entryRef, sanitizeForFirestore({
                 entryType: 'CASH_IN',
-                entryDate: selectedPaymentDate,
+                entryDate: payYmd,
                 amount: confirmingDoc.grandTotal,
                 accountId: firstPayment.accountId,
                 paymentMethod: firstPayment.method,
@@ -325,7 +332,7 @@ function AccountingInboxPageContent() {
                 arStatus: 'PAID', 
                 paymentSummary: { paidTotal: confirmingDoc.grandTotal, balance: 0, paymentStatus: 'PAID' },
                 accountingEntryId: entryId,
-                paymentDate: selectedPaymentDate,
+                paymentDate: payYmd,
                 receivedAccountId: firstPayment.accountId,
                 updatedAt: serverTimestamp()
             });
@@ -354,7 +361,7 @@ function AccountingInboxPageContent() {
                 arStatus: 'UNPAID', 
                 paymentSummary: { paidTotal: 0, balance: confirmingDoc.grandTotal, paymentStatus: 'UNPAID' },
                 suggestedPayments: finalPayments,
-                paymentDate: selectedPaymentDate,
+                paymentDate: payYmd,
                 arObligationId: arId,
                 updatedAt: serverTimestamp()
             });
@@ -372,8 +379,10 @@ function AccountingInboxPageContent() {
                 createdAt: serverTimestamp(), 
                 updatedAt: serverTimestamp(), 
                 customerNameSnapshot: customerName,
+                customerId: confirmingDoc.customerId || confirmingDoc.customerSnapshot?.id || null,
                 jobId: jobId || null,
                 dueDate: confirmingDoc.dueDate || null,
+                docDate: confirmingDoc.docDate || null,
             }));
 
             if (jobId && jobSnap && jobSnap.exists()) {
@@ -533,6 +542,7 @@ function AccountingInboxPageContent() {
           customerNameSnapshot: customerName,
           jobId: docObj.jobId || null,
           dueDate: docObj.dueDate || null,
+          docDate: docObj.docDate || null,
         }));
 
         const targetDocStatus = isDeliveryNote || isDebitNote ? 'UNPAID' : 'APPROVED';

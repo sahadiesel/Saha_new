@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { doc, collection, query, where, getDocs, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, getDoc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useFirebase, type WithId } from "@/firebase";
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
 import { DateRange } from "react-day-picker";
-import { format, parseISO, startOfDay, endOfDay, startOfMonth, endOfMonth, isBefore } from 'date-fns';
+import { format, parseISO, startOfDay, startOfMonth, endOfMonth, isBefore, isValid } from 'date-fns';
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +18,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-import { Loader2, Search, ArrowLeft, CalendarIcon, ShieldAlert } from 'lucide-react';
+import { Loader2, Search, ArrowLeft, CalendarIcon, ShieldAlert, ListTree, CalendarDays, Pencil } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from '@/lib/utils';
 import { safeFormat, APP_DATE_FORMAT, normalizeGregorianDateOnlyString } from '@/lib/date-utils';
 import type { AccountingAccount, AccountingEntry, AccountingCheckItem } from '@/lib/types';
@@ -28,9 +37,19 @@ import {
     normalizeAccountingEntriesForComputation,
     roundMoney,
 } from '@/lib/accounting-balance';
+import { validateAccountingEntryDateAdminCorrection } from "@/lib/accounting-entry-date";
 
 const formatCurrency = (value: number) => {
     return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+type HiddenLedgerRow = {
+    id: string;
+    entryDate: string;
+    description: string;
+    sourceDocNo: string;
+    income: number;
+    expense: number;
 };
 
 export default function AccountLedgerPage() {
@@ -52,11 +71,27 @@ export default function AccountLedgerPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [pendingChecks, setPendingChecks] = useState<WithId<AccountingCheckItem>[]>([]);
+    const [hiddenLedgerDialogOpen, setHiddenLedgerDialogOpen] = useState(false);
+    const [entryDateFixTarget, setEntryDateFixTarget] = useState<HiddenLedgerRow | null>(null);
+    const [fixEntryDateValue, setFixEntryDateValue] = useState("");
+    const [fixEntryDateSaving, setFixEntryDateSaving] = useState(false);
 
     const hasPermission = useMemo(() => {
         if (!profile) return false;
         return (profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT' || profile.department === 'ACCOUNTING_HR') && profile.role !== 'WORKER';
     }, [profile]);
+
+    /** แก้ entryDate ของรายการเดินบัญชี — จำกัด Admin/Manager เพื่อลดความเสี่ยงข้อมูล */
+    const canCorrectEntryDate = useMemo(() => {
+        return profile?.role === "ADMIN" || profile?.role === "MANAGER";
+    }, [profile]);
+
+    const refreshAccountEntries = useCallback(async () => {
+        if (!db || !accountId) return;
+        const entriesQuery = query(collection(db, "accountingEntries"), where("accountId", "==", accountId));
+        const entriesSnap = await getDocs(entriesQuery);
+        setEntries(entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<AccountingEntry>)));
+    }, [db, accountId]);
 
     useEffect(() => {
         if (!db || !accountId || !hasPermission) {
@@ -95,6 +130,40 @@ export default function AccountLedgerPage() {
 
         fetchData();
     }, [db, accountId, toast, hasPermission]);
+
+    useEffect(() => {
+        if (!entryDateFixTarget) {
+            setFixEntryDateValue("");
+            return;
+        }
+        const norm = normalizeGregorianDateOnlyString(entryDateFixTarget.entryDate);
+        setFixEntryDateValue(/^\d{4}-\d{2}-\d{2}$/.test(norm) ? norm : format(new Date(), "yyyy-MM-dd"));
+    }, [entryDateFixTarget]);
+
+    const handleSaveCorrectedEntryDate = async () => {
+        if (!db || !entryDateFixTarget || !fixEntryDateValue.trim()) return;
+        const vd = validateAccountingEntryDateAdminCorrection(fixEntryDateValue);
+        if (!vd.ok) {
+            toast({ variant: "destructive", title: "วันที่ไม่ถูกต้อง", description: vd.message });
+            return;
+        }
+        const ymd = vd.normalized;
+        setFixEntryDateSaving(true);
+        try {
+            await updateDoc(doc(db, "accountingEntries", entryDateFixTarget.id), {
+                entryDate: ymd,
+                updatedAt: serverTimestamp(),
+            });
+            await refreshAccountEntries();
+            toast({ title: "อัปเดตวันที่รายการแล้ว", description: `บันทึกเป็น ${safeFormat(parseISO(ymd), APP_DATE_FORMAT)}` });
+            setEntryDateFixTarget(null);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: msg });
+        } finally {
+            setFixEntryDateSaving(false);
+        }
+    };
 
     useEffect(() => {
         if (!db || !accountId || !hasPermission) return;
@@ -140,6 +209,7 @@ export default function AccountLedgerPage() {
                 totals: { totalIncome: 0, totalExpense: 0 },
                 periodStartingBalance: 0,
                 listPageBalance: 0,
+                hiddenLedgerEntries: [] as { id: string; entryDate: string; description: string; sourceDocNo: string; income: number; expense: number }[],
             };
     
         // 1. แปลงปี พ.ศ. ในสตริงวันที่เป็น ค.ศ. ก่อนเรียง/กรอง (กันข้อมูลเก่าปนใน DB)
@@ -179,18 +249,52 @@ export default function AccountLedgerPage() {
         const allProcessed = [...processedPre, ...processedPost];
         
         // 3. Filter for visibility based on user range and search
-        const visibleItems = allProcessed.filter(entry => {
-            const entryDate = parseISO(entry.entryDate);
-            const isInRange = dateRange?.from && dateRange?.to ? (entryDate >= startOfDay(dateRange.from) && entryDate <= endOfDay(dateRange.to)) : true;
-            if (!isInRange) return false;
+        const visibleItems = allProcessed.filter((entry) => {
+            if (dateRange?.from && dateRange?.to) {
+                const entryKey = normalizeGregorianDateOnlyString(entry.entryDate);
+                const fromKey = format(startOfDay(dateRange.from), "yyyy-MM-dd");
+                const toKey = format(startOfDay(dateRange.to), "yyyy-MM-dd");
+                if (!(entryKey >= fromKey && entryKey <= toKey)) return false;
+            }
     
-            if (searchTerm) {
-                const lowerSearch = searchTerm.toLowerCase();
-                const match = entry.sourceDocNo?.toLowerCase().includes(lowerSearch) ||
-                              entry.description?.toLowerCase().includes(lowerSearch) ||
-                              (entry as any).customerNameSnapshot?.toLowerCase().includes(lowerSearch) ||
-                              (entry as any).vendorNameSnapshot?.toLowerCase().includes(lowerSearch);
-                if (!match) return false;
+            if (searchTerm.trim()) {
+                const raw = searchTerm.trim();
+                const lowerSearch = raw.toLowerCase();
+                const compactNum = raw.replace(/[, ]/g, "");
+                const dateNorm = normalizeGregorianDateOnlyString(entry.entryDate);
+                let dateDisplay = "";
+                try {
+                    dateDisplay = safeFormat(parseISO(dateNorm), APP_DATE_FORMAT);
+                } catch {
+                    /* ignore */
+                }
+                const e = entry as AccountingEntry & { notes?: string };
+                const textFields = [
+                    e.sourceDocNo,
+                    e.description,
+                    e.customerNameSnapshot,
+                    e.vendorNameSnapshot,
+                    e.vendorShortNameSnapshot,
+                    e.counterpartyNameSnapshot,
+                    e.categoryMain,
+                    e.categorySub,
+                    e.notes,
+                    e.entryDate,
+                    dateDisplay,
+                ];
+                const textMatch = textFields.some((f) => f && String(f).toLowerCase().includes(lowerSearch));
+                const amt = Number(e.amount ?? 0);
+                const amountMatch =
+                    compactNum.length > 0 &&
+                    (String(amt).includes(compactNum) ||
+                        amt
+                            .toLocaleString("th-TH", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                            })
+                            .replace(/\s/g, "")
+                            .includes(compactNum));
+                if (!textMatch && !amountMatch) return false;
             }
             return true;
         });
@@ -259,6 +363,24 @@ export default function AccountLedgerPage() {
         const totalIncomeWithBridge = roundMoney(totalIncome + bridgeIncome);
         const totalExpenseWithBridge = roundMoney(totalExpense + bridgeExpense);
 
+        const hiddenLedgerEntries = [...notShownEntries]
+            .sort((a, b) => {
+                const da = parseISO(a.entryDate).getTime();
+                const db = parseISO(b.entryDate).getTime();
+                if (da !== db) return da - db;
+                const timeA = (a as { createdAt?: { toMillis?: () => number } }).createdAt?.toMillis?.() ?? 0;
+                const timeB = (b as { createdAt?: { toMillis?: () => number } }).createdAt?.toMillis?.() ?? 0;
+                return timeA - timeB;
+            })
+            .map((e) => ({
+                id: e.id,
+                entryDate: e.entryDate,
+                description: e.description || "—",
+                sourceDocNo: e.sourceDocNo || "—",
+                income: e.income,
+                expense: e.expense,
+            }));
+
         return {
             periodStartingBalance,
             items: visibleItems,
@@ -266,6 +388,7 @@ export default function AccountLedgerPage() {
             showBridge,
             bridgeDateLabel,
             listPageBalance,
+            hiddenLedgerEntries,
             totals: {
                 totalIncome: totalIncomeWithBridge,
                 totalExpense: totalExpenseWithBridge,
@@ -326,45 +449,56 @@ export default function AccountLedgerPage() {
                                 ยอดเดียวกับหน้ารายการบัญชี (ยอดยกมาหลัก + รายการหลังวันยกมาทั้งหมด) ช่วงวันที่ใช้แค่กรองรายการในตาราง ไม่เปลี่ยนยอดคงเหลือจริง
                             </p>
                         </div>
-                        <div className="flex flex-col md:flex-row gap-2">
-                             <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                <Button
-                                    variant={"outline"}
-                                    className={cn("w-full md:w-[300px] justify-start text-left font-normal", !dateRange && "text-muted-foreground")}
-                                >
-                                    <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {dateRange?.from ? (
-                                    dateRange.to ? (
-                                        <>
-                                        {format(dateRange.from, APP_DATE_FORMAT)} - {format(dateRange.to, APP_DATE_FORMAT)}
-                                        </>
-                                    ) : (
-                                        format(dateRange.from, APP_DATE_FORMAT)
-                                    )
-                                    ) : (
-                                    <span>ทุกช่วงเวลา</span>
-                                    )}
-                                </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="end">
-                                <Calendar mode="range" selected={dateRange} onSelect={setDateRange} numberOfMonths={2}/>
-                                </PopoverContent>
-                            </Popover>
-                            {dateRange != null && (
-                                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setDateRange(undefined)}>
-                                    ล้างช่วง (แสดงทั้งหมด)
-                                </Button>
-                            )}
+                        <div className="flex flex-col gap-3 w-full md:max-w-xl shrink-0">
+                            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant={"outline"}
+                                            className={cn(
+                                                "w-full sm:min-w-[260px] justify-start text-left font-normal",
+                                                !dateRange && "text-muted-foreground"
+                                            )}
+                                        >
+                                            <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                                            {dateRange?.from ? (
+                                                dateRange.to ? (
+                                                    <>
+                                                        {format(dateRange.from, APP_DATE_FORMAT)} -{" "}
+                                                        {format(dateRange.to, APP_DATE_FORMAT)}
+                                                    </>
+                                                ) : (
+                                                    format(dateRange.from, APP_DATE_FORMAT)
+                                                )
+                                            ) : (
+                                                <span>ทุกช่วงเวลา</span>
+                                            )}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto p-0" align="end">
+                                        <Calendar mode="range" selected={dateRange} onSelect={setDateRange} numberOfMonths={2} />
+                                    </PopoverContent>
+                                </Popover>
+                                {dateRange != null && (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="shrink-0 w-full sm:w-auto"
+                                        onClick={() => setDateRange(undefined)}
+                                    >
+                                        ล้างช่วง (แสดงทั้งหมด)
+                                    </Button>
+                                )}
                             </div>
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <div className="relative w-full">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                                 <Input
-                                placeholder="ค้นหาจากรายการ, อ้างอิง..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="pl-10"
+                                    placeholder="ค้นหา รายการ, เลขที่อ้างอิง, วันที่ (dd/mm/yyyy หรือ yyyy-mm-dd), หมวดหมู่, ยอดเงิน..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="pl-10 w-full"
+                                    aria-label="ค้นหารายการในสมุดบัญชี"
                                 />
                             </div>
                         </div>
@@ -403,8 +537,22 @@ export default function AccountLedgerPage() {
                                                     ? processedData.bridgeDateLabel
                                                     : safeFormat(parseISO(item.entryDate), APP_DATE_FORMAT)}
                                             </TableCell>
-                                            <TableCell className={cn("text-sm", isBridge && "text-muted-foreground italic")}>
-                                                {item.description}
+                                            <TableCell className={cn("text-sm", isBridge && "text-muted-foreground")}>
+                                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                                    <span className={cn(isBridge && "italic")}>{item.description}</span>
+                                                    {isBridge && processedData.hiddenLedgerEntries.length > 0 && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            className="shrink-0 w-fit"
+                                                            onClick={() => setHiddenLedgerDialogOpen(true)}
+                                                        >
+                                                            <ListTree className="mr-2 h-4 w-4" />
+                                                            ดูรายการที่ไม่ได้แสดง ({processedData.hiddenLedgerEntries.length})
+                                                        </Button>
+                                                    )}
+                                                </div>
                                             </TableCell>
                                             <TableCell className="text-xs font-mono">{item.sourceDocNo || "-"}</TableCell>
                                             <TableCell className="text-right text-green-600 font-medium">
@@ -446,6 +594,175 @@ export default function AccountLedgerPage() {
                     </p>
                 </CardContent>
             </Card>
+
+            <Dialog open={hiddenLedgerDialogOpen} onOpenChange={setHiddenLedgerDialogOpen}>
+                <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
+                    <DialogHeader className="p-6 pb-2 shrink-0">
+                        <DialogTitle>รายการที่ไม่ได้แสดงในตารางสมุด</DialogTitle>
+                        <DialogDescription>
+                            รายการนี้อยู่นอกช่วงที่เลือกในปฏิทิน (เช่น เลือกเฉพาะมี.ค. แต่รายการเป็น ม.ค.–ก.พ.) หรือถูกซ่อนจากช่องค้นหา
+                            — ล้างช่วงวันที่หรือขยายช่วงเพื่อให้รายการแสดงในตารางหลักโดยไม่ต้องแก้ข้อมูล
+                            {canCorrectEntryDate
+                                ? " — «แก้วันที่» ปรับเฉพาะวันที่ในสมุดบัญชี ไม่แก้วันที่บิลขาย"
+                                : ""}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <ScrollArea className="flex-1 min-h-0 px-6 pb-6">
+                        <Table>
+                            <TableHeader>
+                                <TableRow className="bg-muted/50">
+                                    <TableHead className="w-[6.5rem]">วันที่ (entryDate)</TableHead>
+                                    <TableHead>รายการ</TableHead>
+                                    <TableHead className="w-28">อ้างอิง</TableHead>
+                                    <TableHead className="text-right w-24">เข้า</TableHead>
+                                    <TableHead className="text-right w-24">ออก</TableHead>
+                                    <TableHead className="w-[7.5rem] text-center">ปรับวันที่</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {processedData.hiddenLedgerEntries.map((row) => (
+                                    <TableRow key={row.id}>
+                                        <TableCell className="text-xs font-mono align-top whitespace-nowrap">
+                                            {safeFormat(
+                                                parseISO(normalizeGregorianDateOnlyString(row.entryDate)),
+                                                APP_DATE_FORMAT
+                                            )}
+                                            <span className="block text-[10px] text-muted-foreground font-normal mt-0.5">
+                                                {row.entryDate}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell className="text-sm align-top max-w-[220px] break-words">
+                                            {row.description}
+                                        </TableCell>
+                                        <TableCell className="text-xs font-mono align-top">{row.sourceDocNo}</TableCell>
+                                        <TableCell className="text-right text-green-600 text-sm align-top">
+                                            {row.income > 0 ? formatCurrency(row.income) : "—"}
+                                        </TableCell>
+                                        <TableCell className="text-right text-destructive text-sm align-top">
+                                            {row.expense > 0 ? formatCurrency(row.expense) : "—"}
+                                        </TableCell>
+                                        <TableCell className="align-top text-center">
+                                            {canCorrectEntryDate ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 text-xs"
+                                                    onClick={() => setEntryDateFixTarget(row)}
+                                                >
+                                                    <Pencil className="h-3 w-3 mr-1 shrink-0" />
+                                                    แก้วันที่
+                                                </Button>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">—</span>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </ScrollArea>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={!!entryDateFixTarget}
+                onOpenChange={(open) => {
+                    if (!open) setEntryDateFixTarget(null);
+                }}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>แก้วันที่รายการเดินบัญชี</DialogTitle>
+                        <DialogDescription className="space-y-2">
+                            <span>
+                                ปรับเฉพาะ <strong className="text-foreground">วันที่ทำรายการในสมุดบัญชี</strong> (วันที่ตัดเงินเข้า–ออกบัญชีนี้)
+                                เพื่อให้ยอดคงเหลือและช่วงวันที่ในตารางสมุดถูกต้อง
+                            </span>
+                            <span className="block text-amber-800 dark:text-amber-200/90">
+                                ไม่แก้วันที่ออกบิลขายหรือวันที่บนใบกำกับ/ใบส่งของ — เอกสารขายในระบบยังเป็นวันเดิม จึงไม่กระทบลำดับเลขที่หรือรายงานภาษีตามวันที่บิล
+                            </span>
+                            <span className="block">
+                                รูปแบบบันทึก: <span className="font-mono">yyyy-mm-dd</span> (ค.ศ.) แสดงในตารางเป็น {APP_DATE_FORMAT}
+                            </span>
+                        </DialogDescription>
+                    </DialogHeader>
+                    {entryDateFixTarget ? (
+                        <div className="space-y-4 py-2">
+                            <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                                <p className="font-medium line-clamp-3">{entryDateFixTarget.description}</p>
+                                <p className="text-xs text-muted-foreground font-mono">
+                                    อ้างอิง: {entryDateFixTarget.sourceDocNo} · id: {entryDateFixTarget.id.slice(0, 8)}…
+                                </p>
+                                <p className="text-xs">
+                                    วันที่เดิมใน DB:{" "}
+                                    <span className="font-mono">{entryDateFixTarget.entryDate}</span>
+                                </p>
+                            </div>
+                            <div className="space-y-2">
+                                <p className="text-sm font-medium">วันที่ที่ถูกต้อง (ค.ศ.)</p>
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant="outline"
+                                            className={cn(
+                                                "w-full justify-start text-left font-normal",
+                                                !fixEntryDateValue && "text-muted-foreground"
+                                            )}
+                                        >
+                                            <CalendarDays className="mr-2 h-4 w-4 shrink-0" />
+                                            {fixEntryDateValue && isValid(parseISO(fixEntryDateValue))
+                                                ? safeFormat(parseISO(fixEntryDateValue), APP_DATE_FORMAT)
+                                                : "เลือกวันที่"}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto p-0" align="start">
+                                        <Calendar
+                                            mode="single"
+                                            selected={
+                                                fixEntryDateValue && isValid(parseISO(fixEntryDateValue))
+                                                    ? parseISO(fixEntryDateValue)
+                                                    : undefined
+                                            }
+                                            onSelect={(d) =>
+                                                setFixEntryDateValue(d ? format(d, "yyyy-MM-dd") : "")
+                                            }
+                                            initialFocus
+                                        />
+                                    </PopoverContent>
+                                </Popover>
+                                <Input
+                                    className="font-mono text-sm"
+                                    value={fixEntryDateValue}
+                                    onChange={(e) => setFixEntryDateValue(e.target.value.trim())}
+                                    placeholder="yyyy-MM-dd"
+                                    spellCheck={false}
+                                />
+                            </div>
+                        </div>
+                    ) : null}
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setEntryDateFixTarget(null)}
+                            disabled={fixEntryDateSaving}
+                        >
+                            ยกเลิก
+                        </Button>
+                        <Button type="button" onClick={handleSaveCorrectedEntryDate} disabled={fixEntryDateSaving}>
+                            {fixEntryDateSaving ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    กำลังบันทึก…
+                                </>
+                            ) : (
+                                "บันทึกวันที่"
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Card>
                 <CardHeader>
