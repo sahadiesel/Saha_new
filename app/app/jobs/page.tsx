@@ -21,6 +21,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { errorEmitter } from '@/firebase/error-emitter';
+import { jobDisplayRef } from "@/lib/job-display";
 
 // Helper for safe timestamp comparison
 const getSafeTime = (val: any): number => {
@@ -84,7 +85,7 @@ function JobCard({ job }: { job: Job }) {
         <CardDescription className="text-xs">
           {deptLabel(job.department)}
           <br />
-          ID: {job.id}
+          เลขที่: {jobDisplayRef(job)}
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 pb-4 flex-grow">
@@ -114,7 +115,7 @@ function CompactJobCard({ job }: { job: Job }) {
                     )}
                     <div className="flex-grow overflow-hidden">
                         <p className="font-semibold text-sm truncate">{job.customerSnapshot.name}</p>
-                        <p className="text-[10px] font-mono text-muted-foreground">{job.id}</p>
+                        <p className="text-[10px] font-mono text-muted-foreground">{jobDisplayRef(job)}</p>
                         <div className="flex justify-between items-center mt-2">
                             <Badge className={cn("text-[9px] px-1 h-4 border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
                             <Button asChild size="icon" variant="ghost" className="h-6 w-6 rounded-full">
@@ -198,7 +199,7 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
                 {jobs.map(job => (
                 <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
                     <TableCell className="pl-6 py-4">
-                    <div className="font-mono text-xs font-bold text-primary mb-1">{job.id}</div>
+                    <div className="font-mono text-xs font-bold text-primary mb-1">{jobDisplayRef(job)}</div>
                     <div className="font-semibold">{job.customerSnapshot.name}</div>
                     <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
                     </TableCell>
@@ -265,6 +266,7 @@ export default function ManagementJobsPage() {
                 (j.customerSnapshot?.phone || "").includes(q) ||
                 (j.description || "").toLowerCase().includes(q) ||
                 (j.id && j.id.toLowerCase().includes(q)) ||
+                (j.jobNo && j.jobNo.toLowerCase().includes(q)) ||
                 (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(q) ||
                 (j.commonrailDetails?.registrationNumber || "").toLowerCase().includes(q) ||
                 (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(q)

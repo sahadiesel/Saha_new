@@ -131,6 +131,8 @@ export interface OutsourceVendor {
 
 export interface Job {
   id: string;
+  /** เลขที่ใบงานอ่านง่าย (เช่น SJ2026-0001) — คนละค่ากับรหัสเอกสาร Firestore */
+  jobNo?: string;
   customerId: string;
   customerSnapshot: {
     name: string;
@@ -462,6 +464,8 @@ export interface StoreSettings {
 
 export interface DocumentSettings {
   id?: 'documents';
+  /** Prefix for auto job numbers (e.g. SJ → SJ2026-0001) */
+  jobPrefix?: string;
   quotationPrefix?: string;
   deliveryNotePrefix?: string;
   taxInvoicePrefix?: string;

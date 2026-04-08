@@ -22,6 +22,7 @@ import { Skeleton } from "./ui/skeleton";
 import { Separator } from "./ui/separator";
 
 const documentSettingsSchema = z.object({
+  jobPrefix: z.string().optional(),
   quotationPrefix: z.string().optional(),
   deliveryNotePrefix: z.string().optional(),
   taxInvoicePrefix: z.string().optional(),
@@ -101,6 +102,8 @@ export function DocumentSettingsForm() {
             </CardHeader>
             <CardContent className="space-y-1">
                 <Separator />
+                <InfoRow label="เลขที่ใบงานซ่อม (Job)" value={settings?.jobPrefix || 'SJ'} />
+                <Separator />
                 <InfoRow label="ใบเสนอราคา" value={settings?.quotationPrefix} />
                 <Separator />
                 <InfoRow label="ใบส่งของชั่วคราว" value={settings?.deliveryNotePrefix} />
@@ -136,6 +139,7 @@ export function DocumentSettingsForm() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <FormField control={form.control} name="jobPrefix" render={({ field }) => (<FormItem><FormLabel>เลขที่ใบงานซ่อม (Prefix)</FormLabel><FormControl><Input placeholder="SJ" {...field} value={field.value ?? ''} /></FormControl><FormMessage /><p className="text-xs text-muted-foreground">ระบบสร้างเลขอัตโนมัติ เช่น SJ2026-0001 (ไม่ซ้ำกับงานเก่า)</p></FormItem>)} />
             <FormField control={form.control} name="quotationPrefix" render={({ field }) => (<FormItem><FormLabel>ใบเสนอราคา</FormLabel><FormControl><Input placeholder="QT" {...field} value={field.value ?? ''} /></FormControl></FormItem>)} />
             <FormField control={form.control} name="deliveryNotePrefix" render={({ field }) => (<FormItem><FormLabel>ใบส่งของชั่วคราว</FormLabel><FormControl><Input placeholder="DN" {...field} value={field.value ?? ''} /></FormControl></FormItem>)} />
             <FormField control={form.control} name="taxInvoicePrefix" render={({ field }) => (<FormItem><FormLabel>ใบกำกับภาษี</FormLabel><FormControl><Input placeholder="INV" {...field} value={field.value ?? ''} /></FormControl></FormItem>)} />

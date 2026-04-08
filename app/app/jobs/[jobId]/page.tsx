@@ -47,6 +47,7 @@ import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/e
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { restoreJobFromArchive } from "@/firebase/jobs-archive";
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
+import { jobDisplayRef } from "@/lib/job-display";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
@@ -887,7 +888,14 @@ function JobDetailsPageContent() {
   return (
     <>
       <Button variant="outline" size="sm" className="mb-4" onClick={() => router.back()}><ArrowLeft className="mr-2 h-4 w-4" /> ย้อนกลับ</Button>
-      <PageHeader title={`Job: ${job.customerSnapshot.name}`} description={`ID: ${job.id}`} />
+      <PageHeader
+        title={`Job: ${job.customerSnapshot.name}`}
+        description={
+          job.jobNo
+            ? `เลขที่ใบงาน: ${jobDisplayRef(job)} · รหัสอ้างอิง: ${job.id}`
+            : `เลขที่ใบงาน: ${jobDisplayRef(job)}`
+        }
+      />
       
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">

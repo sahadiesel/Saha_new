@@ -29,10 +29,16 @@ export const closeJobAfterAccounting = onCall(
       
       const archiveRef = db.collection(`jobsArchive_${year}`).doc(jobId);
 
+      const existingNo = jobData.jobNo && String(jobData.jobNo).trim();
+      const inferredNo =
+        existingNo ||
+        (/^[A-Za-z]{1,8}\d{4}-\d{4,}$/.test(jobId) ? jobId : undefined);
+
       // Move main job data
       await archiveRef.set(
         {
           ...jobData,
+          ...(inferredNo ? { jobNo: inferredNo } : {}),
           status: "CLOSED",
           isArchived: true,
           archivedAt: FieldValue.serverTimestamp(),
@@ -113,8 +119,13 @@ export const migrateClosedJobsToArchive2026 = onCall(
         const archiveSnap = await archiveRef.get();
 
         if (!archiveSnap.exists) {
+          const mExistingNo = jobData.jobNo && String(jobData.jobNo).trim();
+          const mInferredNo =
+            mExistingNo ||
+            (/^[A-Za-z]{1,8}\d{4}-\d{4,}$/.test(jobId) ? jobId : undefined);
           await archiveRef.set({
             ...jobData,
+            ...(mInferredNo ? { jobNo: mInferredNo } : {}),
             status: "CLOSED",
             isArchived: true,
             archivedAt: FieldValue.serverTimestamp(),

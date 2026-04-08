@@ -216,9 +216,9 @@ export default function IntakePage() {
         if (values.department === 'COMMONRAIL') jobData.commonrailDetails = values.commonrailDetails;
         if (values.department === 'MECHANIC') jobData.mechanicDetails = values.mechanicDetails;
 
-        const { jobId } = await createJob(db, jobData, profile);
+        const { jobId, jobNo } = await createJob(db, jobData, profile);
         
-        toast({ title: "สร้างใบงานสำเร็จ", description: `เลขที่ใบงาน: ${jobId}` });
+        toast({ title: "สร้างใบงานสำเร็จ", description: `เลขที่ใบงาน: ${jobNo}` });
         
         form.reset();
         setPhotos([]);

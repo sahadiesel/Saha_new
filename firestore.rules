@@ -138,7 +138,10 @@ service cloud.firestore {
     // Jobs & Main Documents
     match /jobs/{jobId} {
       allow read: if signedIn();
-      allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4;
+      // เปิดงานใหม่ต้องใช้รหัสเอกสารแบบ auto-id ของ Firestore (20 ตัว) เท่านั้น
+      // กันสร้าง jobs/SJ2026-0001 ซ้ำแล้วไปดึงเอกสารเก่าที่ผูก jobId เดิม — ยกเว้นแอดมิน (เช่น กู้คืนจากประวัติ)
+      allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4
+        && (jobId.size() == 20 || isAdmin());
       // ฝ่ายบริหาร/แอดมินอัปเดตงานได้แม้รูปเกิน 4 (เครื่องมือแก้สถานะจะไม่ถูกบล็อก)
       allow update: if canEditJobs() && (
         isMgmt() ||

@@ -13,6 +13,7 @@ import {
 import { archiveCollectionNameByYear } from '@/lib/archive-utils';
 import type { UserProfile, Job } from '@/lib/types';
 import { sanitizeForFirestore } from '@/lib/utils';
+import { resolveJobNoForArchivedDocument } from '@/lib/job-no-utils';
 
 /**
  * Moves a job and its activities subcollection to an annual archive collection.
@@ -50,8 +51,11 @@ export async function archiveAndCloseJob(
         });
     }
 
+    const resolvedJobNo = resolveJobNoForArchivedDocument(jobId, jobData.jobNo);
+
     const archivedJobData = {
       ...jobData,
+      ...(resolvedJobNo ? { jobNo: resolvedJobNo } : {}),
       status: 'CLOSED',
       isArchived: true,
       archivedAt: serverTimestamp(),

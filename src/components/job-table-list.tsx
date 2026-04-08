@@ -46,6 +46,7 @@ import type { Job, JobStatus, JobDepartment } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
+import { jobDisplayRef } from "@/lib/job-display";
 import { cn } from "@/lib/utils";
 
 interface JobTableListProps {
@@ -148,11 +149,12 @@ export function JobTableList({
       
       const term = searchTerm.toLowerCase().trim();
       if (term) {
-        jobsData = jobsData.filter(j => 
+        jobsData = jobsData.filter(j =>
           (j.customerSnapshot?.name || "").toLowerCase().includes(term) ||
           (j.customerSnapshot?.phone || "").includes(term) ||
           (j.description || "").toLowerCase().includes(term) ||
           (j.id && j.id.toLowerCase().includes(term)) ||
+          (j.jobNo && j.jobNo.toLowerCase().includes(term)) ||
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
           (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term) ||
           (j.commonrailDetails?.partNumber || "").toLowerCase().includes(term) ||
@@ -259,6 +261,7 @@ export function JobTableList({
                 {jobs.map(job => (
                   <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
                     <TableCell className="pl-6 py-4">
+                      <div className="font-mono text-[11px] font-bold text-primary mb-0.5">{jobDisplayRef(job)}</div>
                       <div className="font-semibold">{job.customerSnapshot.name}</div>
                       <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
                     </TableCell>

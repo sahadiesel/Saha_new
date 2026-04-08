@@ -84,6 +84,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { jobDisplayRef } from "@/lib/job-display";
 import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
@@ -258,6 +259,7 @@ export function JobList({
           (j.customerSnapshot?.phone || "").includes(term) ||
           (j.description || "").toLowerCase().includes(term) ||
           (j.id && j.id.toLowerCase().includes(term)) ||
+          (j.jobNo && j.jobNo.toLowerCase().includes(term)) ||
           (j.carServiceDetails?.licensePlate || "").toLowerCase().includes(term) ||
           (j.carSnapshot?.licensePlate || "").toLowerCase().includes(term)
         );
@@ -560,7 +562,10 @@ export function JobList({
               </div>
               <CardHeader className="p-4 space-y-1">
                 <CardTitle className="text-base line-clamp-1">{job.customerSnapshot.name}</CardTitle>
-                <CardDescription className="text-[10px]">{deptLabel(job.department)} • {safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</CardDescription>
+                <CardDescription className="text-[10px]">
+                  <span className="font-mono font-semibold text-foreground/80">{jobDisplayRef(job)}</span>
+                  {' · '}{deptLabel(job.department)} • {safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}
+                </CardDescription>
               </CardHeader>
               <CardContent className="px-4 pb-4 flex-grow"><p className="text-sm line-clamp-2 text-muted-foreground">{job.description}</p></CardContent>
               <CardFooter className="px-4 pb-4 pt-0 flex flex-col gap-2">

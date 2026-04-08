@@ -29,6 +29,7 @@ import { Loader2, Database, Trash2, Wrench, Search, RotateCcw, AlertTriangle, Li
 import { jobStatusLabel, deptLabel, docTypeLabel, docStatusLabel } from "@/lib/ui-labels";
 import { JOB_STATUSES } from "@/lib/constants";
 import type { Job, Document as DocumentType, DocType } from "@/lib/types";
+import { jobDisplayRef } from "@/lib/job-display";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
@@ -373,7 +374,7 @@ export default function AdminUsersPage() {
                       <TableBody>
                         {foundJobs.map(job => (
                           <TableRow key={job.id}>
-                            <TableCell><div className="font-bold text-sm">{job.customerSnapshot?.name}</div><div className="text-[10px] text-muted-foreground font-mono">{job.id}</div></TableCell>
+                            <TableCell><div className="font-bold text-sm">{job.customerSnapshot?.name}</div><div className="text-[10px] text-muted-foreground font-mono">{jobDisplayRef(job)}</div>{job.jobNo ? <div className="text-[9px] text-muted-foreground/80 font-mono">รหัสอ้างอิง: {job.id}</div> : null}</TableCell>
                             <TableCell>{job.salesDocNo ? <span className="font-mono text-xs font-bold text-primary">{job.salesDocNo}</span> : <span className="text-xs text-muted-foreground italic">ไม่มี</span>}</TableCell>
                             <TableCell><Badge variant="outline">{jobStatusLabel(job.status)}</Badge></TableCell>
                             <TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => setEditingJob(job)}><Wrench className="h-3 w-3 mr-1" /> แก้ไข</Button></TableCell>
