@@ -139,6 +139,9 @@ function DocumentView({
                     </div>
                     <div className="text-right space-y-1">
                         <h1 className="text-xl font-bold text-primary">{finalDocTitle}</h1>
+                        {document.docType === "TAX_INVOICE" && (
+                            <p className="text-sm font-medium text-foreground">เอกสารออกเป็นชุด</p>
+                        )}
                         <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
                         <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), 'dd/MM/yyyy')}</p>
                     </div>

@@ -21,6 +21,15 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
+import {
+  type BillingTableRow,
+  bucketHasAnyCreatedNote,
+  explodeSeparateSubRows,
+  billingRowUiStatus,
+  billingTargetBucket,
+  fetchDeferredRollInDocuments,
+  excludeInvoicesDeferredToFutureMonth,
+} from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -70,16 +79,7 @@ import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-buck
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-interface GroupedCustomerData {
-  customer: Customer;
-  includedInvoices: Document[];
-  deferredInvoices: Document[];
-  separateGroups: Record<string, Document[]>;
-  totalIncludedAmount: number;
-  createdNoteIds?: { main?: string; separate?: Record<string, string> };
-  warnings?: string[];
-  mergedFollowerCount?: number;
-}
+type GroupedCustomerData = BillingTableRow;
 
 function BillingNoteBatchTab() {
   const { db } = useFirebase();
@@ -134,12 +134,19 @@ function BillingNoteBatchTab() {
       
       const invoicesSnap = await getDocs(invoicesQuery);
       const allDocs = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Document));
-      
-      const unpaidInvoices = allDocs.filter(doc =>
+
+      const inMonthUnpaid = allDocs.filter(doc =>
         (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
         doc.paymentTerms === 'CREDIT' &&
         !['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)
       );
+      const fromRange = excludeInvoicesDeferredToFutureMonth(inMonthUnpaid, monthId);
+      const rollIn = await fetchDeferredRollInDocuments(db, monthId);
+      const byId = new Map<string, Document>();
+      for (const inv of [...fromRange, ...rollIn]) {
+        if (!byId.has(inv.id)) byId.set(inv.id, inv);
+      }
+      const unpaidInvoices = Array.from(byId.values());
 
       const groupedByCustomer: Record<string, { customer: Customer; invoices: Document[] }> = {};
       const docNoCount: Record<string, number> = {};
@@ -164,7 +171,7 @@ function BillingNoteBatchTab() {
       collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
 
       const mergedMap = billingRun?.billingMergedBuckets || {};
-      const finalData = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
+      const rowsBeforeExplode: BillingTableRow[] = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
         const includedInvoices: Document[] = [];
         const deferredInvoices: Document[] = [];
         const separateGroups: Record<string, Document[]> = {};
@@ -194,6 +201,7 @@ function BillingNoteBatchTab() {
         });
         
         const mergedFollowerCount = Object.entries(mergedMap).filter(([, leader]) => leader === customer.id).length;
+        const createdNoteIds = billingRun?.createdBillingNotes?.[customer.id];
 
         return {
           customer,
@@ -201,11 +209,14 @@ function BillingNoteBatchTab() {
           deferredInvoices,
           separateGroups,
           totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0),
-          createdNoteIds: billingRun?.createdBillingNotes?.[customer.id],
+          createdNoteIds,
+          parentBillingNotesSnapshot: createdNoteIds,
           warnings: Array.from(new Set(warnings)),
           mergedFollowerCount,
         };
       });
+
+      const finalData = rowsBeforeExplode.flatMap((row) => explodeSeparateSubRows(row));
 
       setCustomerData(finalData);
     } catch (error: any) {
@@ -219,25 +230,59 @@ function BillingNoteBatchTab() {
     fetchData();
   }, [fetchData]);
 
-  const handleSaveOverrides = async (customerId: string, deferred: Record<string, boolean>, separate: Record<string, string>) => {
-    if (!profile || !billingRunRef) return;
-    
-    const newDeferred = { ...billingRun?.deferredInvoices, ...deferred };
-    const newSeparate = { ...billingRun?.separateInvoiceGroups, ...separate };
+  const handleSaveOverrides = async (
+    touchedInvoiceIds: string[],
+    deferred: Record<string, boolean>,
+    separate: Record<string, string>
+  ) => {
+    if (!profile || !billingRunRef || !db) return;
 
-    Object.keys(deferred).forEach(id => delete newSeparate[id]);
-    Object.keys(separate).forEach(id => delete newDeferred[id]);
-    
-    await setDoc(billingRunRef, {
-      monthId,
-      deferredInvoices: newDeferred,
-      separateInvoiceGroups: newSeparate,
-      updatedAt: serverTimestamp(),
-      updatedByUid: profile.uid,
-      updatedByName: profile.displayName,
-    }, { merge: true });
+    const nextMonthId = format(addMonths(startOfMonth(currentMonth), 1), 'yyyy-MM');
+    const prevDef = billingRun?.deferredInvoices || {};
+    const prevSep = billingRun?.separateInvoiceGroups || {};
+    const newDeferred = { ...prevDef };
+    const newSeparate = { ...prevSep };
 
-    toast({ title: 'บันทึกการตั้งค่าแล้ว' });
+    for (const id of touchedInvoiceIds) {
+      delete newDeferred[id];
+      delete newSeparate[id];
+    }
+    for (const [id, key] of Object.entries(separate)) {
+      newSeparate[id] = key;
+    }
+
+    const docBatch = writeBatch(db);
+    for (const id of touchedInvoiceIds) {
+      const ref = doc(db, 'documents', id);
+      if (deferred[id]) {
+        docBatch.update(ref, { billingDeferUntilMonth: nextMonthId, updatedAt: serverTimestamp() });
+      } else {
+        docBatch.update(ref, { billingDeferUntilMonth: deleteField(), updatedAt: serverTimestamp() });
+      }
+    }
+    await docBatch.commit();
+
+    await setDoc(
+      billingRunRef,
+      {
+        monthId,
+        deferredInvoices: newDeferred,
+        separateInvoiceGroups: newSeparate,
+        updatedAt: serverTimestamp(),
+        updatedByUid: profile.uid,
+        updatedByName: profile.displayName,
+      },
+      { merge: true }
+    );
+
+    const nDefer = Object.keys(deferred).length;
+    toast({
+      title: 'บันทึกการตั้งค่าแล้ว',
+      description:
+        nDefer > 0
+          ? `บิลที่เลื่อน ${nDefer} ใบ จะแสดงในเดือน ${nextMonthId} (ไม่โผล่ในเดือนนี้อีก)`
+          : undefined,
+    });
   };
 
   const toggleBucketSelect = (bucketId: string) => {
@@ -259,7 +304,7 @@ function BillingNoteBatchTab() {
     }
     for (const id of ids) {
       const row = customerData.find((d) => d.customer.id === id);
-      if (row?.createdNoteIds) {
+      if (row && bucketHasAnyCreatedNote(row.parentBillingNotesSnapshot)) {
         toast({
           variant: "destructive",
           title: "ไม่สามารถรวมกลุ่ม",
@@ -337,20 +382,20 @@ function BillingNoteBatchTab() {
 
   const createBillingNotesForCustomer = async (targetCustomerData: GroupedCustomerData) => {
     if (!profile || !storeSettings || !db || !billingRunRef) return { success: false, error: "Required data missing." };
-    
-    const { customer, includedInvoices, separateGroups } = targetCustomerData;
-    const freshSnap = await getDoc(billingRunRef);
-    const freshCreatedNotes = freshSnap.exists() ? freshSnap.data().createdBillingNotes?.[customer.id] : null;
-    if (freshCreatedNotes) return { success: true, error: "Already created" };
 
-    const createdIds: { main?: string; separate: Record<string, string> } = { separate: {} };
+    const { customer, includedInvoices, splitInvoiceGroupKey } = targetCustomerData;
+    const targetBucket = billingTargetBucket(targetCustomerData);
+
+    const freshSnap = await getDoc(billingRunRef);
+    const freshCreated = freshSnap.exists() ? freshSnap.data().createdBillingNotes?.[targetBucket] : null;
+
     let hasError = false;
 
     const createNote = async (groupInvoices: Document[], groupKey: string) => {
       if (groupInvoices.length === 0) return;
-      
+
       const totalAmount = groupInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
-      const itemsForDoc = groupInvoices.map(inv => {
+      const itemsForDoc = groupInvoices.map((inv) => {
         const typeLabel = inv.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบส่งของ';
         return {
           description: `${typeLabel}เลขที่ ${inv.docNo} (วันที่: ${safeFormat(new Date(inv.docDate), 'dd/MM/yy')})`,
@@ -359,34 +404,40 @@ function BillingNoteBatchTab() {
           total: inv.grandTotal,
         };
       });
-      
+
       try {
-        const { docId, docNo } = await createDocument(db, 'BILLING_NOTE', {
-          customerId: customer.id,
-          docDate: format(new Date(), 'yyyy-MM-dd'),
-          customerSnapshot: customer,
-          storeSnapshot: storeSettings,
-          items: itemsForDoc,
-          invoiceIds: groupInvoices.map(inv => inv.id),
-          subtotal: totalAmount, 
-          discountAmount: 0,
-          net: totalAmount,
-          withTax: false,
-          vatAmount: 0,
-          grandTotal: totalAmount,
-          notes: groupKey === 'MAIN' ? '' : `เอกสารกลุ่ม: ${groupKey}`,
-          senderName: profile.displayName,
-          receiverName: customer.useTax ? (customer.taxName || customer.name) : customer.name,
-          billingRunId: monthId
-        }, profile);
+        const { docId, docNo } = await createDocument(
+          db,
+          'BILLING_NOTE',
+          {
+            customerId: customer.id,
+            docDate: format(new Date(), 'yyyy-MM-dd'),
+            customerSnapshot: customer,
+            storeSnapshot: storeSettings,
+            items: itemsForDoc,
+            invoiceIds: groupInvoices.map((inv) => inv.id),
+            subtotal: totalAmount,
+            discountAmount: 0,
+            net: totalAmount,
+            withTax: false,
+            vatAmount: 0,
+            grandTotal: totalAmount,
+            notes: groupKey === 'MAIN' ? '' : `เอกสารกลุ่ม: ${groupKey}`,
+            senderName: profile.displayName,
+            receiverName: customer.useTax ? (customer.taxName || customer.name) : customer.name,
+            billingRunId: monthId,
+          },
+          profile
+        );
 
         const batch = writeBatch(db);
-        groupInvoices.forEach(inv => {
-            batch.update(doc(db, 'documents', inv.id), {
-                billingNoteId: docId,
-                billingNoteNo: docNo,
-                updatedAt: serverTimestamp()
-            });
+        groupInvoices.forEach((inv) => {
+          batch.update(doc(db, 'documents', inv.id), {
+            billingNoteId: docId,
+            billingNoteNo: docNo,
+            billingDeferUntilMonth: deleteField(),
+            updatedAt: serverTimestamp(),
+          });
         });
         await batch.commit();
 
@@ -398,27 +449,50 @@ function BillingNoteBatchTab() {
       }
     };
 
-    if (includedInvoices.length > 0) {
-        const mainId = await createNote(includedInvoices, 'MAIN');
-        if (mainId) createdIds.main = mainId;
-    }
-    for (const groupKey in separateGroups) {
-        const groupId = await createNote(separateGroups[groupKey], groupKey);
-        if (groupId) createdIds.separate[groupKey] = groupId;
-    }
-    
-    if (!hasError && (createdIds.main || Object.keys(createdIds.separate).length > 0)) {
-      if (!freshSnap.exists()) {
-          await setDoc(billingRunRef, {
+    if (splitInvoiceGroupKey) {
+      if (includedInvoices.length === 0) return { success: false, error: "No invoices" };
+      if (freshCreated?.separate?.[splitInvoiceGroupKey]) return { success: true, error: "Already created" };
+      const sid = await createNote(includedInvoices, splitInvoiceGroupKey);
+      if (!hasError && sid) {
+        if (!freshSnap.exists()) {
+          await setDoc(
+            billingRunRef,
+            {
               monthId,
-              createdBillingNotes: { [customer.id]: createdIds },
+              createdBillingNotes: { [targetBucket]: { separate: { [splitInvoiceGroupKey]: sid } } },
               updatedAt: serverTimestamp(),
-          });
-      } else {
-          await updateDoc(billingRunRef, { 
-            [`createdBillingNotes.${customer.id}`]: createdIds,
+            },
+            { merge: true }
+          );
+        } else {
+          await updateDoc(billingRunRef, {
+            [`createdBillingNotes.${targetBucket}.separate.${splitInvoiceGroupKey}`]: sid,
             updatedAt: serverTimestamp(),
           });
+        }
+      }
+      return { success: !hasError, error: hasError ? "Some notes failed." : "" };
+    }
+
+    if (includedInvoices.length === 0) {
+      return { success: true, error: "" };
+    }
+    if (freshCreated?.main) {
+      return { success: true, error: "Already created" };
+    }
+    const mainId = await createNote(includedInvoices, "MAIN");
+    if (!hasError && mainId) {
+      if (!freshSnap.exists()) {
+        await setDoc(billingRunRef, {
+          monthId,
+          createdBillingNotes: { [targetBucket]: { main: mainId, separate: freshCreated?.separate || {} } },
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(billingRunRef, {
+          [`createdBillingNotes.${targetBucket}.main`]: mainId,
+          updatedAt: serverTimestamp(),
+        });
       }
     }
 
@@ -431,39 +505,56 @@ function BillingNoteBatchTab() {
     let skippedCount = 0;
 
     for (const data of customerData) {
-        if (data.createdNoteIds) {
-            skippedCount++;
-            continue;
-        }
-        if (data.includedInvoices.length > 0 || Object.keys(data.separateGroups).length > 0) {
-            const result = await createBillingNotesForCustomer(data);
-            if (result.success) successCount++;
-        }
+      const st = billingRowUiStatus(data);
+      if (st === "created") {
+        skippedCount++;
+        continue;
+      }
+      if (st === "empty") continue;
+      const result = await createBillingNotesForCustomer(data);
+      if (result.success) successCount++;
     }
-    toast({ title: "สร้างใบวางบิลเสร็จสิ้น", description: `สร้างใหม่ ${successCount} รายการ, ข้ามรายที่ทำไปแล้ว ${skippedCount} รายการ` });
+    toast({
+      title: "สร้างใบวางบิลเสร็จสิ้น",
+      description: `สร้างใหม่ ${successCount} รายการ, ข้ามรายที่ทำไปแล้ว ${skippedCount} รายการ`,
+    });
     setIsBulkCreating(false);
   };
 
-  const handleResetStatus = async (customerId: string) => {
+  const handleResetStatus = async (data: GroupedCustomerData) => {
     if (!db || !billingRunRef || !profile) return;
-    setIsResetting(customerId);
+    const target = billingTargetBucket(data);
+    const splitKey = data.splitInvoiceGroupKey;
+    setIsResetting(data.customer.id);
     try {
+      if (splitKey) {
         await updateDoc(billingRunRef, {
-            [`createdBillingNotes.${customerId}`]: deleteField(),
-            updatedAt: serverTimestamp()
+          [`createdBillingNotes.${target}.separate.${splitKey}`]: deleteField(),
+          updatedAt: serverTimestamp(),
         });
-        toast({ title: "รีเซ็ตสถานะสำเร็จ", description: "ตอนนี้คุณสามารถกดสร้างใบวางบิลให้ลูกค้ารายนี้ได้ใหม่แล้วค่ะ" });
+      } else {
+        await updateDoc(billingRunRef, {
+          [`createdBillingNotes.${target}`]: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      toast({
+        title: "รีเซ็ตสถานะสำเร็จ",
+        description: "ตอนนี้คุณสามารถกดสร้างใบวางบิลให้แถวนี้ได้ใหม่แล้วค่ะ",
+      });
     } catch (e: any) {
-        toast({ variant: 'destructive', title: "รีเซ็ตล้มเหลว", description: e.message });
+      toast({ variant: "destructive", title: "รีเซ็ตล้มเหลว", description: e.message });
     } finally {
-        setIsResetting(null);
+      setIsResetting(null);
     }
   };
 
   /** Admin: ล้างทุกอย่างที่ผูกแถวนี้กับ billing run + ถอดลิงก์ใบวางบิลจากบิลต้นทาง (ไม่ลบเอกสาร BILLING_NOTE) */
   const handleAdminPurgeRow = async (data: GroupedCustomerData) => {
     if (!profile || profile.role !== 'ADMIN' || !db || !billingRunRef) return;
-    const bucketId = data.customer.id;
+    const mergeKey = data.customer.id;
+    const targetBucket = billingTargetBucket(data);
+    const splitKey = data.splitInvoiceGroupKey;
     const allInvoices = [
       ...data.includedInvoices,
       ...data.deferredInvoices,
@@ -480,7 +571,7 @@ function BillingNoteBatchTab() {
       return;
     }
 
-    setIsPurgingBucket(bucketId);
+    setIsPurgingBucket(mergeKey);
     try {
       const snap = await getDoc(billingRunRef);
       const br = (snap.exists() ? snap.data() : {}) as Partial<BillingRun>;
@@ -490,11 +581,15 @@ function BillingNoteBatchTab() {
         updatedByUid: profile.uid,
         updatedByName: profile.displayName,
       };
-      runPatch[`createdBillingNotes.${bucketId}`] = deleteField();
+      if (splitKey) {
+        runPatch[`createdBillingNotes.${targetBucket}.separate.${splitKey}`] = deleteField();
+      } else {
+        runPatch[`createdBillingNotes.${targetBucket}`] = deleteField();
+      }
 
       const merged = br.billingMergedBuckets || {};
       for (const [k, v] of Object.entries(merged)) {
-        if (k === bucketId || v === bucketId) {
+        if (k === mergeKey || v === mergeKey) {
           runPatch[`billingMergedBuckets.${k}`] = deleteField();
         }
       }
@@ -508,6 +603,7 @@ function BillingNoteBatchTab() {
         batch.update(doc(db, 'documents', inv.id), {
           billingNoteId: deleteField(),
           billingNoteNo: deleteField(),
+          billingDeferUntilMonth: deleteField(),
           updatedAt: serverTimestamp(),
         });
       }
@@ -515,7 +611,7 @@ function BillingNoteBatchTab() {
       batch.update(billingRunRef, runPatch as Parameters<typeof updateDoc>[1]);
       await batch.commit();
 
-      setSelectedBucketIds((prev) => prev.filter((id) => id !== bucketId));
+      setSelectedBucketIds((prev) => prev.filter((id) => id !== mergeKey));
       toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -585,19 +681,27 @@ function BillingNoteBatchTab() {
                 {isLoading ? (
                   <TableRow><TableCell colSpan={6} className="h-24 text-center"><Loader2 className="animate-spin" /></TableCell></TableRow>
                 ) : customerData.length > 0 ? (
-                  customerData.map(data => (
+                  customerData.map((data) => {
+                    const rowStatus = billingRowUiStatus(data);
+                    const noteLock = bucketHasAnyCreatedNote(data.parentBillingNotesSnapshot);
+                    const previewNotes = data.parentBillingNotesSnapshot ?? data.createdNoteIds;
+                    const previewSep = previewNotes?.separate || {};
+                    return (
                     <TableRow key={data.customer.id} className="hover:bg-muted/30 transition-colors">
                       <TableCell className="align-middle">
                         <Checkbox
                           checked={selectedBucketIds.includes(data.customer.id)}
                           onCheckedChange={() => toggleBucketSelect(data.customer.id)}
-                          disabled={!!data.createdNoteIds}
+                          disabled={noteLock}
                           aria-label="เลือกแถวเพื่อรวมกลุ่ม"
                         />
                       </TableCell>
                       <TableCell className="font-semibold">
                         <div className="flex items-center gap-2 flex-wrap">
                           {data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name}
+                          {data.splitInvoiceGroupKey && (
+                            <Badge variant="secondary" className="text-[10px] h-5">แยก</Badge>
+                          )}
                           {(data.mergedFollowerCount ?? 0) > 0 && (
                             <Badge variant="outline" className="text-[10px] h-5 border-primary/40 text-primary">
                               รวมกลุ่ม +{data.mergedFollowerCount}
@@ -618,12 +722,16 @@ function BillingNoteBatchTab() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">{data.includedInvoices.length}</TableCell>
+                      <TableCell className="text-center">
+                        {data.includedInvoices.length +
+                          data.deferredInvoices.length +
+                          Object.values(data.separateGroups).flat().length}
+                      </TableCell>
                       <TableCell className="text-right font-mono">฿{formatCurrency(data.totalIncludedAmount)}</TableCell>
                       <TableCell>
-                        {data.createdNoteIds ? (
+                        {rowStatus === "created" ? (
                           <Badge variant="default" className="bg-green-600">สร้างแล้ว</Badge>
-                        ) : (data.includedInvoices.length > 0 || Object.keys(data.separateGroups).length > 0) ? (
+                        ) : rowStatus === "pending" ? (
                           <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">รอดำเนินการ</Badge>
                         ) : (
                           <Badge variant="secondary">ไม่มีรายการ</Badge>
@@ -637,12 +745,12 @@ function BillingNoteBatchTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {!data.createdNoteIds ? (
+                            {rowStatus !== "created" ? (
                               <>
                                 <DropdownMenuItem onClick={() => setEditingCustomerData(data)}>
                                   <Edit className="mr-2 h-4 w-4" /> แก้ไขการรวบรวม
                                 </DropdownMenuItem>
-                                {(data.mergedFollowerCount ?? 0) > 0 && (
+                                {(data.mergedFollowerCount ?? 0) > 0 && !data.splitInvoiceGroupKey && (
                                   <DropdownMenuItem
                                     onClick={() => void handleUnmergeBucketLeader(data.customer.id)}
                                     disabled={isSavingMerge}
@@ -650,9 +758,9 @@ function BillingNoteBatchTab() {
                                     <Unlink className="mr-2 h-4 w-4" /> เลิกรวมกลุ่มย่อย
                                   </DropdownMenuItem>
                                 )}
-                                <DropdownMenuItem 
-                                  onClick={() => createBillingNotesForCustomer(data)}
-                                  disabled={(data.includedInvoices.length + Object.keys(data.separateGroups).length) === 0}
+                                <DropdownMenuItem
+                                  onClick={() => void createBillingNotesForCustomer(data)}
+                                  disabled={rowStatus === "empty"}
                                   className="text-primary focus:text-primary font-bold"
                                 >
                                   <PlusCircle className="mr-2 h-4 w-4" /> สร้างใบวางบิล
@@ -660,31 +768,31 @@ function BillingNoteBatchTab() {
                               </>
                             ) : (
                               <>
-                                {data.createdNoteIds.main && (
-                                  <DropdownMenuItem onClick={() => handlePreview(data.createdNoteIds!.main!)}>
+                                {previewNotes?.main && (
+                                  <DropdownMenuItem onClick={() => handlePreview(previewNotes.main!)}>
                                     <Eye className="mr-2 h-4 w-4" /> พรีวิว (ใบหลัก)
                                   </DropdownMenuItem>
                                 )}
-                                {Object.entries(data.createdNoteIds.separate).map(([key, id]) => (
+                                {Object.entries(previewSep).map(([key, id]) => (
                                   <DropdownMenuItem key={id} onClick={() => handlePreview(id)}>
                                     <Eye className="mr-2 h-4 w-4" /> พรีวิว ({key})
                                   </DropdownMenuItem>
                                 ))}
                                 <DropdownMenuSeparator />
-                                {data.createdNoteIds.main && (
-                                  <DropdownMenuItem onClick={() => handlePrint(data.createdNoteIds!.main!)}>
+                                {previewNotes?.main && (
+                                  <DropdownMenuItem onClick={() => handlePrint(previewNotes.main!)}>
                                     <Printer className="mr-2 h-4 w-4" /> พิมพ์ PDF (ใบหลัก)
                                   </DropdownMenuItem>
                                 )}
-                                {Object.entries(data.createdNoteIds.separate).map(([key, id]) => (
+                                {Object.entries(previewSep).map(([key, id]) => (
                                   <DropdownMenuItem key={`p-${id}`} onClick={() => handlePrint(id)}>
                                     <Printer className="mr-2 h-4 w-4" /> พิมพ์ PDF ({key})
                                   </DropdownMenuItem>
                                 ))}
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  className="text-destructive focus:text-destructive" 
-                                  onClick={() => handleResetStatus(data.customer.id)} 
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => void handleResetStatus(data)}
                                   disabled={isResetting === data.customer.id}
                                 >
                                   {isResetting === data.customer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RotateCcw className="mr-2 h-4 w-4"/>}
@@ -713,7 +821,8 @@ function BillingNoteBatchTab() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))
+                  );
+                  })
                 ) : (
                   <TableRow><TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">ไม่พบเอกสารเครดิตที่ต้องวางบิลในเดือนนี้</TableCell></TableRow>
                 )}
@@ -728,9 +837,13 @@ function BillingNoteBatchTab() {
           isOpen={!!editingCustomerData}
           onClose={() => setEditingCustomerData(null)}
           customer={editingCustomerData.customer}
-          invoices={[...editingCustomerData.includedInvoices, ...editingCustomerData.deferredInvoices, ...Object.values(editingCustomerData.separateGroups).flat()]}
-          initialOverrides={{deferred: billingRun?.deferredInvoices || {}, separate: billingRun?.separateInvoiceGroups || {}}}
-          onSave={handleSaveOverrides}
+          invoices={
+            editingCustomerData.splitInvoiceGroupKey
+              ? [...editingCustomerData.includedInvoices]
+              : [...editingCustomerData.includedInvoices, ...editingCustomerData.deferredInvoices]
+          }
+          initialOverrides={{ deferred: billingRun?.deferredInvoices || {}, separate: billingRun?.separateInvoiceGroups || {} }}
+          onSave={(_customerId, deferred, separate, touchedIds) => void handleSaveOverrides(touchedIds, deferred, separate)}
         />
       )}
     </div>

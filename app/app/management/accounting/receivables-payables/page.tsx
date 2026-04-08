@@ -43,10 +43,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator } from "lucide-react";
+import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator, Trash2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Calendar } from "@/components/ui/calendar";
 
@@ -403,7 +413,7 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
     return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
-function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (total: number, count: number) => void }) {
+function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (total: number, count: number) => void; isAdmin?: boolean }) {
     const { db } = useFirebase();
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
@@ -422,7 +432,49 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     >({});
     const [payingAR, setPayingAR] = useState<WithId<AccountingObligation> | null>(null);
     const [payingAP, setPayingAP] = useState<WithId<AccountingObligation> | null>(null);
+    const [obToDelete, setObToDelete] = useState<WithId<AccountingObligation> | null>(null);
+    const [isDeletingOb, setIsDeletingOb] = useState(false);
     const { toast } = useToast();
+
+    const confirmDeleteObligation = useCallback(async () => {
+        if (!db || !obToDelete) return;
+        const ob = obToDelete;
+        setIsDeletingOb(true);
+        try {
+            const obRef = doc(db, "accountingObligations", ob.id);
+            const batch = writeBatch(db);
+            batch.delete(obRef);
+            if (ob.sourceDocId) {
+                if (ob.type === "AR") {
+                    const srcRef = doc(db, "documents", ob.sourceDocId);
+                    const snap = await getDoc(srcRef);
+                    if (snap.exists()) {
+                        const data = snap.data() as { arObligationId?: string };
+                        if (data.arObligationId === ob.id) {
+                            batch.update(srcRef, { arObligationId: deleteField(), updatedAt: serverTimestamp() });
+                        }
+                    }
+                } else if (ob.type === "AP" && ob.sourceDocType === "PURCHASE") {
+                    const srcRef = doc(db, "purchaseDocs", ob.sourceDocId);
+                    const snap = await getDoc(srcRef);
+                    if (snap.exists()) {
+                        const data = snap.data() as { apObligationId?: string };
+                        if (data.apObligationId === ob.id) {
+                            batch.update(srcRef, { apObligationId: deleteField(), updatedAt: serverTimestamp() });
+                        }
+                    }
+                }
+            }
+            await batch.commit();
+            toast({ title: "ลบรายการแล้ว", description: `${type === "AR" ? "ลูกหนี้" : "เจ้าหนี้"} ${ob.sourceDocNo || ob.invoiceNo || ob.id}` });
+            setObToDelete(null);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            toast({ variant: "destructive", title: "ลบรายการไม่สำเร็จ", description: msg });
+        } finally {
+            setIsDeletingOb(false);
+        }
+    }, [db, obToDelete, toast, type]);
 
     /**
      * ซ่อมความไม่สอดคล้องระหว่าง Inbox (documents) กับหน้าลูกหนี้ (accountingObligations):
@@ -712,58 +764,87 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                 <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
                                 <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>
                                 <TableCell className="text-right">
-                                  <div className="flex justify-end gap-2 flex-wrap">
-                                    {canIssueReceipt && (
-                                      <TooltipProvider>
+                                  <TooltipProvider delayDuration={300}>
+                                    <div className="flex justify-end gap-1 flex-wrap">
+                                      {canIssueReceipt && (
                                         <Tooltip>
                                           <TooltipTrigger asChild>
-                                            <span>
+                                            <span className="inline-flex">
                                               <Button
-                                                size="sm"
-                                                variant={isReceiptIssued ? 'secondary' : 'default'}
-                                                className={isReceiptIssued ? '' : 'bg-green-600 hover:bg-green-700'}
+                                                size="icon"
+                                                variant={isReceiptIssued ? "secondary" : "default"}
+                                                className={cn("h-9 w-9 shrink-0", !isReceiptIssued && "bg-green-600 hover:bg-green-700")}
                                                 disabled={isReceiptIssued}
                                                 onClick={() => router.push(receiptHref)}
+                                                aria-label="ออกใบเสร็จ"
                                               >
-                                                <Receipt className="mr-2 h-4 w-4" />
-                                                ออกใบเสร็จ
+                                                <Receipt className="h-4 w-4" />
                                               </Button>
                                             </span>
                                           </TooltipTrigger>
-                                          {isReceiptIssued && (
-                                            <TooltipContent>ออกใบเสร็จไปแล้ว ({details?.receiptStatus})</TooltipContent>
-                                          )}
+                                          <TooltipContent>
+                                            {isReceiptIssued
+                                              ? `ออกใบเสร็จไปแล้ว (${details?.receiptStatus})`
+                                              : "ออกใบเสร็จ"}
+                                          </TooltipContent>
                                         </Tooltip>
-                                      </TooltipProvider>
-                                    )}
-                                    {type === 'AR' ? (
-                                      <TooltipProvider>
+                                      )}
+                                      {type === "AR" ? (
                                         <Tooltip>
                                           <TooltipTrigger asChild>
-                                            <span className="inline-block">
+                                            <span className="inline-flex">
                                               <Button
-                                                size="sm"
+                                                size="icon"
                                                 variant="outline"
+                                                className="h-9 w-9 shrink-0"
                                                 disabled={requireReceiptBeforeReceive && !isReceiptIssued}
                                                 onClick={() => setPayingAR(ob)}
+                                                aria-label="รับชำระ"
                                               >
-                                                <HandCoins className="mr-2 h-4 w-4" /> รับ
+                                                <HandCoins className="h-4 w-4" />
                                               </Button>
                                             </span>
                                           </TooltipTrigger>
-                                          {requireReceiptBeforeReceive && !isReceiptIssued && (
-                                            <TooltipContent>
-                                              เอกสารขายที่ต้องมีใบเสร็จ (ใบกำกับภาษี/ใบเพิ่มหนี้): ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริงได้
-                                            </TooltipContent>
-                                          )}
+                                          <TooltipContent>
+                                            {requireReceiptBeforeReceive && !isReceiptIssued
+                                              ? "เอกสารขายที่ต้องมีใบเสร็จ (ใบกำกับภาษี/ใบเพิ่มหนี้): ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริงได้"
+                                              : "รับ"}
+                                          </TooltipContent>
                                         </Tooltip>
-                                      </TooltipProvider>
-                                    ) : (
-                                      <Button size="sm" variant="outline" onClick={() => setPayingAP(ob)}>
-                                        <HandCoins className="mr-2 h-4 w-4" /> จ่ายบิล
-                                      </Button>
-                                    )}
-                                  </div>
+                                      ) : (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-9 w-9 shrink-0"
+                                              onClick={() => setPayingAP(ob)}
+                                              aria-label="จ่ายบิล"
+                                            >
+                                              <HandCoins className="h-4 w-4" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>จ่ายบิล</TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                      {isAdmin && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-9 w-9 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                              onClick={() => setObToDelete(ob)}
+                                              aria-label="ลบรายการ"
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>ลบรายการ</TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                    </div>
+                                  </TooltipProvider>
                                 </TableCell>
                               </TableRow>
                             );
@@ -773,6 +854,33 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
             </div>
             {payingAR && (<ReceiveArPaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />)}
             {payingAP && (<PayCreditorDialog isOpen={!!payingAP} onClose={() => setPayingAP(null)} obligation={payingAP} accounts={accounts} />)}
+            <AlertDialog open={!!obToDelete} onOpenChange={(open) => !open && !isDeletingOb && setObToDelete(null)}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>ลบรายการนี้?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    จะลบรายการ{type === "AR" ? "ลูกหนี้" : "เจ้าหนี้"}{" "}
+                    <span className="font-mono font-medium text-foreground">
+                      {obToDelete?.sourceDocNo || obToDelete?.invoiceNo || obToDelete?.id}
+                    </span>{" "}
+                    ออกจากระบบ การกระทำนี้ไม่สามารถยกเลิกได้
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeletingOb}>ยกเลิก</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    disabled={isDeletingOb}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void confirmDeleteObligation();
+                    }}
+                  >
+                    {isDeletingOb ? <Loader2 className="h-4 w-4 animate-spin" /> : "ลบ"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
         </>
     );
 }
@@ -847,8 +955,8 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
             </div>
             <Card>
               <CardContent className="pt-6">
-                <TabsContent value="debtors" className="mt-0">{activeTab === 'debtors' && (<ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} />)}</TabsContent>
-                <TabsContent value="creditors" className="mt-0">{activeTab === 'creditors' && (<ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} />)}</TabsContent>
+                <TabsContent value="debtors" className="mt-0">{activeTab === 'debtors' && (<ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
+                <TabsContent value="creditors" className="mt-0">{activeTab === 'creditors' && (<ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
               </CardContent>
             </Card>
         </Tabs>

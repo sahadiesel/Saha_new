@@ -31,7 +31,12 @@ interface EditDialogProps {
     deferred: Record<string, boolean>;
     separate: Record<string, string>;
   };
-  onSave: (customerId: string, deferred: Record<string, boolean>, separate: Record<string, string>) => void;
+  onSave: (
+    customerId: string,
+    deferred: Record<string, boolean>,
+    separate: Record<string, string>,
+    touchedInvoiceIds: string[]
+  ) => void;
 }
 
 const formatCurrency = (value: number) =>
@@ -70,7 +75,7 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
       }
     });
 
-    onSave(customer.id, deferred, separate);
+    onSave(customer.id, deferred, separate, invoices.map((i) => i.id));
     onClose();
   };
 
@@ -88,7 +93,14 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
         <DialogHeader>
           <DialogTitle>จัดการรายการบิล: {customer.taxName || customer.name}</DialogTitle>
           <DialogDescription>
-            เลือกการดำเนินการสำหรับบิลแต่ละใบ หากบิลใบใดมียอดผิดปกติหรือต้องการแยกไปเก็บเงินต่างหาก สามารถเลือก "แยก" ได้ค่ะ
+            <span className="block space-y-1 text-left">
+              <span className="block">
+                <strong>เลื่อน</strong> — ย้ายบิลไปแสดงในเดือนถัดไป (จะไม่โผล่ในเดือนนี้อีก)
+              </span>
+              <span className="block">
+                <strong>แยก</strong> — แสดงเป็นแถวต่างหากในตารางวางบิล ใช้รวมกลุ่มด้วยมือได้เมื่อต้องการรวมกลับ
+              </span>
+            </span>
           </DialogDescription>
         </DialogHeader>
         

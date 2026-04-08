@@ -517,6 +517,8 @@ export interface Document {
   receiptDocNo?: string;
   accountingEntryId?: string;
   billingRunId?: string; // Links a BILLING_NOTE to its generation batch
+  /** ใบวางบิล: เลื่อนไปแสดงในเดือนรันนี้ (YYYY-MM) — ไม่แสดงในเดือนที่ docDate จนกว่าจะถึงเดือนนี้ */
+  billingDeferUntilMonth?: string;
   dispute?: {
     isDisputed: boolean;
     reason?: string;
