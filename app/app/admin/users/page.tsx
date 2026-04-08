@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { collection, query, where, getDocs, writeBatch, limit, getCountFromServer, doc, getDoc, updateDoc, serverTimestamp, deleteField, orderBy, deleteDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, writeBatch, limit, getCountFromServer, doc, getDoc, updateDoc, serverTimestamp, deleteField, orderBy, deleteDoc, type UpdateData, type DocumentData } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -229,7 +229,7 @@ export default function AdminUsersPage() {
         }
       }
 
-      batch.update(jobRef, jobPayload);
+      batch.update(jobRef, jobPayload as UpdateData<DocumentData>);
       batch.set(doc(collection(jobRef, "activities")), { text: `[Admin Manual Fix] ${logText}`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
       toast({

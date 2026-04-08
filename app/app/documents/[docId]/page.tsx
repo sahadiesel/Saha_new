@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, Suspense } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { doc } from "firebase/firestore";
+import { doc, type DocumentReference } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { Loader2, AlertCircle, ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -16,7 +16,10 @@ function RouterInner() {
   const searchParams = useSearchParams();
   const { db } = useFirebase();
 
-  const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
+  const docRef = useMemo((): DocumentReference<DocumentType> | null => {
+    if (!db || typeof docId !== "string") return null;
+    return doc(db, "documents", docId) as DocumentReference<DocumentType>;
+  }, [db, docId]);
   const { data: document, isLoading, error } = useDoc<DocumentType>(docRef);
 
   useEffect(() => {

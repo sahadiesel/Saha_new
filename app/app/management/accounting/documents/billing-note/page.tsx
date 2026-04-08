@@ -608,7 +608,7 @@ function BillingNoteBatchTab() {
         });
       }
 
-      batch.update(billingRunRef, runPatch as Parameters<typeof updateDoc>[1]);
+      batch.update(billingRunRef, runPatch as import("firebase/firestore").UpdateData<import("@/lib/types").BillingRun>);
       await batch.commit();
 
       setSelectedBucketIds((prev) => prev.filter((id) => id !== mergeKey));

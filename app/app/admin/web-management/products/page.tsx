@@ -294,8 +294,8 @@ export default function WebManagementProductsPage() {
                         ) : (
                           <span className="font-black text-slate-700">฿{(part.webPrice || part.sellingPrice).toLocaleString()}</span>
                         )}
-                        {part.bulkPrice > 0 && (
-                            <div className="text-[9px] text-green-600 font-bold leading-tight">({part.bulkPriceQty}+ ชิ้น: ฿{part.bulkPrice.toLocaleString()})</div>
+                        {(part.bulkPrice ?? 0) > 0 && (
+                            <div className="text-[9px] text-green-600 font-bold leading-tight">({part.bulkPriceQty}+ ชิ้น: ฿{(part.bulkPrice ?? 0).toLocaleString()})</div>
                         )}
                       </TableCell>
                       <TableCell>

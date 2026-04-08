@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from 'next/link';
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer, type Query } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -49,6 +49,16 @@ import { restoreJobFromArchive } from "@/firebase/jobs-archive";
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
+
+/** เอกสารอ้างอิงบนหน้างาน — จำกัดชนิดให้ตรงกับ Record ป้ายชื่อ (แก้ TS บน DocType กว้าง) */
+const JOB_REFERENCE_DOC_TYPES = ["QUOTATION", "DELIVERY_NOTE", "TAX_INVOICE", "RECEIPT"] as const;
+type JobReferenceDocType = (typeof JOB_REFERENCE_DOC_TYPES)[number];
+const JOB_REFERENCE_DOC_LABELS: Record<JobReferenceDocType, string> = {
+  QUOTATION: "ใบเสนอราคา",
+  DELIVERY_NOTE: "ใบส่งของชั่วคราว",
+  TAX_INVOICE: "ใบกำกับภาษี",
+  RECEIPT: "ใบเสร็จรับเงิน",
+};
 
 // --- Helpers ---
 const getSafeTime = (val: any): number => {
@@ -213,7 +223,9 @@ function JobDetailsPageContent() {
     return query(collection(db, "jobs", jobId, "activities"), orderBy("createdAt", "desc"));
   }, [db, jobId, job?.isArchived, job?.closedDate, archiveYear]);
 
-  const { data: activities, isLoading: activitiesLoading } = useCollection<JobActivity>(activitiesQuery);
+  const { data: activities, isLoading: activitiesLoading } = useCollection<JobActivity>(
+    activitiesQuery as Query<JobActivity> | null
+  );
 
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
@@ -500,7 +512,7 @@ function JobDetailsPageContent() {
 
   const handleQuickPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const jobDocRef = getJobRef();
-    if (!e.target.files || !jobId || !db || !profile || !jobDocRef) { e.target.value = ''; return; }
+    if (!e.target.files || !jobId || !db || !profile || !jobDocRef || !job) { e.target.value = ''; return; }
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
     const currentPhotoCount = job?.photos?.length || 0;
@@ -603,10 +615,14 @@ function JobDetailsPageContent() {
     const batch = writeBatch(db);
     batch.update(jobDocRef, { department: subTransferDept, mainDepartment: job.mainDepartment || job.department, status: 'RECEIVED', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
     batch.set(doc(collection(jobDocRef, "activities")), { text: `ส่งงานต่อให้แผนก: ${deptCode(subTransferDept)} เพื่อดำเนินการย่อย`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
-    batch.commit().then(() => {
+    batch
+      .commit()
+      .then(() => {
         toast({ title: `ส่งงานต่อไปยังแผนก ${deptCode(subTransferDept)} เรียบร้อย` });
         setIsSubTransferDialogOpen(false);
-    }).catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }).finally(() => setIsTransferring(false)));
+      })
+      .catch((e) => toast({ variant: "destructive", title: "Error", description: e.message }))
+      .finally(() => setIsTransferring(false));
   };
 
   const handleReturnToMain = async () => {
@@ -1070,8 +1086,8 @@ function JobDetailsPageContent() {
           <Card><CardHeader><CardTitle className="text-base font-semibold flex items-center gap-2"><FileText className="h-4 w-4"/> เอกสารอ้างอิง</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">
               {loadingDocs ? <div className="flex justify-center"><Loader2 className="animate-spin"/></div> : (
                 <>
-                  {(['QUOTATION', 'DELIVERY_NOTE', 'TAX_INVOICE', 'RECEIPT'] as DocType[]).map(docType => {
-                      const label = { QUOTATION: 'ใบเสนอราคา', DELIVERY_NOTE: 'ใบส่งของชั่วคราว', TAX_INVOICE: 'ใบกำกับภาษี', RECEIPT: 'ใบเสร็จรับเงิน' }[docType];
+                  {JOB_REFERENCE_DOC_TYPES.map((docType) => {
+                      const label = JOB_REFERENCE_DOC_LABELS[docType];
                       const latestDoc = relatedDocuments[docType]?.[0];
                       return (
                         <div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0">

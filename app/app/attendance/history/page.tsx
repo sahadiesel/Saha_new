@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from 'react';
-import { collection, query, where, orderBy } from 'firebase/firestore';
+import { collection, query, where, orderBy, type Query } from 'firebase/firestore';
 import { useFirebase, useCollection } from '@/firebase';
 import { useAuth } from '@/context/auth-context';
 import { safeFormat } from '@/lib/date-utils';
@@ -31,7 +31,9 @@ export default function AttendanceHistoryPage() {
     );
   }, [db, userId]);
 
-  const { data: attendance, isLoading, error } = useCollection<Attendance>(attendanceQuery);
+  const { data: attendance, isLoading, error } = useCollection<Attendance>(
+    attendanceQuery as Query<Attendance> | null
+  );
 
   useEffect(() => {
     if (error?.message?.includes('requires an index')) {

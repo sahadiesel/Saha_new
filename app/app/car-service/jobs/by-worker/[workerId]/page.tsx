@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { doc } from "firebase/firestore";
+import { doc, type DocumentReference } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { PageHeader } from "@/components/page-header";
 import { JobList } from "@/components/job-list";
@@ -13,8 +13,10 @@ export default function WorkerJobsPage() {
   const { workerId } = useParams();
   const { db } = useFirebase();
 
-  const workerDocRef = useMemo(() => 
-    db && workerId ? doc(db, "users", workerId as string) : null
+  const workerDocRef = useMemo((): DocumentReference<UserProfile> | null =>
+    db && workerId
+      ? (doc(db, "users", workerId as string) as DocumentReference<UserProfile>)
+      : null
   , [db, workerId]);
 
   const { data: worker, isLoading } = useDoc<UserProfile>(workerDocRef);
@@ -33,7 +35,7 @@ export default function WorkerJobsPage() {
       <JobList 
         department="CAR_SERVICE" 
         status={['RECEIVED', 'IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'PENDING_PARTS', 'IN_REPAIR_PROCESS']}
-        assigneeUid={worker.id}
+        assigneeUid={worker.uid}
         emptyTitle="ไม่มีงานที่กำลังทำ"
         emptyDescription={`${worker.displayName} ยังไม่มีงานที่รับผิดชอบในขณะนี้`}
       />

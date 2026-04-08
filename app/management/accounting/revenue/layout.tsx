@@ -1,1 +1,7 @@
-// This file is being deleted
+export default function ManagementAccountingRevenueLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return children;
+}

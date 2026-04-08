@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, addDoc, serverTimestamp, query, orderBy } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, query, orderBy, type Query } from "firebase/firestore";
 import { useFirebase, useCollection } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +16,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { Loader2, Share2, Search, MessageSquarePlus, History, Wrench } from "lucide-react";
 import type { CarRepairExperience } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
@@ -38,7 +39,9 @@ export default function ShareExperiencePage() {
     db ? query(collection(db, "carRepairExperiences"), orderBy("createdAt", "desc")) : null
   , [db]);
 
-  const { data: experiences, isLoading } = useCollection<CarRepairExperience>(experiencesQuery);
+  const { data: experiences, isLoading } = useCollection<CarRepairExperience>(
+    experiencesQuery as Query<CarRepairExperience> | null
+  );
 
   const form = useForm<z.infer<typeof experienceSchema>>({
     resolver: zodResolver(experienceSchema),

@@ -42,7 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
   Loader2, PlusCircle, History, Wallet, ArrowDownCircle, ArrowUpCircle, 
-  Lock, Unlock, CheckCircle2, AlertCircle, Camera, X, Image as ImageIcon, ExternalLink, Eye, Receipt
+  Lock, Unlock, CheckCircle2, AlertCircle, Camera, X, Image as ImageIcon, ExternalLink, Eye, Receipt, Save
 } from "lucide-react";
 import { cashDrawerStatusLabel } from "@/lib/ui-labels";
 import { safeFormat } from "@/lib/date-utils";

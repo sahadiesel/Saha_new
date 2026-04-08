@@ -478,7 +478,7 @@ export default function BatchBillingNotePage() {
         });
       }
 
-      batch.update(billingRunRef, runPatch as Parameters<typeof updateDoc>[1]);
+      batch.update(billingRunRef, runPatch as import("firebase/firestore").UpdateData<import("@/lib/types").BillingRun>);
       await batch.commit();
 
       toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });

@@ -1,1 +1,6 @@
-// This file is being deleted as it is redundant with /app/management/accounting/cashbook?tab=out
+import { redirect } from "next/navigation";
+
+/** เดิมซ้ำกับ cashbook รายจ่าย — ส่งต่อไปแท็บรายจ่าย */
+export default function ManagementAccountingExpensesPage() {
+  redirect("/app/management/accounting/cashbook?tab=OUT");
+}

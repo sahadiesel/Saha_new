@@ -2,6 +2,23 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { JobStatus, JobDepartment, Role, UserStatus, Department, LeaveType, LeaveStatus, PayrollBatchStatus, PayslipStatus, AccountingCategory, PayType, PayslipStatusNew, VENDOR_TYPES, AcquisitionSource } from './constants';
 
+/** Re-export ชนิดจาก constants ให้ import จาก `@/lib/types` ได้ (ลด error TS2459) */
+export type {
+  JobStatus,
+  JobDepartment,
+  Role,
+  UserStatus,
+  Department,
+  LeaveType,
+  LeaveStatus,
+  PayrollBatchStatus,
+  PayslipStatus,
+  AccountingCategory,
+  PayType,
+  PayslipStatusNew,
+  AcquisitionSource,
+} from './constants';
+
 export interface UserProfile {
   uid: string;
   displayName: string;
@@ -574,6 +591,21 @@ export interface Document {
     withholdingTotal: number;
     arPaymentId: string;
   };
+
+  /** ลายเซ็น / ผู้ออกเอกสาร (ใบวางบิล ฯลฯ) */
+  senderName?: string;
+  receiverName?: string;
+
+  /** หนังสือรับรองหัก ณ ที่จ่าย (WITHHOLDING_TAX) */
+  payerSnapshot?: Partial<StoreSettings> & { companyName?: string; name?: string; address?: string };
+  payeeSnapshot?: { name?: string; companyName?: string; taxId?: string; address?: string };
+  incomeTypeCode?: string;
+  pndSequenceNo?: string;
+  paidMonth?: number;
+  paidYear?: number;
+  paidAmountGross?: number;
+  paidAmountNet?: number;
+  withholdingPercent?: number;
 }
 
 export interface QuotationTemplate {
@@ -776,6 +808,8 @@ export interface AccountingObligation {
   sourceDocType:
     | 'DELIVERY_NOTE'
     | 'TAX_INVOICE'
+    | 'DEBIT_NOTE'
+    | 'CREDIT_NOTE'
     | 'BILLING_NOTE'
     | 'PURCHASE_ORDER'
     | 'BILL'
@@ -872,6 +906,7 @@ export interface PurchaseClaim {
   approvedByUid?: string;
   approvedByName?: string;
   rejectReason?: string;
+  updatedAt?: Timestamp;
 }
 
 export interface BillingRun {

@@ -2,7 +2,7 @@
 
 import { useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { doc } from "firebase/firestore";
+import { doc, type DocumentReference } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, ArrowLeft, Printer } from "lucide-react";
@@ -17,7 +17,10 @@ export default function WhtPrintPage() {
     const router = useRouter();
     const { db } = useFirebase();
 
-    const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
+    const docRef = useMemo((): DocumentReference<DocumentType> | null => {
+      if (!db || typeof docId !== "string") return null;
+      return doc(db, "documents", docId) as DocumentReference<DocumentType>;
+    }, [db, docId]);
     const { data: document, isLoading, error } = useDoc<DocumentType>(docRef);
 
     // Set browser tab title to document number for filename auto-suggestion

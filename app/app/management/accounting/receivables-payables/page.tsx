@@ -19,6 +19,8 @@ import {
   type Firestore,
   type QueryDocumentSnapshot,
   type DocumentData,
+  type DocumentReference,
+  type Query,
   addDoc,
   limit,
   orderBy,
@@ -174,16 +176,25 @@ function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligati
   }, [db, obligation.sourceDocId, obligation.sourceDocType]);
   const { data: sourceDoc } = useDoc<any>(sourceDocRef);
 
-  const accountRef = useMemo(() => db && watchedAccountId ? doc(db, 'accountingAccounts', watchedAccountId) : null, [db, watchedAccountId]);
+  const accountRef = useMemo((): DocumentReference<AccountingAccount> | null => {
+    if (!db || !watchedAccountId) return null;
+    return doc(db, "accountingAccounts", watchedAccountId) as DocumentReference<AccountingAccount>;
+  }, [db, watchedAccountId]);
   const { data: accountData, isLoading: isLoadingAccount } = useDoc<AccountingAccount>(accountRef);
 
-  const entriesQuery = useMemo(() => {
+  const entriesQuery = useMemo((): Query<AccountingEntry> | null => {
     if (!db || !watchedAccountId) return null;
-    return query(collection(db, 'accountingEntries'), where('accountId', '==', watchedAccountId));
+    return query(
+      collection(db, "accountingEntries"),
+      where("accountId", "==", watchedAccountId)
+    ) as Query<AccountingEntry>;
   }, [db, watchedAccountId]);
   const { data: accountEntries, isLoading: isLoadingEntries } = useCollection<AccountingEntry>(entriesQuery);
 
-  const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
+  const storeSettingsRef = useMemo((): DocumentReference<StoreSettings> | null => {
+    if (!db) return null;
+    return doc(db, "settings", "store") as DocumentReference<StoreSettings>;
+  }, [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
 
   const currentBalance = useMemo(() => {

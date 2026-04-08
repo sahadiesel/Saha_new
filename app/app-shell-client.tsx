@@ -45,7 +45,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
     const isAuthPage = pathname === "/login" || pathname === "/signup";
     
-    if (isAuthPage && pathname !== "/pending") {
+    if (isAuthPage) {
         if (profile?.status === "ACTIVE") {
             router.replace("/");
         } else if (profile) {

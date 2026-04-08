@@ -3,7 +3,7 @@
 
 import { useMemo, Suspense, useState, useEffect } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, type DocumentReference } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useDoc } from "@/firebase/firestore/use-doc";
 import { PageHeader } from "@/components/page-header";
@@ -268,13 +268,22 @@ function DocumentPageContent() {
     const [accountName, setAccountName] = useState<string>("");
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
+    const docRef = useMemo((): DocumentReference<Document> | null => {
+      if (!db || typeof docId !== "string") return null;
+      return doc(db, "documents", docId) as DocumentReference<Document>;
+    }, [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
 
-    const customerRef = useMemo(() => (db && document?.customerId ? doc(db, 'customers', document.customerId) : null), [db, document?.customerId]);
+    const customerRef = useMemo((): DocumentReference<Customer> | null => {
+      if (!db || !document?.customerId) return null;
+      return doc(db, "customers", document.customerId) as DocumentReference<Customer>;
+    }, [db, document?.customerId]);
     const { data: liveCustomer } = useDoc<Customer>(customerRef);
 
-    const jobRef = useMemo(() => (db && document?.jobId ? doc(db, 'jobs', document.jobId) : null), [db, document?.jobId]);
+    const jobRef = useMemo((): DocumentReference<Job> | null => {
+      if (!db || !document?.jobId) return null;
+      return doc(db, "jobs", document.jobId) as DocumentReference<Job>;
+    }, [db, document?.jobId]);
     const { data: linkedJob } = useDoc<Job>(jobRef);
 
     const effectiveCustomer = useMemo(() => {

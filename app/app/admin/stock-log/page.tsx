@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { collection, query, orderBy, limit } from "firebase/firestore";
+import { collection, query, orderBy, limit, type Query } from "firebase/firestore";
 import { useFirebase, useCollection } from "@/firebase";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -31,7 +31,7 @@ export default function StockLogPage() {
     db ? query(collection(db, "stockActivities"), orderBy("createdAt", "desc"), limit(500)) : null
   , [db]);
 
-  const { data: logs, isLoading } = useCollection<StockActivity>(logQuery);
+  const { data: logs, isLoading } = useCollection<StockActivity>(logQuery as Query<StockActivity> | null);
 
   const filteredLogs = useMemo(() => {
     if (!logs) return [];

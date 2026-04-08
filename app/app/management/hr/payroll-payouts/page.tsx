@@ -14,6 +14,7 @@ import {
   increment,
   onSnapshot,
   serverTimestamp,
+  type DocumentReference,
 } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -71,7 +72,10 @@ function PayDialog({
   isSubmitting: boolean;
 }) {
   const { db } = useFirebase();
-  const userRef = useMemo(() => (db ? doc(db, "users", payslip.userId) : null), [db, payslip.userId]);
+  const userRef = useMemo((): DocumentReference<UserProfile> | null => {
+    if (!db) return null;
+    return doc(db, "users", payslip.userId) as DocumentReference<UserProfile>;
+  }, [db, payslip.userId]);
   const { data: userProfile, isLoading: isLoadingProfile } = useDoc<UserProfile>(userRef);
 
   const form = useForm<PaymentFormData>({

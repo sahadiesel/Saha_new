@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, updateDoc, serverTimestamp, type DocumentReference } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -52,9 +52,9 @@ export default function EditAccountPage() {
     return (profile.role === 'ADMIN' || profile.role === 'MANAGER' || profile.department === 'MANAGEMENT') && profile.role !== 'WORKER';
   }, [profile]);
 
-  const accountDocRef = useMemo(() => {
+  const accountDocRef = useMemo((): DocumentReference<AccountingAccount> | null => {
     if (!db || !accountId || !hasPermission) return null;
-    return doc(db, "accountingAccounts", accountId);
+    return doc(db, "accountingAccounts", accountId) as DocumentReference<AccountingAccount>;
   }, [db, accountId, hasPermission]);
 
   const { data: account, isLoading, error } = useDoc<AccountingAccount>(accountDocRef);

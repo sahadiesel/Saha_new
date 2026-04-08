@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   collection, 
   query, 
@@ -105,6 +106,7 @@ export default function CashbookPage() {
   const { db } = useFirebase();
   const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
+  const searchParams = useSearchParams();
 
   const [currentMonth, setCurrentMonth] = useState<Date | null>(null);
   const [entries, setEntries] = useState<WithId<AccountingEntry>[]>([]);
@@ -135,6 +137,13 @@ export default function CashbookPage() {
     setCurrentMonth(today);
     form.setValue("entryDate", format(today, "yyyy-MM-dd"));
   }, [form]);
+
+  useEffect(() => {
+    const raw = searchParams.get("tab");
+    if (!raw) return;
+    const u = raw.toUpperCase();
+    if (u === "IN" || u === "OUT" || u === "ALL") setActiveTab(u);
+  }, [searchParams]);
 
   const watchedType = form.watch("entryType");
   const watchedMainCat = form.watch("categoryMain");
