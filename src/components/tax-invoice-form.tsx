@@ -339,16 +339,31 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const remainingAmount = useMemo(() => Math.round(((grandTotal || 0) - currentSuggestedTotal) * 100) / 100, [grandTotal, currentSuggestedTotal]);
 
   const executeSave = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
-    if (!db || !storeSettings || !profile) return;
+    if (!db) {
+      toast({ variant: "destructive", title: "ไม่สามารถบันทึกได้", description: "ยังไม่เชื่อมต่อฐานข้อมูล" });
+      return;
+    }
+    if (!storeSettings) {
+      toast({
+        variant: "destructive",
+        title: "ไม่สามารถบันทึกได้",
+        description: "ยังโหลดข้อมูลร้านไม่สำเร็จ หรือไม่พบการตั้งค่า (settings/store) — ลองรีเฟรชหน้าหรือติดต่อผู้ดูแลระบบ",
+      });
+      return;
+    }
+    if (!profile) {
+      toast({ variant: "destructive", title: "ไม่สามารถบันทึกได้", description: "ยังไม่พบข้อมูลผู้ใช้ — กรุณาเข้าสู่ระบบใหม่" });
+      return;
+    }
     const baseCustomer = currentCustomer;
     if (!baseCustomer) {
       toast({ variant: "destructive", title: "ไม่พบข้อมูลลูกค้า", description: "กรุณาเลือกผู้ติดต่อก่อนค่ะ" });
       return;
     }
     const profiles = getInvoiceableTaxProfiles(baseCustomer);
-    const profile =
+    const resolvedTaxProfile =
       profiles.find((p) => p.id === data.taxProfileId) || profiles[0];
-    if (!profile) {
+    if (!resolvedTaxProfile) {
       toast({
         variant: "destructive",
         title: "ข้อมูลภาษีไม่ครบถ้วน",
@@ -358,7 +373,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
       setShowTaxInfoAlert(true);
       return;
     }
-    const customerSnapshot = buildCustomerSnapshotForTaxInvoice(baseCustomer, profile);
+    const customerSnapshot = buildCustomerSnapshotForTaxInvoice(baseCustomer, resolvedTaxProfile);
 
     setIsProcessing(true);
     
