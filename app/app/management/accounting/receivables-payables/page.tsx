@@ -746,6 +746,11 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                             const customerIdForReceipt = ob.customerId || details?.customerId || '';
                             const canIssueReceipt = type === "AR" && (ob.sourceDocType === "TAX_INVOICE" || ob.sourceDocType === "DEBIT_NOTE");
                             const requireReceiptBeforeReceive = ob.sourceDocType === "TAX_INVOICE" || ob.sourceDocType === "DEBIT_NOTE";
+                            const arReceiveDisabled =
+                              type === "AR" &&
+                              (ob.sourceDocType === "CREDIT_NOTE" ||
+                                (ob.balance ?? 0) <= 0.009 ||
+                                (requireReceiptBeforeReceive && !isReceiptIssued));
                             const receiptHref = (() => {
                               const q = new URLSearchParams();
                               q.set('tab', 'new');
@@ -760,6 +765,16 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                 <TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell>
                                 <TableCell>
                                   <div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
+                                  {type === "AR" && ob.sourceDocType === "CREDIT_NOTE" && (
+                                    <Badge variant="outline" className="text-[9px] h-4 mt-1 border-rose-200 text-rose-800 bg-rose-50">
+                                      ใบลดหนี้ (หักยอดเก็บ)
+                                    </Badge>
+                                  )}
+                                  {type === "AR" && ob.sourceDocType === "DEBIT_NOTE" && (
+                                    <Badge variant="outline" className="text-[9px] h-4 mt-1 border-blue-200 text-blue-800 bg-blue-50">
+                                      ใบเพิ่มหนี้
+                                    </Badge>
+                                  )}
                                   {details?.billingNoteNo && (
                                     <Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">
                                       <FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}
@@ -773,7 +788,14 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                 </TableCell>
                                 <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
                                 <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
-                                <TableCell className="text-right font-bold">{formatCurrency(ob.balance)}</TableCell>
+                                <TableCell
+                                  className={cn(
+                                    "text-right font-bold",
+                                    type === "AR" && (ob.balance ?? 0) < 0 && "text-rose-700"
+                                  )}
+                                >
+                                  {formatCurrency(ob.balance)}
+                                </TableCell>
                                 <TableCell className="text-right">
                                   <TooltipProvider delayDuration={300}>
                                     <div className="flex justify-end gap-1 flex-wrap">
@@ -808,7 +830,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                                 size="icon"
                                                 variant="outline"
                                                 className="h-9 w-9 shrink-0"
-                                                disabled={requireReceiptBeforeReceive && !isReceiptIssued}
+                                                disabled={arReceiveDisabled}
                                                 onClick={() => setPayingAR(ob)}
                                                 aria-label="รับชำระ"
                                               >
@@ -817,8 +839,12 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                             </span>
                                           </TooltipTrigger>
                                           <TooltipContent>
-                                            {requireReceiptBeforeReceive && !isReceiptIssued
+                                            {ob.sourceDocType === "CREDIT_NOTE"
+                                              ? "ใบลดหนี้หักยอดเก็บ — ไม่ใช้ปุ่มรับเงินที่นี่"
+                                              : requireReceiptBeforeReceive && !isReceiptIssued
                                               ? "เอกสารขายที่ต้องมีใบเสร็จ (ใบกำกับภาษี/ใบเพิ่มหนี้): ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริงได้"
+                                              : (ob.balance ?? 0) <= 0.009
+                                              ? "ไม่มียอดค้างรับ"
                                               : "รับ"}
                                           </TooltipContent>
                                         </Tooltip>

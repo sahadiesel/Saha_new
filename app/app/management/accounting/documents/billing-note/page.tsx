@@ -23,12 +23,15 @@ import {
 import { format, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
 import {
   type BillingTableRow,
+  billingDocLineLabel,
   bucketHasAnyCreatedNote,
   explodeSeparateSubRows,
   billingRowUiStatus,
+  billingSignedGrandTotal,
   billingTargetBucket,
   fetchDeferredRollInDocuments,
   excludeInvoicesDeferredToFutureMonth,
+  isUnpaidBillingCandidate,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -135,11 +138,7 @@ function BillingNoteBatchTab() {
       const invoicesSnap = await getDocs(invoicesQuery);
       const allDocs = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Document));
 
-      const inMonthUnpaid = allDocs.filter(doc =>
-        (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
-        doc.paymentTerms === 'CREDIT' &&
-        !['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)
-      );
+      const inMonthUnpaid = allDocs.filter(isUnpaidBillingCandidate);
       const fromRange = excludeInvoicesDeferredToFutureMonth(inMonthUnpaid, monthId);
       const rollIn = await fetchDeferredRollInDocuments(db, monthId);
       const byId = new Map<string, Document>();
@@ -208,7 +207,7 @@ function BillingNoteBatchTab() {
           includedInvoices,
           deferredInvoices,
           separateGroups,
-          totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0),
+          totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + billingSignedGrandTotal(inv), 0),
           createdNoteIds,
           parentBillingNotesSnapshot: createdNoteIds,
           warnings: Array.from(new Set(warnings)),
@@ -394,14 +393,15 @@ function BillingNoteBatchTab() {
     const createNote = async (groupInvoices: Document[], groupKey: string) => {
       if (groupInvoices.length === 0) return;
 
-      const totalAmount = groupInvoices.reduce((sum, inv) => sum + inv.grandTotal, 0);
+      const totalAmount = groupInvoices.reduce((sum, inv) => sum + billingSignedGrandTotal(inv), 0);
       const itemsForDoc = groupInvoices.map((inv) => {
-        const typeLabel = inv.docType === 'TAX_INVOICE' ? 'ใบกำกับภาษี' : 'ใบส่งของ';
+        const signed = billingSignedGrandTotal(inv);
+        const typeLabel = billingDocLineLabel(inv);
         return {
-          description: `${typeLabel}เลขที่ ${inv.docNo} (วันที่: ${safeFormat(new Date(inv.docDate), 'dd/MM/yy')})`,
+          description: `${typeLabel} เลขที่ ${inv.docNo} (วันที่: ${safeFormat(new Date(inv.docDate), 'dd/MM/yy')})`,
           quantity: 1,
-          unitPrice: inv.grandTotal,
-          total: inv.grandTotal,
+          unitPrice: signed,
+          total: signed,
         };
       });
 

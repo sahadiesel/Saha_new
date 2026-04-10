@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
-import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc, writeBatch, deleteDoc, orderBy } from "firebase/firestore";
+import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc, getDocs, writeBatch, deleteDoc, orderBy } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -478,41 +478,42 @@ function AccountingInboxPageContent() {
           if (!referencedDocSnap.exists()) throw new Error("ไม่พบใบกำกับภาษีอ้างอิง");
           const referencedDoc = referencedDocSnap.data() as DocumentType;
 
-          const targetArId = referencedDoc.arObligationId || `AR_${referencedTaxInvoiceId}`;
-          const targetArRef = doc(db, "accountingObligations", targetArId);
-          const targetArSnap = await transaction.get(targetArRef);
-          if (!targetArSnap.exists()) throw new Error("ยังไม่พบยอดลูกหนี้ของใบกำกับภาษีอ้างอิง");
-          const targetAr = targetArSnap.data() as any;
-
           const creditAmount = Math.max(0, docObj.grandTotal || 0);
-          const newAmountTotal = Math.max(0, Math.round(((targetAr.amountTotal || 0) - creditAmount) * 100) / 100);
-          const newAmountPaid = Math.min(Math.max(0, targetAr.amountPaid || 0), newAmountTotal);
-          const newBalance = Math.max(0, Math.round((newAmountTotal - newAmountPaid) * 100) / 100);
-          const newStatus = newBalance <= 0.05 ? "PAID" : newAmountPaid > 0 ? "PARTIAL" : "UNPAID";
+          const cnArId = `AR_${docObj.id}`;
+          const cnArRef = doc(db, "accountingObligations", cnArId);
 
-          transaction.update(targetArRef, {
-            amountTotal: newAmountTotal,
-            amountPaid: newAmountPaid,
-            balance: newBalance,
-            status: newStatus,
-            updatedAt: serverTimestamp(),
-          });
-
-          transaction.update(referencedDocRef, {
-            status: newStatus,
-            arStatus: newStatus,
-            paymentSummary: {
-              paidTotal: newAmountPaid,
-              balance: newBalance,
-              paymentStatus: newStatus,
-            },
-            updatedAt: serverTimestamp(),
-          });
+          transaction.set(
+            cnArRef,
+            sanitizeForFirestore({
+              id: cnArId,
+              type: "AR",
+              status: "UNPAID",
+              sourceDocType: "CREDIT_NOTE",
+              sourceDocId: docObj.id,
+              sourceDocNo: docObj.docNo,
+              amountTotal: creditAmount,
+              amountPaid: 0,
+              balance: -creditAmount,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              customerId: docObj.customerId || docObj.customerSnapshot?.id || null,
+              customerNameSnapshot: customerName,
+              jobId: docObj.jobId || null,
+              dueDate: docObj.dueDate || null,
+              docDate: docObj.docDate || null,
+              note: `อ้างอิงใบกำกับ ${referencedDoc.docNo || referencedTaxInvoiceId} (หักยอดเก็บ)`,
+            })
+          );
 
           transaction.update(docRef, {
             status: "APPROVED",
-            arStatus: "PAID",
-            arObligationId: targetArId,
+            arStatus: "UNPAID",
+            arObligationId: cnArId,
+            paymentSummary: {
+              paidTotal: 0,
+              balance: creditAmount,
+              paymentStatus: "UNPAID",
+            },
             updatedAt: serverTimestamp(),
           });
           return;
@@ -561,7 +562,10 @@ function AccountingInboxPageContent() {
           updatedAt: serverTimestamp()
         });
       });
-      toast({ title: isCreditNote ? "อนุมัติใบลดหนี้และปรับยอดลูกหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ" });
+      toast({
+        title: isCreditNote ? "อนุมัติใบลดหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ",
+        description: isCreditNote ? "แสดงในหน้าลูกหนี้และรวมในรอบวางบิลได้ (ยอดหักเป็นลบ)" : undefined,
+      });
       if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
       setArDocToConfirm(null);
     } catch(e: any) {
@@ -583,6 +587,9 @@ function AccountingInboxPageContent() {
 
     setIsSubmitting(true);
     try {
+      const docRef = doc(db, "documents", docObj.id);
+      const mainDocSnap = await getDoc(docRef);
+
       const [obSnap, entrySnap, claimSnap] = await Promise.all([
         getDocs(query(collection(db, "accountingObligations"), where("sourceDocId", "==", docObj.id))),
         getDocs(query(collection(db, "accountingEntries"), where("sourceDocId", "==", docObj.id))),
@@ -617,7 +624,9 @@ function AccountingInboxPageContent() {
         }
       }
 
-      batch.delete(doc(db, "documents", docObj.id));
+      if (mainDocSnap.exists()) {
+        batch.delete(docRef);
+      }
       await batch.commit();
 
       if (docObj.docType === "BILLING_NOTE") {
@@ -635,7 +644,12 @@ function AccountingInboxPageContent() {
         }
       }
 
-      toast({ title: "ลบเอกสารแล้ว" });
+      toast({
+        title: mainDocSnap.exists() ? "ลบเอกสารแล้ว" : "ล้างรายการที่ค้างแล้ว",
+        description: mainDocSnap.exists()
+          ? undefined
+          : "เอกสารหลักถูกลบไปก่อนแล้ว — ระบบล้างข้อมูลที่เกี่ยวข้องให้แล้ว",
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: msg });

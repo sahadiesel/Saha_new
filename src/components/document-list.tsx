@@ -168,6 +168,10 @@ export function DocumentList({
   
   useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter]);
 
+  /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
+  const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
+    docObj.docType !== "CREDIT_NOTE" && docObj.docType !== "DEBIT_NOTE";
+
   const unlinkJob = async (batch: any, docObj: Document) => {
     if (!docObj.jobId) return;
     const jobRef = doc(db!, 'jobs', docObj.jobId);
@@ -208,8 +212,27 @@ export function DocumentList({
     try {
       const batch = writeBatch(db);
       const docRef = doc(db, 'documents', docToAction.id);
-      batch.update(docRef, { status: 'CANCELLED', updatedAt: serverTimestamp(), notes: (docToAction.notes || "") + `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), APP_DATE_FORMAT + ' HH:mm')} โดย ${profile.displayName}` });
-      await unlinkJob(batch, docToAction);
+      const noteLine = `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), APP_DATE_FORMAT + ' HH:mm')} โดย ${profile.displayName}`;
+      const cancelUpdate: Record<string, unknown> = {
+        status: "CANCELLED",
+        updatedAt: serverTimestamp(),
+        notes: (docToAction.notes || "") + noteLine,
+      };
+      if (docToAction.docType === "CREDIT_NOTE" || docToAction.docType === "DEBIT_NOTE") {
+        cancelUpdate.arObligationId = deleteField();
+        cancelUpdate.arStatus = deleteField();
+      }
+      batch.update(docRef, cancelUpdate);
+      if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
+        await unlinkJob(batch, docToAction);
+      }
+      if (docToAction.docType === "CREDIT_NOTE" || docToAction.docType === "DEBIT_NOTE") {
+        const ownArRef = doc(db, "accountingObligations", `AR_${docToAction.id}`);
+        const ownArSnap = await getDoc(ownArRef);
+        if (ownArSnap.exists() && (ownArSnap.data() as { sourceDocId?: string }).sourceDocId === docToAction.id) {
+          batch.delete(ownArRef);
+        }
+      }
       await batch.commit();
       await cleanBillingRun(docToAction);
       toast({ title: "ยกเลิกเอกสารเรียบร้อย" });
@@ -221,7 +244,16 @@ export function DocumentList({
     setIsActionLoading(true);
     try {
       const batch = writeBatch(db);
-      await unlinkJob(batch, docToAction);
+      if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
+        await unlinkJob(batch, docToAction);
+      }
+      if (docToAction.docType === "CREDIT_NOTE" || docToAction.docType === "DEBIT_NOTE") {
+        const ownArRef = doc(db, "accountingObligations", `AR_${docToAction.id}`);
+        const ownArSnap = await getDoc(ownArRef);
+        if (ownArSnap.exists() && (ownArSnap.data() as { sourceDocId?: string }).sourceDocId === docToAction.id) {
+          batch.delete(ownArRef);
+        }
+      }
       batch.delete(doc(db, 'documents', docToAction.id));
       await batch.commit();
       await cleanBillingRun(docToAction);
@@ -329,8 +361,16 @@ export function DocumentList({
         </CardContent>
         {totalPages > 1 && (<CardFooter className="justify-between"><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>
-      <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>
+        {docToAction?.docType === "CREDIT_NOTE" || docToAction?.docType === "DEBIT_NOTE"
+          ? "ยกเลิกเฉพาะเอกสารนี้ — ไม่เปลี่ยนสถานะงาน (แก้ราคา/ยอดบิลไม่เกี่ยวกับสถานะงาน) คุณสามารถออกเอกสารใหม่แทนได้เมื่อต้องการ"
+          : 'ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ'}
+      </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>
+        {docToAction?.docType === "CREDIT_NOTE" || docToAction?.docType === "DEBIT_NOTE"
+          ? "ลบเอกสารนี้อย่างถาวร — ไม่เปลี่ยนสถานะงาน"
+          : 'ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ'}
+      </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
       <Dialog

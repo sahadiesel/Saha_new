@@ -1,6 +1,32 @@
 import { collection, getDocs, query, where, type Firestore } from 'firebase/firestore';
 import type { Customer, Document } from '@/lib/types';
 
+/** ยอดมีทิศทาง: ใบลดหนี้เป็นค่าลบ (หักจากยอดเก็บ) ใบอื่นเป็นบวก */
+export function billingSignedGrandTotal(doc: Document): number {
+  if (doc.docType === 'CREDIT_NOTE') return -(doc.grandTotal || 0);
+  return doc.grandTotal || 0;
+}
+
+export function billingDocLineLabel(inv: Document): string {
+  if (inv.docType === 'TAX_INVOICE') return 'ใบกำกับภาษี';
+  if (inv.docType === 'DELIVERY_NOTE') return 'ใบส่งของ';
+  if (inv.docType === 'CREDIT_NOTE') return 'ใบลดหนี้';
+  if (inv.docType === 'DEBIT_NOTE') return 'ใบเพิ่มหนี้';
+  return 'เอกสาร';
+}
+
+/** เอกสารที่รวมในรอบวางบิล (เครดิต + ใบลด/เพิ่มหนี้ที่ไม่ใช่เงินสด) */
+export function isUnpaidBillingCandidate(doc: Document): boolean {
+  if (['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)) return false;
+  if (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') {
+    return doc.paymentTerms === 'CREDIT';
+  }
+  if (doc.docType === 'CREDIT_NOTE' || doc.docType === 'DEBIT_NOTE') {
+    return doc.paymentTerms !== 'CASH';
+  }
+  return false;
+}
+
 export type BillingCreatedNotes = { main?: string; separate?: Record<string, string> };
 
 /** แถวก่อน/หลังแยกเป็นหลายแถวในตาราง */
@@ -52,7 +78,7 @@ export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] 
     ...row,
     separateGroups: {},
     splitSubgroupKeys: keys,
-    totalIncludedAmount: row.includedInvoices.reduce((s, i) => s + i.grandTotal, 0),
+    totalIncludedAmount: row.includedInvoices.reduce((s, i) => s + billingSignedGrandTotal(i), 0),
     parentBillingNotesSnapshot: parentNotes,
     billingTargetBucketId: baseBucket,
     splitInvoiceGroupKey: undefined,
@@ -73,7 +99,7 @@ export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] 
       includedInvoices: invs,
       deferredInvoices: [],
       separateGroups: {},
-      totalIncludedAmount: invs.reduce((s, i) => s + i.grandTotal, 0),
+      totalIncludedAmount: invs.reduce((s, i) => s + billingSignedGrandTotal(i), 0),
       createdNoteIds: sepId ? { main: sepId, separate: {} } : undefined,
       parentBillingNotesSnapshot: parentNotes,
       warnings: row.warnings,
@@ -124,12 +150,7 @@ export async function fetchDeferredRollInDocuments(db: Firestore, monthId: strin
   const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() } as Document))
-    .filter(
-      (doc) =>
-        (doc.docType === 'TAX_INVOICE' || doc.docType === 'DELIVERY_NOTE') &&
-        doc.paymentTerms === 'CREDIT' &&
-        !['PAID', 'CANCELLED', 'REJECTED'].includes(doc.status)
-    );
+    .filter((doc) => isUnpaidBillingCandidate(doc));
 }
 
 /** ซ่อนบิลในเดือนนี้ที่เลื่อนไปเดือนถัดไปแล้ว (billingDeferUntilMonth เป็นเดือนหลัง monthId) */
