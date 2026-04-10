@@ -52,9 +52,13 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
-import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
+import type { Job, StoreSettings, Customer, CustomerTaxProfile, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import {
+  buildCustomerSnapshotForTaxInvoice,
+  getInvoiceableTaxProfiles,
+} from "@/lib/customer-utils";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ"),
@@ -83,6 +87,8 @@ const taxInvoiceFormSchema = z.object({
   suggestedAccountId: z.string().optional(),
   billingRequired: z.boolean().default(false),
   dueDate: z.string().optional().nullable(),
+  /** โปรไฟล์ผู้เสียภาษีเมื่อลูกค้ามีมากกว่า 1 นาม */
+  taxProfileId: z.string().optional(),
 });
 
 type TaxInvoiceFormData = z.infer<typeof taxInvoiceFormSchema>;
@@ -158,6 +164,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
       paymentTerms: 'CASH',
       suggestedAccountId: '',
       billingRequired: false,
+      taxProfileId: "",
     },
   });
 
@@ -166,30 +173,51 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   }, [form]);
 
   const selectedCustomerId = form.watch('customerId');
+  const watchedTaxProfileId = form.watch("taxProfileId");
   const watchedIssueDate = form.watch('issueDate');
   const currentCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
   const grandTotal = form.watch('grandTotal');
-  
-  const hasFullTaxInvoiceCustomerInfo = (c: {
-    useTax?: boolean;
-    taxName?: string;
-    taxAddress?: string;
-    taxId?: string;
-  }) =>
-    !!(
-      c.useTax &&
-      c.taxName?.trim() &&
-      c.taxAddress?.trim() &&
-      c.taxId?.trim()
-    );
 
-  // เลือกผู้ติดต่อแล้วตรวจว่ามีชื่อ/ที่อยู่/เลขประจำตัวผู้เสียภาษีครบหรือไม่
+  const invoiceableProfiles = useMemo((): CustomerTaxProfile[] => {
+    if (!currentCustomer) return [];
+    return getInvoiceableTaxProfiles(currentCustomer);
+  }, [currentCustomer]);
+
+  const selectedTaxProfile = useMemo((): CustomerTaxProfile | null => {
+    if (invoiceableProfiles.length === 0) return null;
+    if (watchedTaxProfileId) {
+      const found = invoiceableProfiles.find((p) => p.id === watchedTaxProfileId);
+      if (found) return found;
+    }
+    return invoiceableProfiles[0];
+  }, [invoiceableProfiles, watchedTaxProfileId]);
+
+  // เลือกผู้ติดต่อแล้วตรวจว่ามีโปรไฟล์ภาษีพร้อมออกใบกำกับอย่างน้อย 1 ชุด และเลือกโปรไฟล์แล้ว
   useEffect(() => {
     if (!selectedCustomerId || isLoadingCustomers || customers.length === 0) return;
     const customer = customers.find((c) => c.id === selectedCustomerId);
     if (!customer) return;
-    setShowTaxInfoAlert(!hasFullTaxInvoiceCustomerInfo(customer));
-  }, [selectedCustomerId, isLoadingCustomers, customers]);
+    const profiles = getInvoiceableTaxProfiles(customer);
+    const tid = form.getValues("taxProfileId");
+    const selectionOk =
+      profiles.length > 0 &&
+      (!tid || profiles.some((p) => p.id === tid));
+    setShowTaxInfoAlert(!customer.useTax || profiles.length === 0 || !selectionOk);
+  }, [selectedCustomerId, isLoadingCustomers, customers, watchedTaxProfileId]);
+
+  /** sync taxProfileId เมื่อเปลี่ยนลูกค้าหรือรายการโปรไฟล์เปลี่ยน */
+  useEffect(() => {
+    if (!currentCustomer?.useTax) {
+      form.setValue("taxProfileId", "");
+      return;
+    }
+    const profiles = getInvoiceableTaxProfiles(currentCustomer);
+    if (profiles.length === 0) return;
+    const tid = form.getValues("taxProfileId");
+    if (!tid || !profiles.some((p) => p.id === tid)) {
+      form.setValue("taxProfileId", profiles[0].id);
+    }
+  }, [currentCustomer, form]);
 
   const handleGoToEditCustomer = () => {
     if (currentCustomer) {
@@ -254,6 +282,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
       form.reset({
         jobId: docToEdit.jobId || effectiveJobId || undefined,
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
+        taxProfileId: docToEdit.customerSnapshot?.taxProfileId || "",
         issueDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
         items: docToEdit.items?.map(item => ({...item})) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
         notes: docToEdit.notes ?? '',
@@ -277,9 +306,16 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         form.setValue('customerId', job.customerId);
         form.setValue('items', [{ description: job.description, quantity: 1, unitPrice: 0, total: 0 }]);
         form.setValue('receiverName', job.customerSnapshot?.taxName || job.customerSnapshot?.name || '');
+        const jc = customers.find((c) => c.id === job.customerId);
+        if (jc) {
+          const profs = getInvoiceableTaxProfiles(jc);
+          const snapPid = job.customerSnapshot?.taxProfileId;
+          const match = snapPid ? profs.find((p) => p.id === snapPid) : null;
+          form.setValue("taxProfileId", match?.id ?? profs[0]?.id ?? "");
+        }
     }
     if (profile) form.setValue('senderName', profile.displayName || '');
-  }, [job, docToEdit, profile, form, effectiveJobId]);
+  }, [job, docToEdit, profile, form, effectiveJobId, customers]);
 
   const { fields, append, remove, replace } = useFieldArray({ control: form.control, name: "items" });
   const watchedItems = useWatch({ control: form.control, name: "items" });
@@ -300,15 +336,26 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const remainingAmount = useMemo(() => Math.round(((grandTotal || 0) - currentSuggestedTotal) * 100) / 100, [grandTotal, currentSuggestedTotal]);
 
   const executeSave = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
-    const customerSnapshot = currentCustomer || docToEdit?.customerSnapshot || job?.customerSnapshot;
-    if (!db || !customerSnapshot || !storeSettings || !profile) return;
-    
-    // Final check for tax info before saving (ชื่อ/ที่อยู่/เลขผู้เสียภาษี — สอดคล้องกับการเลือกลูกค้า)
-    if (!hasFullTaxInvoiceCustomerInfo(customerSnapshot)) {
-        toast({ variant: 'destructive', title: 'ข้อมูลภาษีไม่ครบถ้วน', description: 'กรุณาแก้ไขข้อมูลลูกค้าเพื่อเพิ่มรายละเอียดการออกใบกำกับภาษีก่อนค่ะ' });
-        setShowTaxInfoAlert(true);
-        return;
+    if (!db || !storeSettings || !profile) return;
+    const baseCustomer = currentCustomer;
+    if (!baseCustomer) {
+      toast({ variant: "destructive", title: "ไม่พบข้อมูลลูกค้า", description: "กรุณาเลือกผู้ติดต่อก่อนค่ะ" });
+      return;
     }
+    const profiles = getInvoiceableTaxProfiles(baseCustomer);
+    const profile =
+      profiles.find((p) => p.id === data.taxProfileId) || profiles[0];
+    if (!profile) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลภาษีไม่ครบถ้วน",
+        description:
+          "กรุณาเพิ่มชื่อ/ที่อยู่/เลขผู้เสียภาษีในโปรไฟล์ลูกค้า หรือเลือกนามบริษัทที่ออกใบกำกับก่อนค่ะ",
+      });
+      setShowTaxInfoAlert(true);
+      return;
+    }
+    const customerSnapshot = buildCustomerSnapshotForTaxInvoice(baseCustomer, profile);
 
     setIsProcessing(true);
     
@@ -452,6 +499,14 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
     form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
     form.setValue('receiverName', sourceDoc.customerSnapshot?.taxName || sourceDoc.customerSnapshot?.name || "");
+    const cid = sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "";
+    const cust = customers.find((c) => c.id === cid);
+    if (cust) {
+      const profs = getInvoiceableTaxProfiles(cust);
+      const snapPid = sourceDoc.customerSnapshot?.taxProfileId;
+      const match = snapPid ? profs.find((p) => p.id === snapPid) : null;
+      form.setValue("taxProfileId", match?.id ?? profs[0]?.id ?? "");
+    }
     setIsQtSearchOpen(false);
   };
 
@@ -590,42 +645,141 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <FormField control={form.control} name="customerId" render={({ field }) => (
-                <FormItem className="flex flex-col">
-                  <FormLabel>ชื่อลูกค้า</FormLabel>
-                  <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <FormControl>
-                        <Button variant="outline" className={cn("w-full max-w-sm justify-between font-normal", !field.value && "text-muted-foreground")} disabled={isLocked || !!effectiveJobId}>
-                          <span>{currentCustomer?.name || "เลือกลูกค้า..."}</span>
-                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </FormControl>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                      <div className="p-2 border-b">
-                        <Input placeholder="ค้นหา..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
-                      </div>
-                      <ScrollArea className="h-fit max-h-60">
-                        {filteredCustomers.map((c) => (
-                          <Button
-                            key={c.id}
-                            variant="ghost"
-                            onClick={() => {
-                              field.onChange(c.id);
-                              form.setValue("receiverName", c.taxName?.trim() || c.name || "");
-                              setIsCustomerPopoverOpen(false);
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
+                <FormField
+                  control={form.control}
+                  name="customerId"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col w-full lg:max-w-sm shrink-0">
+                      <FormLabel>ชื่อลูกค้า (ผู้ติดต่อ)</FormLabel>
+                      <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full justify-between font-normal",
+                                !field.value && "text-muted-foreground"
+                              )}
+                              disabled={isLocked || !!effectiveJobId}
+                            >
+                              <span className="truncate">{currentCustomer?.name || "เลือกลูกค้า..."}</span>
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                          <div className="p-2 border-b">
+                            <Input
+                              placeholder="ค้นหา..."
+                              value={customerSearch}
+                              onChange={(e) => setCustomerSearch(e.target.value)}
+                            />
+                          </div>
+                          <ScrollArea className="h-fit max-h-60">
+                            {filteredCustomers.map((c) => (
+                              <Button
+                                key={c.id}
+                                variant="ghost"
+                                type="button"
+                                onClick={() => {
+                                  field.onChange(c.id);
+                                  const profs = getInvoiceableTaxProfiles(c);
+                                  form.setValue("taxProfileId", profs[0]?.id ?? "");
+                                  const p = profs[0];
+                                  form.setValue(
+                                    "receiverName",
+                                    p?.taxName?.trim() || c.taxName?.trim() || c.name || ""
+                                  );
+                                  setIsCustomerPopoverOpen(false);
+                                }}
+                                className="w-full justify-start h-auto py-2 px-3 text-left"
+                              >
+                                <span>{c.name}</span>
+                              </Button>
+                            ))}
+                          </ScrollArea>
+                        </PopoverContent>
+                      </Popover>
+                    </FormItem>
+                  )}
+                />
+
+                <div className="flex-1 min-w-0 space-y-2">
+                  {currentCustomer?.useTax && invoiceableProfiles.length > 1 && (
+                    <FormField
+                      control={form.control}
+                      name="taxProfileId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>ออกใบกำกับในนาม</FormLabel>
+                          <Select
+                            value={field.value || selectedTaxProfile?.id || ""}
+                            onValueChange={(v) => {
+                              field.onChange(v);
+                              const p = invoiceableProfiles.find((x) => x.id === v);
+                              if (p?.taxName) form.setValue("receiverName", p.taxName.trim());
                             }}
-                            className="w-full justify-start h-auto py-2 px-3 text-left"
+                            disabled={isLocked}
                           >
-                            <span>{c.name}</span>
-                          </Button>
-                        ))}
-                      </ScrollArea>
-                    </PopoverContent>
-                  </Popover>
-                </FormItem>
-              )} />
+                            <FormControl>
+                              <SelectTrigger className="w-full max-w-xl">
+                                <SelectValue placeholder="เลือกชื่อผู้เสียภาษี..." />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {invoiceableProfiles.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.label ? `${p.label} — ${p.taxName}` : p.taxName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription className="text-xs">
+                            ผู้ติดต่อคนนี้มีหลายบริษัท — เลือกว่าจะออกใบกำกับในนามใด
+                          </FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {selectedTaxProfile && currentCustomer?.useTax && (
+                    <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm space-y-1.5 min-h-[4.5rem]">
+                      <p className="text-xs font-semibold text-muted-foreground">ชื่อและที่อยู่ผู้เสียภาษี (บนใบกำกับ)</p>
+                      <p className="font-semibold text-foreground leading-snug">{selectedTaxProfile.taxName}</p>
+                      <p className="text-muted-foreground whitespace-pre-wrap text-xs leading-relaxed">
+                        {selectedTaxProfile.taxAddress}
+                      </p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-1 text-xs text-muted-foreground border-t border-primary/10 mt-2 pt-2">
+                        <span>
+                          เลขประจำตัวผู้เสียภาษี:{" "}
+                          <span className="font-mono text-foreground">{selectedTaxProfile.taxId}</span>
+                        </span>
+                        {selectedTaxProfile.taxBranchType === "BRANCH" ? (
+                          <span>
+                            สาขา:{" "}
+                            <span className="font-mono text-foreground">
+                              {selectedTaxProfile.taxBranchNo || "—"}
+                            </span>
+                          </span>
+                        ) : (
+                          <span>สำนักงานใหญ่</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {currentCustomer?.useTax && invoiceableProfiles.length === 0 && (
+                    <Alert variant="destructive" className="py-3">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle className="text-sm">ยังไม่มีข้อมูลผู้เสียภาษีครบ</AlertTitle>
+                      <AlertDescription className="text-xs">
+                        เพิ่มชื่อ ที่อยู่ และเลขประจำตัวผู้เสียภาษีในรายลูกค้าก่อนออกใบกำกับ
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              </div>
               <div className="border rounded-md overflow-x-auto">
                 <Table>
                   <TableHeader><TableRow><TableHead>รายการ</TableHead><TableHead className="w-32 text-right">จำนวน</TableHead><TableHead className="w-40 text-right">ราคา</TableHead><TableHead className="text-right">ยอดรวม</TableHead><TableHead/></TableRow></TableHeader>

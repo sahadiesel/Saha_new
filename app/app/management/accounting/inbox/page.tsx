@@ -114,6 +114,7 @@ function AccountingInboxPageContent() {
   const [arDocToConfirm, setArDocToConfirm] = useState<WithId<DocumentType> | null>(null);
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
+  const isStrictAdmin = profile?.role === 'ADMIN';
 
   const hasPermission = useMemo(() => {
     if (!profile) return false;
@@ -153,8 +154,14 @@ function AccountingInboxPageContent() {
     const unsubscribe = onSnapshot(docsQuery, (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
       const needingReview = all.filter(d => {
-          // ตั้งลูกหนี้แล้ว → ไม่แสดงใน Inbox ตรวจบิล (ติดตามที่หน้าลูกหนี้/เจ้าหนี้)
-          if ((d.docType === 'DELIVERY_NOTE' || d.docType === 'TAX_INVOICE') && d.arObligationId) {
+          // ตั้งลูกหนี้ / ผูก AR แล้ว → ไม่แสดงใน Inbox (ติดตามที่หน้าลูกหนี้-เจ้าหนี้ รวมใบลดหนี้ที่หักยอดเข้าใบกำกับแล้ว)
+          if (
+            (d.docType === 'DELIVERY_NOTE' ||
+              d.docType === 'TAX_INVOICE' ||
+              d.docType === 'CREDIT_NOTE' ||
+              d.docType === 'DEBIT_NOTE') &&
+            d.arObligationId
+          ) {
             return false;
           }
           if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
@@ -564,6 +571,79 @@ function AccountingInboxPageContent() {
     }
   };
 
+  /** ลบเอกสารจาก Inbox (เฉพาะ Admin) — ล้าง obligation/claim ที่อ้าง sourceDocId เดียวกัน */
+  const handleDeleteInboxDocument = async (docObj: WithId<DocumentType>) => {
+    if (!db || !profile || !isStrictAdmin) return;
+    if (
+      !confirm(
+        `ยืนยันลบเอกสาร ${docObj.docNo} ออกจากระบบอย่างถาวร?\nการกระทำนี้ไม่สามารถยกเลิกได้`
+      )
+    )
+      return;
+
+    setIsSubmitting(true);
+    try {
+      const [obSnap, entrySnap, claimSnap] = await Promise.all([
+        getDocs(query(collection(db, "accountingObligations"), where("sourceDocId", "==", docObj.id))),
+        getDocs(query(collection(db, "accountingEntries"), where("sourceDocId", "==", docObj.id))),
+        getDocs(query(collection(db, "paymentClaims"), where("sourceDocId", "==", docObj.id))),
+      ]);
+
+      const batch = writeBatch(db);
+      obSnap.docs.forEach((d) => batch.delete(d.ref));
+      entrySnap.docs.forEach((d) => batch.delete(d.ref));
+      claimSnap.docs.forEach((d) => batch.delete(d.ref));
+
+      if (docObj.jobId) {
+        const jobRef = doc(db, "jobs", docObj.jobId);
+        const jobSnap = await getDoc(jobRef);
+        if (jobSnap.exists()) {
+          const jobData = jobSnap.data();
+          if (jobData.salesDocId === docObj.id) {
+            batch.update(jobRef, {
+              status: "DONE",
+              salesDocId: deleteField(),
+              salesDocNo: deleteField(),
+              salesDocType: deleteField(),
+              lastActivityAt: serverTimestamp(),
+            });
+            batch.set(doc(collection(jobRef, "activities")), {
+              text: `[Admin] ลบเอกสาร ${docObj.docNo} จาก Inbox — คืนสถานะงานเพื่อออกบิลใหม่`,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      }
+
+      batch.delete(doc(db, "documents", docObj.id));
+      await batch.commit();
+
+      if (docObj.docType === "BILLING_NOTE") {
+        const monthId = docObj.billingRunId || docObj.docDate?.substring(0, 7);
+        const customerId = docObj.customerId || docObj.customerSnapshot?.id;
+        if (monthId && customerId) {
+          try {
+            await updateDoc(doc(db, "billingRuns", monthId), {
+              [`createdBillingNotes.${customerId}`]: deleteField(),
+              updatedAt: serverTimestamp(),
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      toast({ title: "ลบเอกสารแล้ว" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: msg });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleDeleteReceipt = async (receipt: WithId<DocumentType>) => {
     if (!db || !profile || !isUserAdmin) return;
     if (!confirm(`ยืนยันการลบใบเสร็จเลขที่ ${receipt.docNo} ใช่หรือไม่?`)) return;
@@ -669,6 +749,17 @@ function AccountingInboxPageContent() {
                                 <DropdownMenuItem onSelect={() => setDisputingDoc(docItem)} className="text-destructive focus:text-destructive">
                                   <Ban className="mr-2 h-4 w-4"/> ตีกลับให้แก้ไข
                                 </DropdownMenuItem>
+                                {isStrictAdmin && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onSelect={() => handleDeleteInboxDocument(docItem)}
+                                      className="text-destructive focus:text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" /> ลบ
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
@@ -726,6 +817,17 @@ function AccountingInboxPageContent() {
                                 <DropdownMenuItem onSelect={() => setDisputingDoc(docItem)} className="text-destructive focus:text-destructive">
                                   <Ban className="mr-2 h-4 w-4"/> ตีกลับให้แก้ไข
                                 </DropdownMenuItem>
+                                {isStrictAdmin && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onSelect={() => handleDeleteInboxDocument(docItem)}
+                                      className="text-destructive focus:text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" /> ลบ
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
