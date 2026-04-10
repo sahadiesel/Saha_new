@@ -73,7 +73,10 @@ const taxInvoiceFormSchema = z.object({
   issueDate: z.string().min(1, "กรุณาเลือกวันที่"),
   items: z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการ"),
   subtotal: z.coerce.number(),
-  discountAmount: z.coerce.number().min(0).optional(),
+  discountAmount: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? 0 : v),
+    z.coerce.number().min(0)
+  ),
   net: z.coerce.number(),
   isVat: z.boolean().default(true),
   vatAmount: z.coerce.number(),
@@ -92,6 +95,18 @@ const taxInvoiceFormSchema = z.object({
 });
 
 type TaxInvoiceFormData = z.infer<typeof taxInvoiceFormSchema>;
+
+/** ดึงข้อความ error แรกจาก react-hook-form errors (รองรับ items[].description ฯลฯ) */
+function firstFormErrorMessage(errors: unknown): string | undefined {
+  if (!errors || typeof errors !== "object") return undefined;
+  const o = errors as Record<string, unknown>;
+  if (typeof o.message === "string" && o.message) return o.message;
+  for (const v of Object.values(o)) {
+    const sub = firstFormErrorMessage(v);
+    if (sub) return sub;
+  }
+  return undefined;
+}
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -170,6 +185,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
 
   useEffect(() => {
     form.register("jobId");
+    form.register("taxProfileId");
   }, [form]);
 
   const selectedCustomerId = form.watch('customerId');
@@ -191,19 +207,6 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
     return invoiceableProfiles[0];
   }, [invoiceableProfiles, watchedTaxProfileId]);
-
-  // เลือกผู้ติดต่อแล้วตรวจว่ามีโปรไฟล์ภาษีพร้อมออกใบกำกับอย่างน้อย 1 ชุด และเลือกโปรไฟล์แล้ว
-  useEffect(() => {
-    if (!selectedCustomerId || isLoadingCustomers || customers.length === 0) return;
-    const customer = customers.find((c) => c.id === selectedCustomerId);
-    if (!customer) return;
-    const profiles = getInvoiceableTaxProfiles(customer);
-    const tid = form.getValues("taxProfileId");
-    const selectionOk =
-      profiles.length > 0 &&
-      (!tid || profiles.some((p) => p.id === tid));
-    setShowTaxInfoAlert(!customer.useTax || profiles.length === 0 || !selectionOk);
-  }, [selectedCustomerId, isLoadingCustomers, customers, watchedTaxProfileId]);
 
   /** sync taxProfileId เมื่อเปลี่ยนลูกค้าหรือรายการโปรไฟล์เปลี่ยน */
   useEffect(() => {
@@ -440,7 +443,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   };
 
   const handleSaveWrapper = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
-    if (isProcessing) return; 
+    if (isProcessing) return;
     const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
       if (currentJobId) {
@@ -452,18 +455,45 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
           return;
         }
       }
-      if (submitForReview) { 
-          setPendingData({ ...data, jobId: currentJobId }); 
-          setIsReviewSubmission(true); 
-          if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
-              setSuggestedPayments([{accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
-          }
-          setShowReviewConfirm(true); 
-          return; 
+      if (submitForReview) {
+        setPendingData({ ...data, jobId: currentJobId });
+        setIsReviewSubmission(true);
+        if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
+          setSuggestedPayments([
+            { accountId: accounts.find((a) => a.type === "CASH")?.id || "", amount: data.grandTotal },
+          ]);
+        }
+        setShowReviewConfirm(true);
+        return;
       }
       await executeSave({ ...data, jobId: currentJobId }, false);
-    } catch (e) {}
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({
+        variant: "destructive",
+        title: "ไม่สามารถบันทึกได้",
+        description: msg,
+      });
+    }
   };
+
+  const onFormInvalid = (errors: unknown) => {
+    const msg = firstFormErrorMessage(errors);
+    toast({
+      variant: "destructive",
+      title: "กรุณาตรวจสอบฟอร์ม",
+      description: msg || "ข้อมูลไม่ครบหรือไม่ถูกต้อง",
+    });
+  };
+
+  const submitSaveDraft = form.handleSubmit(
+    (d) => handleSaveWrapper(d, false),
+    onFormInvalid
+  );
+  const submitSendReview = form.handleSubmit(
+    (d) => handleSaveWrapper(d, true),
+    onFormInvalid
+  );
 
   const handleCancelExistingAndSave = async () => {
     if (!db || !existingTi || !profile || !pendingData || isProcessing) return;
@@ -548,11 +578,11 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
           <div className="flex justify-between items-center">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             <div className="flex gap-2">
-              <Button type="button" variant="secondary" onClick={form.handleSubmit((d) => handleSaveWrapper(d, false))} disabled={isLocked || isProcessing || isCancelled}>
+              <Button type="button" variant="secondary" onClick={submitSaveDraft} disabled={isLocked || isProcessing || isCancelled}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
                 บันทึกฉบับร่าง
               </Button>
-              <Button type="button" onClick={form.handleSubmit((d) => handleSaveWrapper(d, true))} disabled={isLocked || isProcessing || isCancelled}>
+              <Button type="button" onClick={submitSendReview} disabled={isLocked || isProcessing || isCancelled}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
                 ส่งบัญชีตรวจสอบ
               </Button>
