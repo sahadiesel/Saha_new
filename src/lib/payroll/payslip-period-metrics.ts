@@ -76,7 +76,10 @@ export function computePeriodMetrics(params: {
   let leaveSummary = { sickDays: 0, businessDays: 0, vacationDays: 0, overLimitDays: 0 };
   let calcNotes = '';
   let autoDeductions: PayslipDeduction[] = [];
-  
+
+  /** พนักงานค่าแรงรายวัน: วันลาไม่นับเป็นวันจ่ายค่าจ้าง (ไม่ใช้สิทธิ์ลาแบบพนักงานเงินเดือน) */
+  const isDailyPay = payType === 'DAILY';
+
   const periodDays = eachDayOfInterval({ start: period.start, end: Math.min(period.end.getTime(), today.getTime()) as any });
   const weekendMode = hrSettings.weekendPolicy?.mode || 'SAT_SUN';
   const [workStartHour, workStartMinute] = (hrSettings.workStart || '08:00').split(':').map(Number);
@@ -123,7 +126,10 @@ export function computePeriodMetrics(params: {
         });
         
         if (leaveUnits === 1) {
-            tempPayableUnits += 1;
+            // พนักงานเงินเดือน: วันลาเต็มวันยังนับเป็นวันจ่ายตามสิทธิ์ — รายวันไม่จ่ายค่าแรงวันลา
+            if (!isDailyPay) {
+                tempPayableUnits += 1;
+            }
             return; // Full day leave covered, move to next day
         }
     }
@@ -140,7 +146,8 @@ export function computePeriodMetrics(params: {
             if (adjustmentForDay.adjustedOut) lastOut = adjustmentForDay.adjustedOut.toDate();
         }
 
-        let dayPayableUnit = leaveUnits; // Start with the 0.5 from leave if any
+        // รายวัน: ไม่จ่ายในส่วนที่ลา (ครึ่งวันลาไม่ได้รับค่าครึ่งวันจากการลา)
+        let dayPayableUnit = isDailyPay ? 0 : leaveUnits;
         const remainingCapacity = 1 - leaveUnits;
 
         if (!firstIn) {
@@ -192,51 +199,57 @@ export function computePeriodMetrics(params: {
   attendanceSummary.scheduledWorkDays = scheduledWorkDays;
   attendanceSummary.dayLogs = dayLogs;
 
-  // Over-limit leave calculation - Using integers
-  (Object.keys(hrSettings.leavePolicy?.leaveTypes || {}) as TLeaveType[]).forEach(leaveType => {
-      const policy = hrSettings.leavePolicy?.leaveTypes?.[leaveType];
-      if (!policy?.annualEntitlement) return;
+  if (isDailyPay && attendanceSummary.leaveDays > 0) {
+    calcNotes += 'พนักงานค่าแรงรายวัน: วันลาที่อนุมัติไม่นับรวมค่าจ้างตามวันทำงาน\n';
+  }
 
-      const annualEntitlement = policy.annualEntitlement;
-      const approvedLeavesOfYear = userLeavesApprovedYear.filter(l => l.leaveType === leaveType).sort((a,b) => parseISO(a.startDate).getTime() - parseISO(b.startDate).getTime());
-      
-      let daysTakenThisYear = 0;
-      let overLimitDaysThisPeriod = 0;
+  // Over-limit leave calculation — เฉพาะพนักงานเงินเดือน (สิทธิ์ลาต่อปี / หักเกินโควตา)
+  if (!isDailyPay) {
+    (Object.keys(hrSettings.leavePolicy?.leaveTypes || {}) as TLeaveType[]).forEach(leaveType => {
+        const policy = hrSettings.leavePolicy?.leaveTypes?.[leaveType];
+        if (!policy?.annualEntitlement) return;
 
-      approvedLeavesOfYear.forEach(leave => {
-          const leaveStart = parseISO(leave.startDate);
-          const leaveEnd = parseISO(leave.endDate);
+        const annualEntitlement = policy.annualEntitlement;
+        const approvedLeavesOfYear = userLeavesApprovedYear.filter(l => l.leaveType === leaveType).sort((a,b) => parseISO(a.startDate).getTime() - parseISO(b.startDate).getTime());
+        
+        let daysTakenThisYear = 0;
+        let overLimitDaysThisPeriod = 0;
 
-          for (let day = startOfDay(leaveStart); day <= endOfDay(leaveEnd); day.setDate(day.getDate() + 1)) {
-              const dayUnits = (leave.isHalfDay && format(day, 'yyyy-MM-dd') === leave.startDate) ? 0.5 : 1;
-              daysTakenThisYear += dayUnits;
-              
-              if (daysTakenThisYear > annualEntitlement) {
-                  const overage = Math.min(dayUnits, daysTakenThisYear - annualEntitlement);
-                  if (isWithinInterval(day, {start: period.start, end: period.end})) {
-                      overLimitDaysThisPeriod += overage;
-                  }
-              }
-          }
-      });
-      leaveSummary.overLimitDays += overLimitDaysThisPeriod;
-      
-      const overLimitMode = policy.overLimitHandling?.mode;
-      const salary = user.hr?.salaryMonthly;
+        approvedLeavesOfYear.forEach(leave => {
+            const leaveStart = parseISO(leave.startDate);
+            const leaveEnd = parseISO(leave.endDate);
 
-      if (overLimitDaysThisPeriod > 0 && salary && (overLimitMode === 'DEDUCT_SALARY' || overLimitMode === 'UNPAID')) {
-          const baseDays = policy.overLimitHandling?.salaryDeductionBaseDays || hrSettings.payroll?.salaryDeductionBaseDays || 26;
-          // FORCE INTEGER for deduction
-          const deductionAmount = Math.round((salary / baseDays) * overLimitDaysThisPeriod);
-          autoDeductions.push({
-              name: `[AUTO] หักลาเกินสิทธิ์ (${leaveType})`,
-              amount: deductionAmount,
-              notes: `${overLimitDaysThisPeriod} วัน`
-          });
-      } else if (overLimitDaysThisPeriod > 0 && overLimitMode === 'DISALLOW') {
-          calcNotes += `คำเตือน: การลา ${leaveType} เกินสิทธิ์ ${overLimitDaysThisPeriod} วัน แต่ระบบตั้งค่าไม่อนุญาตให้หักเงิน\n`;
-      }
-  });
+            for (let day = startOfDay(leaveStart); day <= endOfDay(leaveEnd); day.setDate(day.getDate() + 1)) {
+                const dayUnits = (leave.isHalfDay && format(day, 'yyyy-MM-dd') === leave.startDate) ? 0.5 : 1;
+                daysTakenThisYear += dayUnits;
+                
+                if (daysTakenThisYear > annualEntitlement) {
+                    const overage = Math.min(dayUnits, daysTakenThisYear - annualEntitlement);
+                    if (isWithinInterval(day, {start: period.start, end: period.end})) {
+                        overLimitDaysThisPeriod += overage;
+                    }
+                }
+            }
+        });
+        leaveSummary.overLimitDays += overLimitDaysThisPeriod;
+        
+        const overLimitMode = policy.overLimitHandling?.mode;
+        const salary = user.hr?.salaryMonthly;
+
+        if (overLimitDaysThisPeriod > 0 && salary && (overLimitMode === 'DEDUCT_SALARY' || overLimitMode === 'UNPAID')) {
+            const baseDays = policy.overLimitHandling?.salaryDeductionBaseDays || hrSettings.payroll?.salaryDeductionBaseDays || 26;
+            // FORCE INTEGER for deduction
+            const deductionAmount = Math.round((salary / baseDays) * overLimitDaysThisPeriod);
+            autoDeductions.push({
+                name: `[AUTO] หักลาเกินสิทธิ์ (${leaveType})`,
+                amount: deductionAmount,
+                notes: `${overLimitDaysThisPeriod} วัน`
+            });
+        } else if (overLimitDaysThisPeriod > 0 && overLimitMode === 'DISALLOW') {
+            calcNotes += `คำเตือน: การลา ${leaveType} เกินสิทธิ์ ${overLimitDaysThisPeriod} วัน แต่ระบบตั้งค่าไม่อนุญาตให้หักเงิน\n`;
+        }
+    });
+  }
 
 
   // Money deductions for MONTHLY - Using integers

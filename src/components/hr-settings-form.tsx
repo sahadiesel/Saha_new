@@ -345,6 +345,9 @@ export function HRSettingsForm() {
             <Card>
                 <CardHeader>
                     <CardTitle>นโยบายการลา</CardTitle>
+                    <CardDescription>
+                        ใช้กับพนักงานเงินเดือน — พนักงานค่าแรงรายวันไม่นับโควตานี้ และวันลาไม่รวมค่าจ้างตามวันทำงาน
+                    </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <div>
@@ -508,7 +511,10 @@ export function HRSettingsForm() {
           <CardHeader>
             <CardTitle>นโยบายการลา</CardTitle>
             <CardDescription>
-              กำหนดสิทธิ์การลาประเภทต่างๆ คำนวณตามปีปฏิทิน (1 ม.ค. - 31 ธ.ค.)
+              กำหนดสิทธิ์การลาประเภทต่างๆ คำนวณตามปีปฏิทิน (1 ม.ค. - 31 ธ.ค.) — ใช้กับพนักงานเงินเดือน
+              <span className="mt-1 block text-muted-foreground">
+                พนักงานค่าแรงรายวัน: วันลาที่อนุมัติไม่นับรวมค่าจ้างตามวันทำงาน และไม่ใช้โควตาตามตารางนี้
+              </span>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">

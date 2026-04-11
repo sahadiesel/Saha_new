@@ -131,6 +131,7 @@ export default function MyLeavesPage() {
   const { data: hrSettings, isLoading: isLoadingSettings } = useDoc<HRSettings>(settingsDocRef);
 
   const userId = profile?.uid;
+  const isDailyPay = profile?.hr?.payType === 'DAILY';
 
   const leavesQuery = useMemo(() => {
     if (!db || !userId) return null;
@@ -274,7 +275,8 @@ export default function MyLeavesPage() {
     let daysInRequest = differenceInCalendarDays(new Date(data.endDate), new Date(data.startDate)) + 1;
     if (data.isHalfDay) daysInRequest = 0.5;
 
-    if (entitlement > 0 && (daysTaken + daysInRequest) > entitlement) {
+    // พนักงานค่าแรงรายวันไม่ใช้โควตาลาแบบเงินเดือน (วันลาไม่ได้รับค่าจ้างตามระบบเงินเดือน)
+    if (!isDailyPay && entitlement > 0 && (daysTaken + daysInRequest) > entitlement) {
       setPendingLeaveData(data);
       setPendingLeaveFiles(files);
       setIsOverLimitConfirmOpen(true);
@@ -432,7 +434,18 @@ export default function MyLeavesPage() {
           <Card>
             <CardHeader>
               <CardTitle>ยื่นใบลาใหม่</CardTitle>
-              <CardDescription>กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล</CardDescription>
+              <CardDescription>
+                {isDailyPay ? (
+                  <>
+                    กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล
+                    <span className="mt-2 block text-amber-700 dark:text-amber-500 font-medium">
+                      คุณเป็นพนักงานค่าแรงรายวัน — วันลาที่อนุมัติไม่นับเป็นวันจ่ายค่าจ้าง (ไม่ใช้สิทธิ์ลาป่วย/ลากิจแบบพนักงานเงินเดือน)
+                    </span>
+                  </>
+                ) : (
+                  'กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล'
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Form {...form}>

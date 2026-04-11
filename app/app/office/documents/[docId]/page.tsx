@@ -301,10 +301,27 @@ function DocumentPageContent() {
 
     const effectiveCustomer = useMemo(() => {
         if (!document) return null;
-        return {
-            ...document.customerSnapshot,
-            ...(liveCustomer || {})
-        };
+        const snap = document.customerSnapshot;
+
+        // เอกสารที่บันทึก snapshot ลูกค้า/ภาษีไว้แล้ว ต้องพิมพ์ตาม snapshot เท่านั้น
+        // ข้อมูลลูกค้าสดมี tax* ชุดเดียวที่ราก — ถ้า merge ทับ snapshot จะได้ชื่อสาขาผิด
+        // เมื่อลูกค้ามีหลายนามภาษี (หลาย tax profile)
+        const freezeSnapshotTypes: Document["docType"][] = [
+            "TAX_INVOICE",
+            "RECEIPT",
+            "BILLING_NOTE",
+            "CREDIT_NOTE",
+            "WITHHOLDING_TAX",
+        ];
+        const preferSnapshot = freezeSnapshotTypes.includes(document.docType) && snap;
+
+        if (preferSnapshot) {
+            return { ...(liveCustomer || {}), ...snap };
+        }
+        if (snap) {
+            return { ...snap, ...(liveCustomer || {}) };
+        }
+        return liveCustomer ?? null;
     }, [document, liveCustomer]);
 
     // Set browser tab title to document number for filename auto-suggestion
