@@ -138,28 +138,36 @@ function TaxInvoiceDetailPageContent() {
                                     </TableBody>
                                 </Table>
                             </div>
-                            
-                            <div className="flex flex-col items-end gap-2 mt-6">
-                                <div className="flex justify-between w-full max-w-[300px] text-sm">
-                                    <span className="text-muted-foreground">รวมเป็นเงิน:</span>
-                                    <span>{formatCurrency(document.subtotal)}</span>
+
+                            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                                <div className="border border-neutral-400 rounded-sm p-2.5 min-h-[5.5rem]">
+                                    <p className="text-[10px] font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
+                                    <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
+                                        {document.notes?.trim() ?? ""}
+                                    </div>
                                 </div>
-                                <div className="flex justify-between w-full max-w-[300px] text-sm text-destructive">
-                                    <span className="text-muted-foreground">ส่วนลด:</span>
-                                    <span>- {formatCurrency(document.discountAmount || 0)}</span>
-                                </div>
-                                <div className="flex justify-between w-full max-w-[300px] text-sm">
-                                    <span className="text-muted-foreground font-medium">ยอดหลังหักส่วนลด:</span>
-                                    <span className="font-medium">{formatCurrency(document.net)}</span>
-                                </div>
-                                <div className="flex justify-between w-full max-w-[300px] text-sm">
-                                    <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม 7%:</span>
-                                    <span>{formatCurrency(document.vatAmount)}</span>
-                                </div>
-                                <Separator className="my-1 w-full max-w-[300px]" />
-                                <div className="flex justify-between w-full max-w-[300px] text-lg font-bold text-primary">
-                                    <span>ยอดสุทธิรวม:</span>
-                                    <span>{formatCurrency(document.grandTotal)} บาท</span>
+                                <div className="flex flex-col items-end gap-2 md:min-w-[280px] md:justify-self-end w-full">
+                                    <div className="flex justify-between w-full max-w-[300px] text-sm">
+                                        <span className="text-muted-foreground">รวมเป็นเงิน:</span>
+                                        <span>{formatCurrency(document.subtotal)}</span>
+                                    </div>
+                                    <div className="flex justify-between w-full max-w-[300px] text-sm text-destructive">
+                                        <span className="text-muted-foreground">ส่วนลด:</span>
+                                        <span>- {formatCurrency(document.discountAmount || 0)}</span>
+                                    </div>
+                                    <div className="flex justify-between w-full max-w-[300px] text-sm">
+                                        <span className="text-muted-foreground font-medium">ยอดหลังหักส่วนลด:</span>
+                                        <span className="font-medium">{formatCurrency(document.net)}</span>
+                                    </div>
+                                    <div className="flex justify-between w-full max-w-[300px] text-sm">
+                                        <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม 7%:</span>
+                                        <span>{formatCurrency(document.vatAmount)}</span>
+                                    </div>
+                                    <Separator className="my-1 w-full max-w-[300px]" />
+                                    <div className="flex justify-between w-full max-w-[300px] text-lg font-bold text-primary">
+                                        <span>ยอดสุทธิรวม:</span>
+                                        <span>{formatCurrency(document.grandTotal)} บาท</span>
+                                    </div>
                                 </div>
                             </div>
                         </CardContent>

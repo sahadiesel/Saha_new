@@ -206,10 +206,23 @@ function DocumentView({
                     </TableBody>
                 </Table>
 
-                <div className="grid grid-cols-2 gap-8">
+                <div className="grid grid-cols-2 gap-8 items-start">
                     <div className="text-left space-y-4">
-                        {document.notes && <div className="text-[11px] whitespace-pre-wrap"><span className="font-bold">หมายเหตุ:</span> {document.notes}</div>}
-                        
+                        {document.docType === "TAX_INVOICE" ? (
+                            <div className="border border-neutral-400 rounded-sm p-2.5 min-h-[5.5rem] print:border-neutral-500">
+                                <p className="text-[10px] font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
+                                <div className="text-[11px] whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
+                                    {document.notes?.trim() ?? ""}
+                                </div>
+                            </div>
+                        ) : (
+                            document.notes && (
+                                <div className="text-[11px] whitespace-pre-wrap">
+                                    <span className="font-bold">หมายเหตุ:</span> {document.notes}
+                                </div>
+                            )
+                        )}
+
                         {isReceipt && (
                             <div className="p-3 border rounded bg-muted/5 space-y-1">
                                 <p className="text-[10px] font-bold text-primary uppercase tracking-widest">ข้อมูลการชำระเงิน</p>
