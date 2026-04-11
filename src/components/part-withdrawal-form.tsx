@@ -240,7 +240,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     return () => { unsubCustomers(); unsubWorkers(); unsubJobs(); unsubDocs(); unsubParts(); };
   }, [db]);
 
-  // Handle URL Job ID — ต้องเป็นงานสถานะรอจัดอะไหล่ (เดียวกับหน้างานตามสถานะ)
+  // Handle URL Job ID — เติมอ้างอิงงาน (รองรับจัดซื้อ/เบิกเพิ่ม แม้สถานะไม่ใช่แค่รออะไหล่)
   useEffect(() => {
     if (!queryJobId || isEditing || !db) return;
     let cancelled = false;
@@ -248,17 +248,16 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
       const snap = await getDoc(doc(db, "jobs", queryJobId));
       if (cancelled || !snap.exists()) return;
       const targetJob = { id: snap.id, ...snap.data() } as Job;
-      if (targetJob.status !== "PENDING_PARTS") {
-        toast({
-          variant: "destructive",
-          title: "งานนี้ไม่ได้อยู่ในสถานะรอจัดอะไหล่",
-          description: "เปิดจากรายการ «รอจัดอะไหล่» หรือเลือกงานจากรายการด้านล่างเท่านั้น",
-        });
-        return;
-      }
       form.setValue("refType", "JOB");
       form.setValue("customerId", targetJob.customerId);
       form.setValue("refId", targetJob.id);
+      if (targetJob.status !== "PENDING_PARTS") {
+        toast({
+          title: "หมายเหตุ",
+          description:
+            "งานนี้ไม่ได้อยู่ในสถานะ «รอจัดอะไหล่» — ยังบันทึกการเบิกเพิ่มจากงานนี้ได้ตามปกติ",
+        });
+      }
     })();
     return () => {
       cancelled = true;

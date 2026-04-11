@@ -420,6 +420,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 )}
                 {department === 'PURCHASING' && (
                     <>
+                        <SubNavLink href="/app/office/jobs/management/by-department" label="งานตามแผนก" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/jobs/management/by-status?status=pending-parts" label="งานตามสถานะ" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/low-stock" label="รายการที่ต้องเตรียมสั่ง" onClick={onLinkClick} />
