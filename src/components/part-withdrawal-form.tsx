@@ -25,8 +25,17 @@ import {
 } from "@/components/ui/select";
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { 
+import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { 
   Loader2, PlusCircle, Trash2, Save, ArrowLeft, Search, 
   ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList, Hash, ExternalLink, Users, PackageCheck
@@ -43,6 +52,11 @@ function tsMs(t: unknown): number {
     return (t as { toMillis: () => number }).toMillis();
   }
   return 0;
+}
+
+function formatStockQty(q: number): string {
+  if (Number.isInteger(q)) return String(q);
+  return q.toLocaleString("th-TH", { maximumFractionDigits: 6 });
 }
 
 /** แสดงใน dropdown — อ้างอิงใบเสนอราคา ไม่โชว์แค่ id */
@@ -62,6 +76,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  documentItemsToDeltaLines,
+  mergeStockDeltasFromWithdrawalEdit,
+  summarizeWithdrawalDeltas,
+  type StockMovementRow,
+} from "@/lib/part-withdrawal-stock-delta";
 
 const withdrawalItemSchema = z.object({
   partId: z.string().min(1, "กรุณาเลือกอะไหล่จากระบบ"),
@@ -120,6 +140,16 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControlsRef = useRef<any>(null);
+
+  const [stockConfirmOpen, setStockConfirmOpen] = useState(false);
+  const [stockSummary, setStockSummary] = useState<{
+    withdrawals: StockMovementRow[];
+    returnsToStock: StockMovementRow[];
+  } | null>(null);
+  const pendingIssueSaveRef = useRef<{
+    data: WithdrawalFormData;
+    jobCompletion?: "PARTIAL" | "COMPLETE";
+  } | null>(null);
 
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -352,61 +382,136 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     setIsScannerOpen(false);
   };
 
-  const handleSave = async (
+  const openIssueConfirm = (
+    data: WithdrawalFormData,
+    jobCompletion?: "PARTIAL" | "COMPLETE"
+  ) => {
+    if (!db || !profile || !storeSettings) return;
+    if (data.refType === "JOB" && !jobCompletion) {
+      toast({ variant: "destructive", title: "กรุณาเลือกประเภทการเบิก", description: "เบิกบางส่วน หรือ จัดอะไหล่ครบแล้ว" });
+      return;
+    }
+    const entity = availableEntities.find((e) => e.id === data.customerId);
+    if (!entity) {
+      toast({ variant: "destructive", title: "กรุณาเลือกรายชื่ออ้างอิง" });
+      return;
+    }
+    const prevIssued = !!(isEditing && docToEdit && docToEdit.status === "ISSUED");
+    const prevLines = isEditing && docToEdit ? documentItemsToDeltaLines(docToEdit.items || []) : [];
+    const nextLines = data.items
+      .filter((i) => i.partId)
+      .map((i) => ({
+        partId: i.partId,
+        quantity: i.quantity,
+        code: i.code,
+        description: i.description || "",
+      }));
+    const deltaMap = mergeStockDeltasFromWithdrawalEdit(prevLines, nextLines, prevIssued);
+    const summary = summarizeWithdrawalDeltas(deltaMap);
+    pendingIssueSaveRef.current = { data, jobCompletion };
+    setStockSummary(summary);
+    setStockConfirmOpen(true);
+  };
+
+  const performWithdrawalSave = async (
     data: WithdrawalFormData,
     isDraft: boolean,
     jobCompletion?: "PARTIAL" | "COMPLETE"
   ) => {
     if (!db || !profile || !storeSettings) return;
-    if (!isDraft && data.refType === "JOB" && !jobCompletion) {
-      toast({ variant: "destructive", title: "กรุณาเลือกประเภทการเบิก", description: "เบิกบางส่วน หรือ จัดอะไหล่ครบแล้ว" });
-      return;
-    }
-    setIsSubmitting(true);
 
     const entity = availableEntities.find(e => e.id === data.customerId);
     if (!entity) {
         toast({ variant: "destructive", title: "กรุณาเลือกรายชื่ออ้างอิง" });
-        setIsSubmitting(false);
         return;
     }
 
+    setIsSubmitting(true);
     try {
       if (!isDraft) {
+        const prevIssued = !!(isEditing && docToEdit && docToEdit.status === "ISSUED");
+        const prevLines = isEditing && docToEdit ? documentItemsToDeltaLines(docToEdit.items || []) : [];
+        const nextLines = data.items
+          .filter((i) => i.partId)
+          .map((i) => ({
+            partId: i.partId,
+            quantity: i.quantity,
+            code: i.code,
+            description: i.description || "",
+          }));
+        const deltaMap = mergeStockDeltasFromWithdrawalEdit(prevLines, nextLines, prevIssued);
+        const docLabel = docToEdit?.docNo ? `ใบเบิก ${docToEdit.docNo}` : "ใบเบิก";
+
         await runTransaction(db, async (transaction) => {
-          const snapshots: { partRef: any, currentQty: number, item: any }[] = [];
-          for (const item of data.items) {
-            const partRef = doc(db, "parts", item.partId);
+          const pending: {
+            partRef: ReturnType<typeof doc>;
+            currentQty: number;
+            delta: number;
+            meta: { partId: string; code?: string; description: string };
+          }[] = [];
+
+          for (const [partId, { delta, code, description }] of deltaMap) {
+            if (Math.abs(delta) < 1e-9) continue;
+            const partRef = doc(db, "parts", partId);
             const partSnap = await transaction.get(partRef);
-            if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${item.code || item.description}`);
-            
+            if (!partSnap.exists()) throw new Error(`ไม่พบสินค้า ${code || description || partId}`);
+
             const currentQty = partSnap.data().stockQty || 0;
-            if (currentQty < item.quantity) {
-                throw new Error(`สินค้า ${item.code || item.description} สต็อกไม่พอ (เหลือ ${currentQty})`);
+            if (delta > 0 && currentQty < delta) {
+              throw new Error(
+                `สินค้า ${code || description} สต็อกไม่พอ (เหลือ ${currentQty} ต้องการเพิ่มอีก ${delta})`
+              );
             }
-            snapshots.push({ partRef, currentQty, item });
+            pending.push({ partRef, currentQty, delta, meta: { partId, code, description } });
           }
 
-          for (const { partRef, currentQty, item } of snapshots) {
+          for (const { partRef, currentQty, delta, meta } of pending) {
+            const newQty = currentQty - delta;
             transaction.update(partRef, {
-              stockQty: currentQty - item.quantity,
-              updatedAt: serverTimestamp()
+              stockQty: newQty,
+              updatedAt: serverTimestamp(),
             });
 
             const actRef = doc(collection(db, "stockActivities"));
-            transaction.set(actRef, sanitizeForFirestore({
-              partId: item.partId,
-              partCode: item.code,
-              partName: item.description,
-              type: 'WITHDRAW',
-              diffQty: item.quantity,
-              beforeQty: currentQty,
-              afterQty: currentQty - item.quantity,
-              notes: `เบิกใส่ ${data.refType}: ${data.refId}. หมายเหตุ: ${data.notes || "-"}`,
-              createdByUid: profile.uid,
-              createdByName: profile.displayName,
-              createdAt: serverTimestamp(),
-            }));
+            if (delta > 0) {
+              transaction.set(
+                actRef,
+                sanitizeForFirestore({
+                  partId: meta.partId,
+                  partCode: meta.code,
+                  partName: meta.description,
+                  type: "WITHDRAW",
+                  diffQty: delta,
+                  beforeQty: currentQty,
+                  afterQty: newQty,
+                  notes:
+                    prevIssued && isEditing
+                      ? `แก้ไข ${docLabel} — ตัดสต็อกเพิ่ม ${delta} หน่วย (${data.refType}: ${data.refId}). ${data.notes || "-"}`
+                      : `เบิกใส่ ${data.refType}: ${data.refId}. หมายเหตุ: ${data.notes || "-"}`,
+                  createdByUid: profile.uid,
+                  createdByName: profile.displayName,
+                  createdAt: serverTimestamp(),
+                })
+              );
+            } else {
+              const back = Math.abs(delta);
+              transaction.set(
+                actRef,
+                sanitizeForFirestore({
+                  partId: meta.partId,
+                  partCode: meta.code,
+                  partName: meta.description,
+                  type: "ADJUST_ADD",
+                  diffQty: back,
+                  beforeQty: currentQty,
+                  afterQty: newQty,
+                  notes: `คืนสต็อกจากแก้ไข ${docLabel} (${back} หน่วย) — ${data.refType}: ${data.refId}. โดย ${profile.displayName}`,
+                  createdByUid: profile.uid,
+                  createdByName: profile.displayName,
+                  createdAt: serverTimestamp(),
+                })
+              );
+            }
           }
         });
       }
@@ -497,6 +602,35 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSave = async (
+    data: WithdrawalFormData,
+    isDraft: boolean,
+    jobCompletion?: "PARTIAL" | "COMPLETE"
+  ) => {
+    if (!db || !profile || !storeSettings) return;
+    if (!isDraft && data.refType === "JOB" && !jobCompletion) {
+      toast({ variant: "destructive", title: "กรุณาเลือกประเภทการเบิก", description: "เบิกบางส่วน หรือ จัดอะไหล่ครบแล้ว" });
+      return;
+    }
+    if (!isDraft) {
+      openIssueConfirm(data, jobCompletion);
+      return;
+    }
+    await performWithdrawalSave(data, true, undefined);
+  };
+
+  const handleConfirmIssueSave = async () => {
+    const pending = pendingIssueSaveRef.current;
+    if (!pending) {
+      setStockConfirmOpen(false);
+      return;
+    }
+    setStockConfirmOpen(false);
+    pendingIssueSaveRef.current = null;
+    setStockSummary(null);
+    await performWithdrawalSave(pending.data, false, pending.jobCompletion);
   };
 
   const filteredEntities = availableEntities.filter(e => e.name.toLowerCase().includes(customerSearch.toLowerCase()) || e.phone.includes(customerSearch));
@@ -804,6 +938,89 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
           <DialogFooter className="p-4 bg-background"><Button variant="outline" onClick={stopScanner} className="w-full">ยกเลิก</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={stockConfirmOpen}
+        onOpenChange={(open) => {
+          setStockConfirmOpen(open);
+          if (!open) {
+            pendingIssueSaveRef.current = null;
+            setStockSummary(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-lg max-h-[90vh] flex flex-col gap-0">
+          <AlertDialogHeader>
+            <AlertDialogTitle>ยืนยันการตัดสต็อก</AlertDialogTitle>
+            <AlertDialogDescription className="text-left text-foreground space-y-1">
+              <span className="block text-muted-foreground">
+                ตรวจสอบรายการด้านล่าง — ถ้าถูกต้องกด «ยืนยันการบันทึก» หรือกด «ยกเลิก» เพื่อกลับไปแก้ไขรายการ
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {stockSummary && (
+            <ScrollArea className="max-h-[min(50vh,320px)] pr-3 -mr-1">
+              <div className="space-y-4 text-sm pb-2">
+                <div>
+                  <p className="font-semibold text-destructive mb-2">เบิกออกจากสต็อก (ตัดเพิ่ม)</p>
+                  {stockSummary.withdrawals.length === 0 ? (
+                    <p className="text-muted-foreground text-sm border rounded-md p-3 bg-muted/30">— ไม่มี</p>
+                  ) : (
+                    <ul className="list-none space-y-1.5 border rounded-md p-3 bg-muted/40">
+                      {stockSummary.withdrawals.map((row, idx) => (
+                        <li key={`w-${row.partId}-${idx}`} className="flex justify-between gap-3 text-sm">
+                          <span className="min-w-0">
+                            <span className="font-mono text-xs text-primary">{row.code || "—"}</span>
+                            <span className="block">{row.description}</span>
+                          </span>
+                          <span className="font-bold tabular-nums shrink-0">{formatStockQty(row.quantity)} ชิ้น</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="font-semibold text-green-700 dark:text-green-400 mb-2">คืนเข้าสต็อก</p>
+                  {stockSummary.returnsToStock.length === 0 ? (
+                    <p className="text-muted-foreground text-sm border rounded-md p-3 bg-muted/30">— ไม่มี</p>
+                  ) : (
+                    <ul className="list-none space-y-1.5 border rounded-md p-3 bg-muted/40">
+                      {stockSummary.returnsToStock.map((row, idx) => (
+                        <li key={`r-${row.partId}-${idx}`} className="flex justify-between gap-3 text-sm">
+                          <span className="min-w-0">
+                            <span className="font-mono text-xs text-primary">{row.code || "—"}</span>
+                            <span className="block">{row.description}</span>
+                          </span>
+                          <span className="font-bold tabular-nums shrink-0">{formatStockQty(row.quantity)} ชิ้น</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {stockSummary.withdrawals.length === 0 && stockSummary.returnsToStock.length === 0 && (
+                  <p className="text-sm text-amber-800 dark:text-amber-200 border border-amber-200/60 bg-amber-50 dark:bg-amber-950/40 rounded-md p-3">
+                    ไม่มีการเปลี่ยนจำนวนในสต็อก — ระบบจะบันทึกข้อมูลในใบเบิกเท่านั้น (เช่น แก้หมายเหตุ)
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel disabled={isSubmitting} className="mt-0">
+              ยกเลิก — กลับไปแก้ไข
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              className="bg-green-600 hover:bg-green-700"
+              disabled={isSubmitting}
+              onClick={() => void handleConfirmIssueSave()}
+            >
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              ยืนยันการบันทึก
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
