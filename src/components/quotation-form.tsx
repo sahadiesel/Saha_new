@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField, setDoc } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField, setDoc, addDoc } from "firebase/firestore";
 import { useFirebase, useCollection, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, AlertCircle, LayoutTemplate, Eye, XCircle, Info, ExternalLink, CalendarDays } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, AlertCircle, LayoutTemplate, Eye, XCircle, Info, ExternalLink, CalendarDays, Send } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,6 +31,7 @@ import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
+import { docStatusLabel } from "@/lib/ui-labels";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "ต้องกรอกรายละเอียดรายการ"),
@@ -73,6 +74,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   const [customerSearch, setCustomerSearch] = useState("");
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [isTemplatePopoverOpen, setIsTemplatePopoverOpen] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [existingActiveDoc, setExistingActiveDoc] = useState<DocumentType | null>(null);
@@ -90,6 +92,13 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   const { data: docToEdit, isLoading: isLoadingDocToEdit } = useDoc<DocumentType>(docToEditRef);
   const { data: storeSettings, isLoading: isLoadingStore } = useDoc<StoreSettings>(storeSettingsRef);
   const { data: templates } = useCollection<QuotationTemplate>(templatesQuery);
+
+  const filteredQuotationTemplates = useMemo(() => {
+    if (!templates?.length) return [];
+    const q = templateSearch.trim().toLowerCase();
+    if (!q) return templates;
+    return templates.filter((t) => t.name.toLowerCase().includes(q));
+  }, [templates, templateSearch]);
   
   const form = useForm<QuotationFormData>({
     resolver: zodResolver(quotationFormSchema),
@@ -221,6 +230,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
       toast({ title: "ใช้ Template สำเร็จ", description: `ดึงข้อมูลจาก "${template.name}" เรียบร้อยแล้วค่ะ` });
     }
     setIsTemplatePopoverOpen(false);
+    setTemplateSearch("");
   };
 
   const handleSaveAsTemplate = async () => {
@@ -353,6 +363,37 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     } catch(e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); setIsProcessing(false); }
   };
 
+  const markQuotationOfferedToCustomer = async () => {
+    if (!db || !profile || !editDocId || !docToEdit) return;
+    if (docToEdit.status !== "DRAFT" || isCancelled) return;
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, "documents", editDocId), {
+        status: "OFFERED",
+        updatedAt: serverTimestamp(),
+      });
+      if (docToEdit.jobId) {
+        const jobRef = doc(db, "jobs", docToEdit.jobId);
+        await updateDoc(jobRef, {
+          salesDocStatus: "OFFERED",
+          lastActivityAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        await addDoc(collection(jobRef, "activities"), {
+          text: `ใบเสนอราคา ${docToEdit.docNo} — ทำเครื่องหมายว่าเสนอลูกค้าแล้ว`,
+          userName: profile.displayName,
+          userId: profile.uid,
+          createdAt: serverTimestamp(),
+        });
+      }
+      toast({ title: "อัปเดตสถานะแล้ว", description: "บันทึกว่าเสนอราคาลูกค้าแล้ว" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
@@ -392,7 +433,14 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               <div className="space-y-4">
                 <h1 className="text-2xl font-bold text-right text-primary">ใบเสนอราคา</h1>
                 {isEditing ? (
-                  <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>
+                  <div className="text-right space-y-1">
+                    <p className="text-sm font-mono">{docToEdit?.docNo}</p>
+                    {docToEdit?.status && (
+                      <Badge variant={docToEdit.status === "DRAFT" ? "outline" : "secondary"} className="text-[10px]">
+                        {docStatusLabel(docToEdit.status, "QUOTATION")}
+                      </Badge>
+                    )}
+                  </div>
                 ) : (
                   <div className="text-right">
                     <Badge variant="outline" className="font-mono text-lg py-1 px-3 border-primary/30 text-primary bg-primary/5">
@@ -505,14 +553,44 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-3">
               <CardTitle className="text-base">รายการสินค้า/บริการ</CardTitle>
-              <Popover open={isTemplatePopoverOpen} onOpenChange={setIsTemplatePopoverOpen}>
+              <Popover
+                open={isTemplatePopoverOpen}
+                onOpenChange={(open) => {
+                  setIsTemplatePopoverOpen(open);
+                  if (!open) setTemplateSearch("");
+                }}
+              >
                   <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" disabled={isCancelled || isProcessing}><LayoutTemplate className="mr-2 h-4 w-4"/>เลือกจาก Template</Button></PopoverTrigger>
-                  <PopoverContent className="w-80 p-0" align="end"><ScrollArea className="h-64">{templates?.map(t => (
-                        <Button key={t.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left flex flex-col items-start" onClick={() => applyTemplate(t)}>
-                          <span className="font-medium text-sm">{t.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{t.items.length} รายการ</span>
-                        </Button>
-                      ))}</ScrollArea></PopoverContent>
+                  <PopoverContent className="w-80 p-0" align="end">
+                    <div className="p-2 border-b">
+                      <Input
+                        placeholder="ค้นหาชื่อ Template..."
+                        value={templateSearch}
+                        onChange={(e) => setTemplateSearch(e.target.value)}
+                        className="h-9"
+                        disabled={isCancelled || isProcessing}
+                      />
+                    </div>
+                    <ScrollArea className="h-64">
+                      {filteredQuotationTemplates.length === 0 ? (
+                        <p className="p-4 text-center text-sm text-muted-foreground">
+                          {templates?.length ? "ไม่พบ Template ที่ตรงกับคำค้น" : "ยังไม่มี Template"}
+                        </p>
+                      ) : (
+                        filteredQuotationTemplates.map((t) => (
+                          <Button
+                            key={t.id}
+                            variant="ghost"
+                            className="w-full justify-start h-auto py-2 px-3 border-b rounded-none text-left flex flex-col items-start"
+                            onClick={() => applyTemplate(t)}
+                          >
+                            <span className="font-medium text-sm">{t.name}</span>
+                            <span className="text-[10px] text-muted-foreground">{t.items.length} รายการ</span>
+                          </Button>
+                        ))
+                      )}
+                    </ScrollArea>
+                  </PopoverContent>
               </Popover>
             </CardHeader>
             <CardContent>
@@ -567,8 +645,20 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             </div>
           </div>
 
-          <div className="flex justify-end gap-4">
+          <div className="flex flex-wrap justify-end gap-2 sm:gap-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
+            {isEditing && docToEdit?.status === "DRAFT" && !isCancelled && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="border-green-600 text-green-800 hover:bg-green-50 dark:text-green-300 dark:hover:bg-green-950/40"
+                onClick={() => void markQuotationOfferedToCustomer()}
+                disabled={isFormLoading}
+              >
+                <Send className="mr-2 h-4 w-4" />
+                เสนอราคาลูกค้าแล้ว
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={handleSaveAsTemplate} disabled={isFormLoading || isCancelled} className="border-primary text-primary hover:bg-primary/5"><LayoutTemplate className="mr-2 h-4 w-4" />บันทึกเป็น Template</Button>
             <Button type="submit" onClick={form.handleSubmit(onSubmit)} disabled={isFormLoading || isCancelled}>
               {isFormLoading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}

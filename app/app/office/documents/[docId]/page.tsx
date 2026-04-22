@@ -150,19 +150,44 @@ function DocumentView({
                 <div className="grid grid-cols-2 gap-8 mb-4 p-3 border rounded-md">
                     <div className="space-y-1">
                         <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
-                        <p className="text-sm">
-                            <span className="font-bold">{displayCustomerName}</span>
-                            {branchLabel && <span className="font-bold text-primary ml-2">({branchLabel})</span>}
-                        </p>
-                        <p className="text-[11px] leading-relaxed whitespace-pre-wrap">
-                            {displayCustomerAddress}
-                        </p>
-                        <div className="text-[11px] space-y-0.5">
-                            <p>โทร: {displayCustomerPhone}</p>
-                            {(isTaxDoc || customer.useTax) && customer.taxId && (
-                                <p className="font-bold">เลขประจำตัวผู้เสียภาษี: {customer.taxId}</p>
-                            )}
-                        </div>
+                        {document.docType === "TAX_INVOICE" ? (
+                            <>
+                                <p className="text-sm">
+                                    <span className="font-bold">{displayCustomerName}</span>
+                                    {!customer.taxId && branchLabel && (
+                                        <span className="font-bold text-primary ml-2">({branchLabel})</span>
+                                    )}
+                                </p>
+                                <p className="text-[11px] leading-relaxed">
+                                    <span className="whitespace-pre-wrap">{displayCustomerAddress}</span>{" "}
+                                    <span className="whitespace-nowrap">โทร: {displayCustomerPhone}</span>
+                                </p>
+                                {(isTaxDoc || customer.useTax) && customer.taxId && (
+                                    <p className="text-[11px] font-bold">
+                                        เลขประจำตัวผู้เสียภาษี: {customer.taxId}
+                                        {branchLabel && (
+                                            <span className="text-primary font-bold"> ({branchLabel})</span>
+                                        )}
+                                    </p>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-sm">
+                                    <span className="font-bold">{displayCustomerName}</span>
+                                    {branchLabel && <span className="font-bold text-primary ml-2">({branchLabel})</span>}
+                                </p>
+                                <p className="text-[11px] leading-relaxed whitespace-pre-wrap">
+                                    {displayCustomerAddress}
+                                </p>
+                                <div className="text-[11px] space-y-0.5">
+                                    <p>โทร: {displayCustomerPhone}</p>
+                                    {(isTaxDoc || customer.useTax) && customer.taxId && (
+                                        <p className="font-bold">เลขประจำตัวผู้เสียภาษี: {customer.taxId}</p>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
                     <VehicleInfo doc={document} />
                 </div>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch, addDoc } from "firebase/firestore";
 import type { AccountingObligation } from "@/lib/types";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, Search, AlertCircle, MoreHorizontal, XCircle, Trash2, Edit, Eye, ChevronLeft, ChevronRight, ExternalLink, RotateCcw, Hash, Filter, Receipt } from "lucide-react";
+import { Loader2, Search, AlertCircle, MoreHorizontal, XCircle, Trash2, Edit, Eye, ChevronLeft, ChevronRight, ExternalLink, RotateCcw, Hash, Filter, Receipt, Send } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -49,6 +49,11 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
         case "CANCELLED": description = "เอกสารนี้ถูกยกเลิกการใช้งานแล้ว"; break;
         case "UNPAID": description = "เป็นรายการขายเชื่อ ยอดเงินยังคงค้างชำระในระบบ"; break;
         case "PARTIAL": description = "ได้รับเงินมาบางส่วนแล้ว ยอดที่เหลือยังค้างชำระ"; break;
+        case "OFFERED": description = doc.docType === 'QUOTATION' ? "นำเสนอราคาให้ลูกค้าแล้ว" : "สถานะเอกสารปกติ"; break;
+    }
+
+    if (doc.docType === 'QUOTATION' && statusKey === 'OFFERED') {
+        return { key: "OFFERED", label, description, variant: "secondary" };
     }
 
     if (doc.docType === 'DELIVERY_NOTE' && statusKey === 'APPROVED') {
@@ -102,8 +107,38 @@ export function DocumentList({
   const canManageDocs = (isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT') && 
                         profile?.department !== 'PURCHASING';
 
+  const handleMarkQuotationOffered = async (d: Document) => {
+    if (!db || !profile) return;
+    try {
+      await updateDoc(doc(db, "documents", d.id), { status: "OFFERED", updatedAt: serverTimestamp() });
+      if (d.jobId) {
+        const jobRef = doc(db, "jobs", d.jobId);
+        await updateDoc(jobRef, {
+          salesDocStatus: "OFFERED",
+          lastActivityAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        await addDoc(collection(jobRef, "activities"), {
+          text: `ใบเสนอราคา ${d.docNo} — ทำเครื่องหมายว่าเสนอลูกค้าแล้ว`,
+          userName: profile.displayName,
+          userId: profile.uid,
+          createdAt: serverTimestamp(),
+        });
+      }
+      toast({ title: "อัปเดตสถานะแล้ว", description: "บันทึกว่าเสนอราคาลูกค้าแล้ว" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message });
+    }
+  };
+
   const uniqueStatuses = useMemo(() => {
-    const base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
+    let base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
+    if (docType === 'QUOTATION') {
+      const i = base.indexOf("DRAFT");
+      if (i >= 0 && !base.includes("OFFERED")) {
+        base = [...base.slice(0, i + 1), "OFFERED", ...base.slice(i + 1)];
+      }
+    }
     if (docType === 'DELIVERY_NOTE') return base.filter(s => s !== "APPROVED");
     return base;
   }, [docType]);
@@ -375,7 +410,7 @@ export function DocumentList({
                       docItem.docType === "TAX_INVOICE" &&
                       taxInvoiceName &&
                       taxInvoiceName !== (docItem.customerSnapshot?.name || "").trim();
-                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
+                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'QUOTATION' && docItem.status === 'DRAFT' && canManageDocs && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); void handleMarkQuotationOffered(docItem); }}><Send className="mr-2 h-4 w-4"/> เสนอราคาลูกค้าแล้ว</DropdownMenuItem>)}{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
         </CardContent>
         {totalPages > 1 && (<CardFooter className="justify-between"><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>
