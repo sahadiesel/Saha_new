@@ -154,7 +154,7 @@ function DocumentView({
                             <>
                                 <p className="text-sm">
                                     <span className="font-bold">{displayCustomerName}</span>
-                                    {!customer.taxId && branchLabel && (
+                                    {branchLabel && (
                                         <span className="font-bold text-primary ml-2">({branchLabel})</span>
                                     )}
                                 </p>
@@ -165,9 +165,6 @@ function DocumentView({
                                 {(isTaxDoc || customer.useTax) && customer.taxId && (
                                     <p className="text-[11px] font-bold">
                                         เลขประจำตัวผู้เสียภาษี: {customer.taxId}
-                                        {branchLabel && (
-                                            <span className="text-primary font-bold"> ({branchLabel})</span>
-                                        )}
                                     </p>
                                 )}
                             </>
