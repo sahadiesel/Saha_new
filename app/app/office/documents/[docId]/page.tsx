@@ -115,6 +115,14 @@ function DocumentView({
     const isQuotation = document.docType === 'QUOTATION';
     const isReceipt = document.docType === 'RECEIPT';
     const isTaxInvoice = document.docType === "TAX_INVOICE";
+
+    /** ใบกำกับภาษี: รวมที่อยู่เป็นหนึ่งบรรทัด (ข้อมูลเดิมอาจมีขึ้นบรรทัดใหม่) แล้วต่อเบอร์โทร */
+    const taxInvoiceAddressOneLine = isTaxInvoice
+        ? String(displayCustomerAddress || "---")
+              .replace(/\r\n|\r|\n/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+        : "";
     
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
@@ -202,14 +210,12 @@ function DocumentView({
                                         <span className="font-bold text-primary ml-1.5">({branchLabel})</span>
                                     )}
                                 </p>
-                                <div className="text-[11px] leading-tight flex flex-wrap gap-x-2 gap-y-0.5 items-baseline print:text-[10px]">
-                                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                                        {displayCustomerAddress}
-                                    </span>
+                                <p className="text-[11px] leading-snug print:text-[10px]">
+                                    {taxInvoiceAddressOneLine}
                                     {displayCustomerPhone && (
-                                        <span className="shrink-0 whitespace-nowrap">โทร: {displayCustomerPhone}</span>
+                                        <span className="ml-1.5 whitespace-nowrap">โทร: {displayCustomerPhone}</span>
                                     )}
-                                </div>
+                                </p>
                                 {(isTaxDoc || customer.useTax) && customer.taxId && (
                                     <p className="text-[11px] font-bold">
                                         เลขประจำตัวผู้เสียภาษี: {customer.taxId}

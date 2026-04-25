@@ -288,12 +288,20 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
             const batch = writeBatch(db);
             const docRef = doc(db, 'documents', effectiveEditDocId);
             const finalDocNo = docToEdit?.docNo || "Unknown";
+
+            let jobRefForUpdate: ReturnType<typeof doc> | null = null;
+            if (linkedJobId) {
+                const jRef = doc(db, "jobs", linkedJobId);
+                const jobSnap = await getDoc(jRef);
+                if (jobSnap.exists()) {
+                    jobRefForUpdate = jRef;
+                }
+            }
             
             batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
             
-            if (linkedJobId) {
-                const jobRef = doc(db, 'jobs', linkedJobId);
-                batch.update(jobRef, {
+            if (jobRefForUpdate) {
+                batch.update(jobRefForUpdate, {
                     status: targetJobStatus,
                     salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
@@ -304,6 +312,14 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
                 });
             }
             await batch.commit();
+            if (linkedJobId && !jobRefForUpdate) {
+                toast({
+                    title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ",
+                    description: "ไม่พบงานลิงก์ในระบบ (งานอาจปิด/ย้ายประวัติแล้ว) — อัปเดตเฉพาะใบส่งของ",
+                });
+                router.push('/app/office/documents/delivery-note');
+                return;
+            }
         } else {
             await createDocument(db, 'DELIVERY_NOTE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
