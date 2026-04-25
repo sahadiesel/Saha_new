@@ -116,12 +116,24 @@ function DocumentView({
     const isReceipt = document.docType === 'RECEIPT';
     const isTaxInvoice = document.docType === "TAX_INVOICE";
 
-    /** ใบกำกับภาษี: รวมที่อยู่เป็นหนึ่งบรรทัด (ข้อมูลเดิมอาจมีขึ้นบรรทัดใหม่) แล้วต่อเบอร์โทร */
-    const taxInvoiceAddressOneLine = isTaxInvoice
-        ? String(displayCustomerAddress || "---")
-              .replace(/\r\n|\r|\n/g, " ")
-              .replace(/\s+/g, " ")
-              .trim()
+    /** รวมบรรทัดใน string สำหรับพิมพ์ (newline / ช่องว่างพิเศษ) */
+    const collapseToSingleLine = (s: string) =>
+        String(s || "")
+            .replace(/[\r\n\u2028\u2029\u0085]+/g, " ")
+            .replace(/[ \t\u00A0\u2000-\u200B\uFEFF]+/g, " ")
+            .trim();
+
+    /** ใบกำกับภาษี: รวมที่อยู่เป็นหนึ่งบรรทัด แล้วต่อเบอร์โทร (ไม่ตัดกลางที่อยู่ถ้าไม่จำเป็น) */
+    const taxInvoiceAddressOneLine = isTaxInvoice ? collapseToSingleLine(String(displayCustomerAddress || "---")) : "";
+    const taxInvoiceCustomerNameOneLine = isTaxInvoice ? collapseToSingleLine(String(displayCustomerName || "")) : "";
+    const showTaxInvoiceBranchAfterName = Boolean(
+        isTaxInvoice &&
+            branchLabel &&
+            !taxInvoiceCustomerNameOneLine.includes(`(${branchLabel})`)
+    );
+
+    const storeAddressOneLine = isTaxInvoice
+        ? collapseToSingleLine(String(document.storeSnapshot.taxAddress || ""))
         : "";
     
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
@@ -145,14 +157,10 @@ function DocumentView({
                         </h2>
                         {isTaxInvoice ? (
                             <>
-                                <div className="text-[11px] leading-tight flex flex-wrap gap-x-2 gap-y-0.5 items-baseline print:text-[10px]">
-                                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                                        {document.storeSnapshot.taxAddress}
-                                    </span>
-                                    {document.storeSnapshot.phone && (
-                                        <span className="shrink-0 whitespace-nowrap">โทร {document.storeSnapshot.phone}</span>
-                                    )}
-                                </div>
+                                <p className="text-[11px] leading-snug break-words print:text-[10px]">{storeAddressOneLine || "—"}</p>
+                                {document.storeSnapshot.phone && (
+                                    <p className="text-[11px] leading-snug print:text-[10px]">โทร {document.storeSnapshot.phone}</p>
+                                )}
                                 {document.storeSnapshot.taxId && !isBilling && (
                                     <p className="text-[10px] leading-tight">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</p>
                                 )}
@@ -204,16 +212,14 @@ function DocumentView({
                         <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
                         {document.docType === "TAX_INVOICE" ? (
                             <>
-                                <p className="text-sm leading-snug">
-                                    <span className="font-bold">{displayCustomerName}</span>
-                                    {branchLabel && (
-                                        <span className="font-bold text-primary ml-1.5">({branchLabel})</span>
-                                    )}
+                                <p className="text-sm font-bold leading-snug break-words text-foreground">
+                                    <span>{taxInvoiceCustomerNameOneLine || displayCustomerName}</span>
+                                    {showTaxInvoiceBranchAfterName && <span className="text-primary">&nbsp;({branchLabel})</span>}
                                 </p>
-                                <p className="text-[11px] leading-snug print:text-[10px]">
+                                <p className="text-[11px] leading-snug break-words print:text-[10px]">
                                     {taxInvoiceAddressOneLine}
                                     {displayCustomerPhone && (
-                                        <span className="ml-1.5 whitespace-nowrap">โทร: {displayCustomerPhone}</span>
+                                        <span className="whitespace-nowrap">{"\u00A0"}โทร: {displayCustomerPhone}</span>
                                     )}
                                 </p>
                                 {(isTaxDoc || customer.useTax) && customer.taxId && (
