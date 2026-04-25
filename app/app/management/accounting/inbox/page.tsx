@@ -1554,11 +1554,11 @@ function AccountingInboxPageContent() {
                     )} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`
                   : ""}
               {arDocToConfirm?.docType === "DELIVERY_NOTE" && (
-                <p className="mt-2 font-bold text-primary">
+                <span className="mt-2 block font-bold text-primary">
                   {arDocToConfirm.deliveryInboxCashConfirmed
                     ? "รับเงินลง cashbook ไปแล้ว — รอบนี้เฉพาะตั้งลูกหนี้; จะปิดงานหลังยืนยัน"
                     : "รายการนี้รอรับเงิน (Cash) ในอีกแท็บก่อน จึงจะกดยืนยันตั้งลูกหนี้ส่วนนี้ได้"}
-                </p>
+                </span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
