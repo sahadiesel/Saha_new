@@ -207,16 +207,23 @@ function DocumentView({
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-8 mb-4 p-3 border rounded-md">
-                    <div className="space-y-1">
+                <div
+                    className={cn(
+                        "mb-4 p-3 border rounded-md w-full",
+                        isTaxInvoice
+                            ? "grid gap-3 [grid-template-columns:minmax(0,4fr)_minmax(0,1fr)]"
+                            : "grid grid-cols-2 gap-8"
+                    )}
+                >
+                    <div className={cn("space-y-1", isTaxInvoice && "min-w-0")}>
                         <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
                         {document.docType === "TAX_INVOICE" ? (
                             <>
-                                <p className="text-sm font-bold leading-snug break-words text-foreground">
+                                <p className="text-sm font-bold leading-tight text-foreground">
                                     <span>{taxInvoiceCustomerNameOneLine || displayCustomerName}</span>
                                     {showTaxInvoiceBranchAfterName && <span className="text-primary">&nbsp;({branchLabel})</span>}
                                 </p>
-                                <p className="text-[11px] leading-snug break-words print:text-[10px]">
+                                <p className="text-[11px] leading-tight print:text-[10px]">
                                     {taxInvoiceAddressOneLine}
                                     {displayCustomerPhone && (
                                         <span className="whitespace-nowrap">{"\u00A0"}โทร: {displayCustomerPhone}</span>
@@ -246,7 +253,9 @@ function DocumentView({
                             </>
                         )}
                     </div>
-                    <VehicleInfo doc={document} />
+                    <div className={cn(isTaxInvoice && "min-w-0")}>
+                        <VehicleInfo doc={document} />
+                    </div>
                 </div>
 
                 <Table
