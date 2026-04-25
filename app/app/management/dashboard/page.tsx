@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
-import { collection, onSnapshot, query, orderBy, Timestamp, getDocs, limit, where, type FirestoreError } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, Timestamp, limit, where, type FirestoreError } from "firebase/firestore";
 import { DateRange } from "react-day-picker";
 import { 
   subDays, 
@@ -20,7 +20,8 @@ import {
   parseISO,
   startOfDay,
   endOfDay,
-  set
+  set,
+  subYears,
 } from "date-fns";
 import { 
   BarChart, 
@@ -76,6 +77,41 @@ const formatCurrency = (value: number) => {
   return (value || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 };
 
+/** อ่าน YYYY-MM-DD ในกราฟภาษี — คืน null ถ้า parse ไม่ได้ */
+const parseDocDateYmd = (s: string | undefined): Date | null => {
+  if (!s || typeof s !== "string") return null;
+  try {
+    const d = parseISO(s);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  } catch {
+    return null;
+  }
+};
+
+/** ภาษีขายสุทธิในงวด: ใบกำกับ + ใบเพิ่มหนี้ − ใบลดหนี้ (เฉพาะ withTax, ยังไม่นับฉบับร่าง/รออนุมัติ) */
+const documentSalesVatSigned = (d: Document, interval: { start: Date; end: Date }): number => {
+  const s = d.status;
+  if (s === "CANCELLED" || s === "REJECTED" || s === "DRAFT" || s === "PENDING_REVIEW") return 0;
+  if (!d.withTax) return 0;
+  const dt = parseDocDateYmd(d.docDate);
+  if (!dt || !isWithinInterval(dt, interval)) return 0;
+  const vat = d.vatAmount || 0;
+  if (d.docType === "TAX_INVOICE" || d.docType === "DEBIT_NOTE") return vat;
+  if (d.docType === "CREDIT_NOTE") return -vat;
+  return 0;
+};
+
+/** ภาษีซื้อ: เฉพาะบิลแวตและสถานะออกบิลแล้ว (ไม่นับฉบับร่าง/รออนุมัติ) */
+const purchaseInputVat = (p: PurchaseDoc, interval: { start: Date; end: Date }): number => {
+  const s = p.status;
+  if (s === "CANCELLED" || s === "REJECTED" || s === "DRAFT" || s === "PENDING_REVIEW") return 0;
+  if (!p.withTax) return 0;
+  const pt = parseDocDateYmd(p.docDate);
+  if (!pt || !isWithinInterval(pt, interval)) return 0;
+  return p.vatAmount || 0;
+};
+
 const getTrend = (current: number, previous: number) => {
   if (previous === 0) return current > 0 ? 100 : 0;
   return ((current - previous) / previous) * 100;
@@ -94,6 +130,14 @@ const TrendIndicator = ({ value }: { value: number }) => {
 
 const isOutflow = (job: Job) => ["DONE", "WAITING_CUSTOMER_PICKUP", "PICKED_UP", "CLOSED"].includes(job.status);
 
+/** รายรับ-รายจ่ายเชิงดำเนินงาน: ไม่นับโอนระหว่างบัญชี (มี transferRefId คู่กับอีกรายการ) */
+const isInterAccountTransferEntry = (e: AccountingEntry) => Boolean(e.transferRefId);
+
+const isOperatingCashIn = (e: AccountingEntry) =>
+  (e.entryType === "RECEIPT" || e.entryType === "CASH_IN") && !isInterAccountTransferEntry(e);
+
+const isOperatingCashOut = (e: AccountingEntry) => e.entryType === "CASH_OUT" && !isInterAccountTransferEntry(e);
+
 // --- Main Dashboard Component ---
 function AppDashboardPage() {
   const { db } = useFirebase();
@@ -105,6 +149,9 @@ function AppDashboardPage() {
   const [entries, setEntries] = useState<AccountingEntry[]>([]);
   const [obligations, setObligations] = useState<AccountingObligation[]>([]);
   const [purchaseDocs, setPurchaseDocs] = useState<PurchaseDoc[]>([]);
+  /** โหลดตาม docDate ย้อนหลัง 2 ปี — กราฟ VAT 6 เดือน ไม่อิง limit(500) ดิบ ที่เฉือนข้อมูลเดิม */
+  const [vatDocuments, setVatDocuments] = useState<Document[]>([]);
+  const [vatPurchaseDocs, setVatPurchaseDocs] = useState<PurchaseDoc[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
@@ -167,6 +214,44 @@ function AppDashboardPage() {
     const unsubPurchases = onSnapshot(query(collection(db, "purchaseDocs"), limit(200)), (snap) => {
       setPurchaseDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as PurchaseDoc)));
     });
+
+    const vatLookbackYmd = format(subYears(startOfToday(), 7), "yyyy-MM-dd");
+    const unsubVatDocs = onSnapshot(
+      query(
+        collection(db, "documents"),
+        where("docDate", ">=", vatLookbackYmd),
+        orderBy("docDate", "desc"),
+        limit(8000)
+      ),
+      (snap) => {
+        setVatDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+      },
+      (err: FirestoreError) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        console.error("Dashboard VAT documents", err);
+      }
+    );
+    const unsubVatPurchases = onSnapshot(
+      query(
+        collection(db, "purchaseDocs"),
+        where("docDate", ">=", vatLookbackYmd),
+        orderBy("docDate", "desc"),
+        limit(5000)
+      ),
+      (snap) => {
+        setVatPurchaseDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PurchaseDoc)));
+      },
+      (err: FirestoreError) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        console.error("Dashboard VAT purchaseDocs", err);
+      }
+    );
     
     // Fetch customers
     const unsubCustomers = onSnapshot(query(collection(db, "customers"), limit(1000)), (snap) => {
@@ -175,7 +260,15 @@ function AppDashboardPage() {
     });
 
     return () => {
-      unsubJobs(); unsubArchived(); unsubDocs(); unsubEntries(); unsubObligations(); unsubPurchases(); unsubCustomers();
+      unsubJobs();
+      unsubArchived();
+      unsubDocs();
+      unsubEntries();
+      unsubObligations();
+      unsubPurchases();
+      unsubVatDocs();
+      unsubVatPurchases();
+      unsubCustomers();
     };
   }, [db, selectedYear]);
 
@@ -200,10 +293,18 @@ function AppDashboardPage() {
 
     const backlog = jobs.filter(j => !isOutflow(j));
     
-    const currentCashIn = entries.filter(e => (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') && isInPeriod(toDateSafe(e.entryDate))).reduce((s, e) => s + e.amount, 0);
-    const prevCashIn = entries.filter(e => (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') && isInPrevPeriod(toDateSafe(e.entryDate))).reduce((s, e) => s + e.amount, 0);
-    const currentCashOut = entries.filter(e => e.entryType === 'CASH_OUT' && isInPeriod(toDateSafe(e.entryDate))).reduce((s, e) => s + e.amount, 0);
-    const prevCashOut = entries.filter(e => e.entryType === 'CASH_OUT' && isInPrevPeriod(toDateSafe(e.entryDate))).reduce((s, e) => s + e.amount, 0);
+    const currentCashIn = entries
+      .filter((e) => isOperatingCashIn(e) && isInPeriod(toDateSafe(e.entryDate)))
+      .reduce((s, e) => s + e.amount, 0);
+    const prevCashIn = entries
+      .filter((e) => isOperatingCashIn(e) && isInPrevPeriod(toDateSafe(e.entryDate)))
+      .reduce((s, e) => s + e.amount, 0);
+    const currentCashOut = entries
+      .filter((e) => isOperatingCashOut(e) && isInPeriod(toDateSafe(e.entryDate)))
+      .reduce((s, e) => s + e.amount, 0);
+    const prevCashOut = entries
+      .filter((e) => isOperatingCashOut(e) && isInPrevPeriod(toDateSafe(e.entryDate)))
+      .reduce((s, e) => s + e.amount, 0);
 
     const arBalance = obligations.filter(o => o.type === 'AR' && o.status !== 'PAID').reduce((s, o) => s + (o.balance || 0), 0);
     const apBalance = obligations.filter(o => o.type === 'AP' && o.status !== 'PAID').reduce((s, o) => s + (o.balance || 0), 0);
@@ -274,15 +375,21 @@ function AppDashboardPage() {
       
       const interval = { start: rangeStart, end: rangeEnd };
       
-      const cin = entries.filter(e => {
-        const d = toDateSafe(e.entryDate);
-        return (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') && d && isWithinInterval(d, interval);
-      }).reduce((s, e) => s + e.amount, 0);
-      
-      const cout = entries.filter(e => {
-        const d = toDateSafe(e.entryDate);
-        return e.entryType === 'CASH_OUT' && d && isWithinInterval(d, interval);
-      }).reduce((s, e) => s + e.amount, 0);
+      const cin = entries
+        .filter((e) => {
+          if (!isOperatingCashIn(e)) return false;
+          const d = toDateSafe(e.entryDate);
+          return d && isWithinInterval(d, interval);
+        })
+        .reduce((s, e) => s + e.amount, 0);
+
+      const cout = entries
+        .filter((e) => {
+          if (!isOperatingCashOut(e)) return false;
+          const d = toDateSafe(e.entryDate);
+          return d && isWithinInterval(d, interval);
+        })
+        .reduce((s, e) => s + e.amount, 0);
       
       return { 
         name: format(rangeStart, "dd/MM"), 
@@ -298,19 +405,15 @@ function AppDashboardPage() {
       const mEnd = endOfMonth(mStart);
       const interval = { start: mStart, end: mEnd };
 
-      const salesVat = documents
-        .filter(d => {
-          const dt = parseISO(d.docDate);
-          return d.docType === 'TAX_INVOICE' && d.status !== 'CANCELLED' && isWithinInterval(dt, interval);
-        })
-        .reduce((sum, d) => sum + (d.vatAmount || 0), 0);
+      const salesVat = vatDocuments.reduce(
+        (sum, d) => sum + documentSalesVatSigned(d, interval),
+        0
+      );
 
-      const purchaseVat = purchaseDocs
-        .filter(p => {
-          const pt = parseISO(p.docDate);
-          return p.status !== 'CANCELLED' && isWithinInterval(pt, interval);
-        })
-        .reduce((sum, p) => sum + (p.vatAmount || 0), 0);
+      const purchaseVat = vatPurchaseDocs.reduce(
+        (sum, p) => sum + purchaseInputVat(p, interval),
+        0
+      );
 
       return {
         name: format(mStart, "MM/yy"),
@@ -410,7 +513,7 @@ function AppDashboardPage() {
         { label: "งานเข้าใหม่", value: currentInflow.length, trend: getTrend(currentInflow.length, prevInflow.length), desc: "งานที่เปิดใหม่ในช่วงเวลานี้", link: "/app/jobs" },
         { label: "งานซ่อมเสร็จ", value: currentOutflow.length, trend: getTrend(currentOutflow.length, prevOutflow.length), desc: "งานที่ส่งมอบในช่วงเวลานี้", link: "/app/jobs" },
         { label: "งานคงค้าง", value: backlog.length, desc: "งานที่ยังอยู่ระหว่างดำเนินการ", link: "/app/jobs", isNeutral: true },
-        { label: "เงินหมุนเวียน", value: currentCashIn - currentCashOut, trend: getTrend(currentCashIn - currentCashOut, prevCashIn - prevCashOut), desc: "รับ-จ่ายสุทธิในช่วงเวลานี้", link: "/app/management/accounting/cashbook", isCurrency: true },
+        { label: "เงินหมุนเวียน", value: currentCashIn - currentCashOut, trend: getTrend(currentCashIn - currentCashOut, prevCashIn - prevCashOut), desc: "รับ-จ่ายสุทธิ (ไม่รวมโอนระหว่างบัญชี)", link: "/app/management/accounting/cashbook", isCurrency: true },
       ],
       fin: [
         { label: "เงินรับเข้า", value: currentCashIn, trend: getTrend(currentCashIn, prevCashIn), link: "/app/management/accounting/cashbook?tab=in" },
@@ -426,7 +529,7 @@ function AppDashboardPage() {
       acquisitionData,
       alerts
     };
-  }, [jobs, archivedJobs, documents, entries, obligations, purchaseDocs, customers, dateRange]);
+  }, [jobs, archivedJobs, documents, vatDocuments, vatPurchaseDocs, entries, obligations, purchaseDocs, customers, dateRange]);
 
   const handleDatePreset = (preset: string) => {
     const today = startOfToday();
@@ -531,7 +634,9 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>วิเคราะห์ภาษีซื้อ-ขาย (6 เดือน)</CardTitle>
-            <CardDescription>สรุป VAT ขายและ VAT ซื้อ</CardDescription>
+            <CardDescription>
+              ภาษีขาย = ใบกำกับ + ใบเพิ่มหนี้ − ใบลดหนี้ (รายเดือน, อิงวันที่เอกสาร, เฉพาะที่ออกบิลแล้ว) · ภาษีซื้อ = บิลที่มี VAT
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex-1">
             <div className="h-[280px]">
@@ -553,7 +658,9 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>กระแสเงินสด (3 เดือน)</CardTitle>
-            <CardDescription>ภาพรวมเงินเข้า–ออก (ทุกครึ่งเดือน)</CardDescription>
+            <CardDescription>
+              ภาพรวมเงินเข้า–ออกทุกครึ่งเดือน (ไม่นับโอนระหว่างบัญชีธนาคาร — นับเฉพาะรายรับ/รายจ่ายดำเนินงาน)
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex-1">
             <div className="h-[280px]">

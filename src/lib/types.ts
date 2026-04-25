@@ -683,6 +683,8 @@ export interface AccountingEntry {
   customerNameSnapshot?: string;
   jobId?: string;
   // --- Fields for CASH_IN/CASH_OUT ---
+  /** คู่รายการโอนระหว่างบัญชี (กราฟ/รายรับ-จ่ายเชิงดำเนินงานจะไม่นับ) */
+  transferRefId?: string;
   description?: string;
   category?: AccountingCategory; // Legacy field
   categoryMain?: string; // New field

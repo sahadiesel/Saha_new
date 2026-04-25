@@ -56,12 +56,17 @@ const sumDocSuggestedPayments = (d: Pick<DocumentType, "suggestedPayments" | "gr
   );
 };
 
-/** ใบส่งของ: รับเงินสด/โอน บางส่วน + ส่วนที่เหลือตั้งลูกหนี้ (ออฟฟิศมอบมา) */
+/** ใบส่งของ: รับเงินสด/โอน บางส่วน + ส่วนที่เหลือยังมียอดค้าง (อิง suggestedPayments/ยอดรวม — ไม่ยึดแค่ paymentTerms) */
 const isDeliveryNotePartialCashAndCredit = (d: WithId<DocumentType>) => {
-  if (d.docType !== "DELIVERY_NOTE" || d.paymentTerms !== "CREDIT") return false;
+  if (d.docType !== "DELIVERY_NOTE") return false;
   const sum = sumDocSuggestedPayments(d);
   const ar = roundMoney(Math.max(0, (d.grandTotal || 0) - sum));
   return sum > 0.01 && ar > 0.01;
+};
+
+/** ขั้นรับเงินใน Inbox: รับเงินสด/โอนบางส่วน แต่ยอดสุทธิยังค้างลูกหนี้ (ห้ามปิด job / กด close job รอบนี้) */
+const isDeliveryNoteSplitCashWithOutstanding = (sumPaid: number, arBalance: number) => {
+  return sumPaid > 0.01 && arBalance > 0.01;
 };
 
 /** ยอดแสดงใน Inbox: แยกเงินสด vs ยอดตั้งลูกหนี้ (ใบส่งของบางส่วน) */
@@ -372,7 +377,8 @@ function AccountingInboxPageContent() {
                 throw new Error("ยอดรับเงินรวมเกินยอดบิล กรุณาตรวจสอบจำนวนเงิน");
             }
 
-            const isMixed = d.paymentTerms === 'CREDIT' && sumPaid > 0.01 && arBalance > 0.01;
+            const isMixed =
+              isDeliveryNote && isDeliveryNoteSplitCashWithOutstanding(sumPaid, arBalance);
 
             if (isMixed) {
                 payLines.forEach((p, idx) => {
@@ -590,9 +596,8 @@ function AccountingInboxPageContent() {
               .reduce((s, p) => s + (p.amount || 0), 0)
           );
           const arLeft = roundMoney(Math.max(0, (confirmingDoc.grandTotal || 0) - paySum));
-          const isMixed =
-            confirmingDoc.paymentTerms === "CREDIT" && paySum > 0.01 && arLeft > 0.01;
-          if (!isMixed) {
+          const isSplitStepCashOnly = isDeliveryNoteSplitCashWithOutstanding(paySum, arLeft);
+          if (!isSplitStepCashOnly) {
             await callCloseJobFunction(jobId, arLeft > 0.01 ? "UNPAID" : "PAID");
           }
       }
@@ -649,6 +654,8 @@ function AccountingInboxPageContent() {
     const arRef = doc(db, 'accountingObligations', arId);
 
     let postCloseArJob: string | null = null;
+    /** เอกสารอ้าง jobId แต่เอกสาร jobs/ ไม่มี (ถูกลบ/ย้าย) — ยังลง AR ได้ แต่ไม่เรียก update job หรือ closeJob ซ้ำ */
+    let skipCallCloseForDeliveryNote = false;
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -760,20 +767,26 @@ function AccountingInboxPageContent() {
             });
 
             if (d.jobId) {
-              transaction.update(doc(db, "jobs", d.jobId), {
-                status: "CLOSED",
-                updatedAt: serverTimestamp(),
-                lastActivityAt: serverTimestamp(),
-              });
-              const actText = `ฝ่ายบัญชีตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ส่วนที่ค้างชำระ ตาม ${d.docNo} แล้วปิดงาน (รับเงินลง cashbook ในรอบก่อน)`;
-              const activityRef2 = doc(collection(doc(db, "jobs", d.jobId), "activities"));
-              transaction.set(activityRef2, {
-                text: actText,
-                userName: profile.displayName,
-                userId: profile.uid,
-                createdAt: serverTimestamp(),
-              });
-              postCloseArJob = d.jobId;
+              const jobRef2 = doc(db, "jobs", d.jobId);
+              const jobSnap2 = await transaction.get(jobRef2);
+              if (jobSnap2.exists()) {
+                transaction.update(jobRef2, {
+                  status: "CLOSED",
+                  updatedAt: serverTimestamp(),
+                  lastActivityAt: serverTimestamp(),
+                });
+                const actText = `ฝ่ายบัญชีตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ส่วนที่ค้างชำระ ตาม ${d.docNo} แล้วปิดงาน (รับเงินลง cashbook ในรอบก่อน)`;
+                const activityRef2 = doc(collection(doc(db, "jobs", d.jobId), "activities"));
+                transaction.set(activityRef2, {
+                  text: actText,
+                  userName: profile.displayName,
+                  userId: profile.uid,
+                  createdAt: serverTimestamp(),
+                });
+                postCloseArJob = d.jobId;
+              } else {
+                skipCallCloseForDeliveryNote = true;
+              }
             }
             return;
           }
@@ -823,24 +836,30 @@ function AccountingInboxPageContent() {
           });
 
           if (d.jobId) {
-            transaction.update(doc(db, "jobs", d.jobId), {
-              status: "CLOSED",
-              updatedAt: serverTimestamp(),
-              lastActivityAt: serverTimestamp(),
-            });
-            const actText =
-              payLines.length > 0
-                ? arAmount > 0.01
-                  ? `ฝ่ายบัญชีบันทึกรับเงิน ฿${formatCurrency(sumPaid)} และตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ตาม ${d.docNo} แล้วปิดงาน`
-                  : `ฝ่ายบัญชียืนยันรับเงินเต็มจำนวน ฿${formatCurrency(sumPaid)} ตาม ${d.docNo} แล้วปิดงาน`
-                : `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ฿${formatCurrency(d.grandTotal)} ตามเลขที่บิล: ${d.docNo} แล้วปิดงาน`;
-            const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
-            transaction.set(activityRef, {
-              text: actText,
-              userName: profile.displayName,
-              userId: profile.uid,
-              createdAt: serverTimestamp(),
-            });
+            const jobRefDn = doc(db, "jobs", d.jobId);
+            const jobSnapDn = await transaction.get(jobRefDn);
+            if (jobSnapDn.exists()) {
+              transaction.update(jobRefDn, {
+                status: "CLOSED",
+                updatedAt: serverTimestamp(),
+                lastActivityAt: serverTimestamp(),
+              });
+              const actText =
+                payLines.length > 0
+                  ? arAmount > 0.01
+                    ? `ฝ่ายบัญชีบันทึกรับเงิน ฿${formatCurrency(sumPaid)} และตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ตาม ${d.docNo} แล้วปิดงาน`
+                    : `ฝ่ายบัญชียืนยันรับเงินเต็มจำนวน ฿${formatCurrency(sumPaid)} ตาม ${d.docNo} แล้วปิดงาน`
+                  : `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ฿${formatCurrency(d.grandTotal)} ตามเลขที่บิล: ${d.docNo} แล้วปิดงาน`;
+              const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
+              transaction.set(activityRef, {
+                text: actText,
+                userName: profile.displayName,
+                userId: profile.uid,
+                createdAt: serverTimestamp(),
+              });
+            } else {
+              skipCallCloseForDeliveryNote = true;
+            }
           }
 
           if (arAmount > 0.01) {
@@ -901,18 +920,22 @@ function AccountingInboxPageContent() {
         }
 
         if (d.jobId) {
-          transaction.update(doc(db, "jobs", d.jobId), {
-            status: "PICKED_UP",
-            updatedAt: serverTimestamp(),
-            lastActivityAt: serverTimestamp(),
-          });
-          const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
-          transaction.set(activityRef, {
-            text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${d.docNo}`,
-            userName: profile.displayName,
-            userId: profile.uid,
-            createdAt: serverTimestamp(),
-          });
+          const jobRefTi = doc(db, "jobs", d.jobId);
+          const jobSnapTi = await transaction.get(jobRefTi);
+          if (jobSnapTi.exists()) {
+            transaction.update(jobRefTi, {
+              status: "PICKED_UP",
+              updatedAt: serverTimestamp(),
+              lastActivityAt: serverTimestamp(),
+            });
+            const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
+            transaction.set(activityRef, {
+              text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${d.docNo}`,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
+            });
+          }
         }
 
         transaction.set(
@@ -948,11 +971,15 @@ function AccountingInboxPageContent() {
       });
       toast({
         title: isCreditNote ? "อนุมัติใบลดหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ",
-        description: isCreditNote ? "แสดงในหน้าลูกหนี้และรวมในรอบวางบิลได้ (ยอดหักเป็นลบ)" : undefined,
+        description: isCreditNote
+          ? "แสดงในหน้าลูกหนี้และรวมในรอบวางบิลได้ (ยอดหักเป็นลบ)"
+          : isDeliveryNote && skipCallCloseForDeliveryNote
+            ? "ลูกหนี้บันทึกแล้ว — ไม่พบเอกสารงาน (Job) ในระบบตามที่ผูกไว้ จึงข้ามการปิดงานอัตโนมัติ หาก Job ยังต้องปิด ให้ตรวจจากหน้าใบงาน"
+            : undefined,
       });
       if (postCloseArJob) {
         await callCloseJobFunction(postCloseArJob, "UNPAID");
-      } else if (isDeliveryNote && docObj.jobId) {
+      } else if (isDeliveryNote && docObj.jobId && !skipCallCloseForDeliveryNote) {
         const paySum = roundMoney(
           (docObj.suggestedPayments || [])
             .filter((p) => p?.accountId && (p.amount || 0) > 0.01)
