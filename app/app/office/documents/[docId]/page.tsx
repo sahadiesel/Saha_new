@@ -114,6 +114,7 @@ function DocumentView({
 
     const isQuotation = document.docType === 'QUOTATION';
     const isReceipt = document.docType === 'RECEIPT';
+    const isTaxInvoice = document.docType === "TAX_INVOICE";
     
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
@@ -121,29 +122,72 @@ function DocumentView({
     return (
         <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col">
             <div className="flex-1">
-                <div className="grid grid-cols-2 gap-8 mb-4">
-                    <div className="space-y-1">
-                        <h2 className="text-base font-bold">
-                            {(document.storeSnapshot.taxName || document.storeSnapshot.informalName) || 'Sahadiesel Service'}
+                <div
+                    className={cn(
+                        "mb-4 gap-4 w-full",
+                        isTaxInvoice ? "flex flex-row" : "grid grid-cols-2 gap-8"
+                    )}
+                >
+                    <div
+                        className={cn("space-y-1", isTaxInvoice ? "w-[60%] min-w-0 shrink-0 pr-2" : undefined)}
+                    >
+                        <h2 className="text-base font-bold leading-snug">
+                            {(document.storeSnapshot.taxName || document.storeSnapshot.informalName) || "Sahadiesel Service"}
                             {storeBranchLabel && <span className="font-bold"> ({storeBranchLabel})</span>}
                         </h2>
-                        <p className="text-[11px] whitespace-pre-wrap leading-relaxed">
-                            {document.storeSnapshot.taxAddress}
-                        </p>
-                        <p className="text-[11px]">
-                            โทร {document.storeSnapshot.phone}
-                            {document.storeSnapshot.taxId && !isBilling && (
-                                <span className="ml-4">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</span>
-                            )}
-                        </p>
-                    </div>
-                    <div className="text-right space-y-1">
-                        <h1 className="text-xl font-bold text-primary">{finalDocTitle}</h1>
-                        {document.docType === "TAX_INVOICE" && (
-                            <p className="text-sm font-medium text-foreground">เอกสารออกเป็นชุด</p>
+                        {isTaxInvoice ? (
+                            <>
+                                <div className="text-[11px] leading-tight flex flex-wrap gap-x-2 gap-y-0.5 items-baseline print:text-[10px]">
+                                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                                        {document.storeSnapshot.taxAddress}
+                                    </span>
+                                    {document.storeSnapshot.phone && (
+                                        <span className="shrink-0 whitespace-nowrap">โทร {document.storeSnapshot.phone}</span>
+                                    )}
+                                </div>
+                                {document.storeSnapshot.taxId && !isBilling && (
+                                    <p className="text-[10px] leading-tight">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</p>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-[11px] whitespace-pre-wrap leading-relaxed">
+                                    {document.storeSnapshot.taxAddress}
+                                </p>
+                                <p className="text-[11px]">
+                                    โทร {document.storeSnapshot.phone}
+                                    {document.storeSnapshot.taxId && !isBilling && (
+                                        <span className="ml-4">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</span>
+                                    )}
+                                </p>
+                            </>
                         )}
-                        <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
-                        <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), 'dd/MM/yyyy')}</p>
+                    </div>
+                    <div
+                        className={cn(
+                            "text-right",
+                            isTaxInvoice ? "w-[40%] min-w-0 space-y-0.5" : "space-y-1"
+                        )}
+                    >
+                        {isTaxInvoice ? (
+                            <>
+                                <h1 className="text-lg font-bold text-primary leading-tight sm:text-xl">
+                                    {labelSuffix
+                                        ? `ใบกำกับภาษี ${labelSuffix === "ORIGINAL" ? "ต้นฉบับ" : "สำเนา"}`
+                                        : "ใบกำกับภาษี"}
+                                </h1>
+                                <h2 className="text-base font-bold text-primary leading-tight sm:text-lg">Tax Invoice</h2>
+                                <p className="text-sm font-medium text-foreground pt-0.5">เอกสารออกเป็นชุด</p>
+                                <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
+                                <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), "dd/MM/yyyy")}</p>
+                            </>
+                        ) : (
+                            <>
+                                <h1 className="text-xl font-bold text-primary">{finalDocTitle}</h1>
+                                <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
+                                <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), "dd/MM/yyyy")}</p>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -152,16 +196,20 @@ function DocumentView({
                         <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
                         {document.docType === "TAX_INVOICE" ? (
                             <>
-                                <p className="text-sm">
+                                <p className="text-sm leading-snug">
                                     <span className="font-bold">{displayCustomerName}</span>
                                     {branchLabel && (
-                                        <span className="font-bold text-primary ml-2">({branchLabel})</span>
+                                        <span className="font-bold text-primary ml-1.5">({branchLabel})</span>
                                     )}
                                 </p>
-                                <p className="text-[11px] leading-relaxed">
-                                    <span className="whitespace-pre-wrap">{displayCustomerAddress}</span>{" "}
-                                    <span className="whitespace-nowrap">โทร: {displayCustomerPhone}</span>
-                                </p>
+                                <div className="text-[11px] leading-tight flex flex-wrap gap-x-2 gap-y-0.5 items-baseline print:text-[10px]">
+                                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                                        {displayCustomerAddress}
+                                    </span>
+                                    {displayCustomerPhone && (
+                                        <span className="shrink-0 whitespace-nowrap">โทร: {displayCustomerPhone}</span>
+                                    )}
+                                </div>
                                 {(isTaxDoc || customer.useTax) && customer.taxId && (
                                     <p className="text-[11px] font-bold">
                                         เลขประจำตัวผู้เสียภาษี: {customer.taxId}
@@ -189,20 +237,54 @@ function DocumentView({
                     <VehicleInfo doc={document} />
                 </div>
 
-                <Table className="mb-4 border-t border-b">
+                <Table
+                    className={cn(
+                        "mb-4 border-t border-b",
+                        isTaxInvoice && "text-[11px] [&_th]:h-6 [&_th]:py-1 [&_th]:text-[11px] [&_td]:py-0.5 [&_tr]:h-auto"
+                    )}
+                >
                     <TableHeader className="bg-muted/20">
                         <TableRow className="hover:bg-transparent">
-                            <TableHead className="w-12 text-center text-black font-bold h-8">#</TableHead>
-                            <TableHead className="text-black font-bold h-8">รายการ</TableHead>
-                            <TableHead className={cn("text-right text-black font-bold h-8", isWithdrawal ? "w-32" : "w-20")}>
+                            <TableHead
+                                className={cn(
+                                    "w-12 text-center text-black font-bold",
+                                    isTaxInvoice ? "h-6 py-1" : "h-8"
+                                )}
+                            >
+                                #
+                            </TableHead>
+                            <TableHead
+                                className={cn("text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                            >
+                                รายการ
+                            </TableHead>
+                            <TableHead
+                                className={cn(
+                                    "text-right text-black font-bold",
+                                    isTaxInvoice ? "h-6 py-1" : "h-8",
+                                    isWithdrawal ? "w-32" : "w-20"
+                                )}
+                            >
                                 {isWithdrawal ? "จำนวนเบิก" : "จำนวน"}
                             </TableHead>
                             {isWithdrawal ? (
-                                <TableHead className="w-32 text-right text-black font-bold h-8">คงเหลือในคลัง</TableHead>
+                                <TableHead
+                                    className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                >
+                                    คงเหลือในคลัง
+                                </TableHead>
                             ) : (
                                 <>
-                                    <TableHead className="w-32 text-right text-black font-bold h-8">ราคา/หน่วย</TableHead>
-                                    <TableHead className="w-32 text-right text-black font-bold h-8">รวมเงิน</TableHead>
+                                    <TableHead
+                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                    >
+                                        ราคา/หน่วย
+                                    </TableHead>
+                                    <TableHead
+                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                    >
+                                        รวมเงิน
+                                    </TableHead>
                                 </>
                             )}
                         </TableRow>
@@ -210,17 +292,39 @@ function DocumentView({
                     <TableBody>
                         {document.items.map((item, index) => (
                             <TableRow key={index} className="border-b hover:bg-transparent">
-                                <TableCell className="text-center py-1.5 h-8">{index + 1}</TableCell>
-                                <TableCell className="py-1.5 h-8">{item.description}</TableCell>
-                                <TableCell className="text-right py-1.5 h-8">{item.quantity}</TableCell>
+                                <TableCell
+                                    className={cn("text-center", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                >
+                                    {index + 1}
+                                </TableCell>
+                                <TableCell
+                                    className={isTaxInvoice ? "py-0.5 leading-snug" : "py-1.5 h-8"}
+                                >
+                                    {item.description}
+                                </TableCell>
+                                <TableCell
+                                    className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                >
+                                    {item.quantity}
+                                </TableCell>
                                 {isWithdrawal ? (
-                                    <TableCell className="text-right py-1.5 h-8">
+                                    <TableCell
+                                        className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                    >
                                         {item.stockSnapshot !== undefined ? item.stockSnapshot : "-"}
                                     </TableCell>
                                 ) : (
                                     <>
-                                        <TableCell className="text-right py-1.5 h-8">{item.unitPrice.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>
-                                        <TableCell className="text-right py-1.5 h-8">{item.total.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>
+                                        <TableCell
+                                            className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                        >
+                                            {item.unitPrice.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                                        </TableCell>
+                                        <TableCell
+                                            className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                        >
+                                            {item.total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                                        </TableCell>
                                     </>
                                 )}
                             </TableRow>

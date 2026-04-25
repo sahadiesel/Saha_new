@@ -45,6 +45,8 @@ import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const roundMoney = (n: number) => Math.round(n * 100) / 100;
+
 const docTypeThaiLabel = (docType?: string) => {
   if (docType === "TAX_INVOICE") return "ใบกำกับภาษี";
   if (docType === "DELIVERY_NOTE") return "ใบส่งของชั่วคราว";
@@ -300,63 +302,134 @@ function AccountingInboxPageContent() {
         const docRef = doc(db, 'documents', confirmingDoc.id);
         const docSnap = await transaction.get(docRef);
         if (!docSnap.exists()) throw new Error("ไม่พบเอกสารในระบบ");
-        
+        const d = docSnap.data() as DocumentType;
+
         let jobSnap = null;
         if (jobId) {
             const jobRef = doc(db, 'jobs', jobId);
             jobSnap = await transaction.get(jobRef);
         }
 
-        const customerName = confirmingDoc.customerSnapshot?.name || 'ลูกค้าทั่วไป';
+        const customerName = d.customerSnapshot?.name || 'ลูกค้าทั่วไป';
         const finalPayments = suggestedPayments.map(p => {
             const acc = accounts.find(a => a.id === p.accountId);
-            return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' };
+            return { ...p, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as const };
         });
 
         if (isDeliveryNote) {
-            const entryId = `AUTO_CASH_${confirmingDoc.id}`;
-            const entryRef = doc(db, 'accountingEntries', entryId);
-            const firstPayment = finalPayments[0];
+            const payLines = finalPayments
+                .map(p => ({ ...p, amount: roundMoney(p.amount || 0) }))
+                .filter(p => p.amount > 0.01);
+            const sumPaid = roundMoney(payLines.reduce((s, p) => s + p.amount, 0));
+            const arBalance = roundMoney(Math.max(0, (d.grandTotal || 0) - sumPaid));
+            if (sumPaid > (d.grandTotal || 0) + 0.01) {
+                throw new Error("ยอดรับเงินรวมเกินยอดบิล กรุณาตรวจสอบจำนวนเงิน");
+            }
 
-            transaction.set(entryRef, sanitizeForFirestore({
-                entryType: 'CASH_IN',
-                entryDate: payYmd,
-                amount: confirmingDoc.grandTotal,
-                accountId: firstPayment.accountId,
-                paymentMethod: firstPayment.method,
-                categoryMain: 'งานซ่อม',
-                categorySub: 'หน้าร้าน (CARS)',
-                description: `รับเงินสด/โอนตามใบส่งของ: ${confirmingDoc.docNo} (${customerName})`,
-                sourceDocType: 'DELIVERY_NOTE',
-                sourceDocId: confirmingDoc.id,
-                sourceDocNo: confirmingDoc.docNo,
-                customerNameSnapshot: customerName,
-                createdAt: serverTimestamp(),
-            }));
+            payLines.forEach((p, idx) => {
+                const entryId = idx === 0 ? `AUTO_CASH_${d.id}` : `AUTO_CASH_${d.id}__${idx}`;
+                const entryRef = doc(db, 'accountingEntries', entryId);
+                transaction.set(
+                    entryRef,
+                    sanitizeForFirestore({
+                        entryType: 'CASH_IN',
+                        entryDate: payYmd,
+                        amount: p.amount,
+                        accountId: p.accountId,
+                        paymentMethod: p.method,
+                        categoryMain: 'งานซ่อม',
+                        categorySub: 'หน้าร้าน (CARS)',
+                        description: `รับเงินสด/โอนตามใบส่งของ: ${d.docNo} (${customerName})`,
+                        sourceDocType: 'DELIVERY_NOTE',
+                        sourceDocId: d.id,
+                        sourceDocNo: d.docNo,
+                        customerNameSnapshot: customerName,
+                        createdAt: serverTimestamp(),
+                    })
+                );
+            });
 
-            transaction.update(docRef, { 
-                status: 'PAID', 
-                arStatus: 'PAID', 
-                paymentSummary: { paidTotal: confirmingDoc.grandTotal, balance: 0, paymentStatus: 'PAID' },
-                accountingEntryId: entryId,
+            if (arBalance > 0.01) {
+                const arId = `AR_${d.id}`;
+                const arRef = doc(db, 'accountingObligations', arId);
+                transaction.set(
+                    arRef,
+                    sanitizeForFirestore({
+                        id: arId,
+                        type: 'AR',
+                        status: 'UNPAID',
+                        sourceDocType: 'DELIVERY_NOTE',
+                        sourceDocId: d.id,
+                        sourceDocNo: d.docNo,
+                        amountTotal: arBalance,
+                        amountPaid: 0,
+                        balance: arBalance,
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp(),
+                        customerNameSnapshot: customerName,
+                        customerId: d.customerId || d.customerSnapshot?.id || null,
+                        jobId: jobId || null,
+                        dueDate: d.dueDate || null,
+                        docDate: d.docDate || null,
+                    })
+                );
+            }
+
+            const fullySettled = arBalance <= 0.01;
+            const hasImmediateCash = payLines.length > 0;
+            const docArStatus: NonNullable<DocumentType['arStatus']> = fullySettled
+                ? 'PAID'
+                : hasImmediateCash
+                  ? 'PARTIAL'
+                  : 'UNPAID';
+            const targetStatus = (fullySettled
+                ? 'PAID'
+                : hasImmediateCash
+                  ? 'PARTIAL'
+                  : 'UNPAID') as DocumentType['status'];
+            const psStatus = fullySettled
+                ? 'PAID'
+                : hasImmediateCash
+                  ? 'PARTIAL'
+                  : 'UNPAID';
+
+            transaction.update(docRef, {
+                status: targetStatus,
+                arStatus: docArStatus,
+                paymentSummary: {
+                    paidTotal: sumPaid,
+                    balance: arBalance,
+                    paymentStatus: psStatus,
+                },
                 paymentDate: payYmd,
-                receivedAccountId: firstPayment.accountId,
-                updatedAt: serverTimestamp()
+                updatedAt: serverTimestamp(),
+                ...(arBalance > 0.01
+                    ? { arObligationId: `AR_${d.id}` as const }
+                    : { arObligationId: deleteField() }),
+                ...(hasImmediateCash
+                    ? { accountingEntryId: `AUTO_CASH_${d.id}` as const, receivedAccountId: payLines[0]!.accountId }
+                    : { accountingEntryId: deleteField(), receivedAccountId: deleteField() }),
             });
 
             if (jobId && jobSnap && jobSnap.exists()) {
                 transaction.update(doc(db, 'jobs', jobId), {
                     status: 'CLOSED',
                     updatedAt: serverTimestamp(),
-                    lastActivityAt: serverTimestamp()
+                    lastActivityAt: serverTimestamp(),
                 });
 
                 const activityRef = doc(collection(doc(db, 'jobs', jobId), 'activities'));
+                const actText =
+                    hasImmediateCash && arBalance > 0.01
+                        ? `ฝ่ายบัญชีบันทึกรับเงิน ฿${formatCurrency(sumPaid)} และตั้งลูกหนี้ ฿${formatCurrency(arBalance)} ตาม ${d.docNo} แล้วปิดงาน`
+                        : hasImmediateCash
+                          ? `ฝ่ายบัญชียืนยันรับเงินเต็มจำนวน ฿${formatCurrency(sumPaid)} เลขที่บิล: ${d.docNo} แล้วปิดงาน`
+                          : `ฝ่ายบัญชียืนยันตั้งลูกหนี้เต็มจำนวน ฿${formatCurrency(d.grandTotal)} ตาม ${d.docNo} แล้วปิดงาน`;
                 transaction.set(activityRef, {
-                    text: `ฝ่ายบัญชียืนยันรับเงินสด/โอน เลขที่บิล: ${confirmingDoc.docNo} และปิดงานเรียบร้อยค่ะ`,
+                    text: actText,
                     userName: profile.displayName,
                     userId: profile.uid,
-                    createdAt: serverTimestamp()
+                    createdAt: serverTimestamp(),
                 });
             }
         } else {
@@ -411,8 +484,14 @@ function AccountingInboxPageContent() {
         }
       });
 
-      if (isDeliveryNote) {
-          if (jobId) await callCloseJobFunction(jobId, 'PAID');
+      if (isDeliveryNote && jobId) {
+          const paySum = roundMoney(
+            suggestedPayments
+              .filter(p => p.accountId && (p.amount || 0) > 0.01)
+              .reduce((s, p) => s + (p.amount || 0), 0)
+          );
+          const arLeft = roundMoney(Math.max(0, (confirmingDoc.grandTotal || 0) - paySum));
+          await callCloseJobFunction(jobId, arLeft > 0.01 ? 'UNPAID' : 'PAID');
       }
       
       setConfirmingDoc(null);
@@ -460,7 +539,6 @@ function AccountingInboxPageContent() {
     if (!db || !profile) return;
     setIsSubmitting(true);
     const docRef = doc(db, 'documents', docObj.id);
-    const customerName = docObj.customerSnapshot?.name || 'Unknown';
     const isDeliveryNote = docObj.docType === 'DELIVERY_NOTE';
     const isDebitNote = docObj.docType === 'DEBIT_NOTE';
     const isCreditNote = docObj.docType === 'CREDIT_NOTE';
@@ -469,8 +547,13 @@ function AccountingInboxPageContent() {
 
     try {
       await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(docRef);
+        if (!docSnap.exists()) throw new Error("ไม่พบเอกสาร");
+        const d = docSnap.data() as DocumentType;
+        const customerName = d.customerSnapshot?.name || 'Unknown';
+
         if (isCreditNote) {
-          const referencedTaxInvoiceId = docObj.referencesDocIds?.[0];
+          const referencedTaxInvoiceId = d.referencesDocIds?.[0];
           if (!referencedTaxInvoiceId) throw new Error("ใบลดหนี้ต้องอ้างอิงใบกำกับภาษี");
 
           const referencedDocRef = doc(db, "documents", referencedTaxInvoiceId);
@@ -478,7 +561,7 @@ function AccountingInboxPageContent() {
           if (!referencedDocSnap.exists()) throw new Error("ไม่พบใบกำกับภาษีอ้างอิง");
           const referencedDoc = referencedDocSnap.data() as DocumentType;
 
-          const creditAmount = Math.max(0, docObj.grandTotal || 0);
+          const creditAmount = Math.max(0, d.grandTotal || 0);
           const cnArId = `AR_${docObj.id}`;
           const cnArRef = doc(db, "accountingObligations", cnArId);
 
@@ -490,17 +573,17 @@ function AccountingInboxPageContent() {
               status: "UNPAID",
               sourceDocType: "CREDIT_NOTE",
               sourceDocId: docObj.id,
-              sourceDocNo: docObj.docNo,
+              sourceDocNo: d.docNo,
               amountTotal: creditAmount,
               amountPaid: 0,
               balance: -creditAmount,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
-              customerId: docObj.customerId || docObj.customerSnapshot?.id || null,
+              customerId: d.customerId || d.customerSnapshot?.id || null,
               customerNameSnapshot: customerName,
-              jobId: docObj.jobId || null,
-              dueDate: docObj.dueDate || null,
-              docDate: docObj.docDate || null,
+              jobId: d.jobId || null,
+              dueDate: d.dueDate || null,
+              docDate: d.docDate || null,
               note: `อ้างอิงใบกำกับ ${referencedDoc.docNo || referencedTaxInvoiceId} (หักยอดเก็บ)`,
             })
           );
@@ -519,54 +602,188 @@ function AccountingInboxPageContent() {
           return;
         }
 
-        if (docObj.jobId) {
-            transaction.update(doc(db, 'jobs', docObj.jobId), {
-                status: isDeliveryNote ? 'CLOSED' : 'PICKED_UP',
-                updatedAt: serverTimestamp(),
-                lastActivityAt: serverTimestamp()
+        if (d.docType === "DELIVERY_NOTE") {
+          const payLines = (d.suggestedPayments || [])
+            .map((p) => {
+              const m =
+                p.method ||
+                (accounts.find((a) => a.id === p.accountId)?.type === "CASH" ? "CASH" : "TRANSFER");
+              return {
+                accountId: p.accountId,
+                amount: roundMoney(p.amount || 0),
+                method: m as "CASH" | "TRANSFER",
+              };
+            })
+            .filter((p) => p.accountId && p.amount > 0.01);
+          const sumPaid = roundMoney(payLines.reduce((s, p) => s + p.amount, 0));
+          const arAmount = roundMoney(Math.max(0, (d.grandTotal || 0) - sumPaid));
+          if (sumPaid > (d.grandTotal || 0) + 0.01) {
+            throw new Error("ยอดรับเงินรวมเกินยอดบิล กรุณาตรวจสอบ (ฝ่ายออฟฟิศ/บัญชี)");
+          }
+
+          const entryDateVd = validateAccountingEntryDate(d.docDate || format(new Date(), "yyyy-MM-dd"));
+          const entryYmd = entryDateVd.ok ? entryDateVd.normalized : format(new Date(), "yyyy-MM-dd");
+
+          payLines.forEach((p, idx) => {
+            const eid = idx === 0 ? `AUTO_CASH_${docObj.id}` : `AUTO_CASH_${docObj.id}__${idx}`;
+            const entryRef = doc(db, "accountingEntries", eid);
+            transaction.set(
+              entryRef,
+              sanitizeForFirestore({
+                entryType: "CASH_IN",
+                entryDate: entryYmd,
+                amount: p.amount,
+                accountId: p.accountId,
+                paymentMethod: p.method,
+                categoryMain: "งานซ่อม",
+                categorySub: "หน้าร้าน (CARS)",
+                description: `รับเงินสด/โอนตามใบส่งของ: ${d.docNo} (${customerName})`,
+                sourceDocType: "DELIVERY_NOTE",
+                sourceDocId: docObj.id,
+                sourceDocNo: d.docNo,
+                customerNameSnapshot: customerName,
+                createdAt: serverTimestamp(),
+              })
+            );
+          });
+
+          if (d.jobId) {
+            transaction.update(doc(db, "jobs", d.jobId), {
+              status: "CLOSED",
+              updatedAt: serverTimestamp(),
+              lastActivityAt: serverTimestamp(),
             });
-            const activityRef = doc(collection(doc(db, 'jobs', docObj.jobId), 'activities'));
+            const actText =
+              payLines.length > 0
+                ? arAmount > 0.01
+                  ? `ฝ่ายบัญชีบันทึกรับเงิน ฿${formatCurrency(sumPaid)} และตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ตาม ${d.docNo} แล้วปิดงาน`
+                  : `ฝ่ายบัญชียืนยันรับเงินเต็มจำนวน ฿${formatCurrency(sumPaid)} ตาม ${d.docNo} แล้วปิดงาน`
+                : `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ฿${formatCurrency(d.grandTotal)} ตามเลขที่บิล: ${d.docNo} แล้วปิดงาน`;
+            const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
             transaction.set(activityRef, {
-                text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${docObj.docNo}`,
-                userName: profile.displayName,
-                userId: profile.uid,
-                createdAt: serverTimestamp()
+              text: actText,
+              userName: profile.displayName,
+              userId: profile.uid,
+              createdAt: serverTimestamp(),
             });
+          }
+
+          if (arAmount > 0.01) {
+            const dnArRef = doc(db, "accountingObligations", arId);
+            transaction.set(
+              dnArRef,
+              sanitizeForFirestore({
+                id: arId,
+                type: "AR",
+                status: "UNPAID",
+                sourceDocType: "DELIVERY_NOTE",
+                sourceDocId: docObj.id,
+                sourceDocNo: d.docNo,
+                amountTotal: arAmount,
+                amountPaid: 0,
+                balance: arAmount,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                customerId: d.customerId || d.customerSnapshot?.id || null,
+                customerNameSnapshot: customerName,
+                jobId: d.jobId || null,
+                dueDate: d.dueDate || null,
+                docDate: d.docDate || null,
+              })
+            );
+          }
+
+          const noCreditLeft = arAmount <= 0.01;
+          const hasCash = payLines.length > 0;
+          const arSt: NonNullable<DocumentType["arStatus"]> = noCreditLeft
+            ? "PAID"
+            : hasCash
+              ? "PARTIAL"
+              : "UNPAID";
+          const docStat = noCreditLeft
+            ? "PAID"
+            : hasCash
+              ? "PARTIAL"
+              : "UNPAID";
+          const ps: NonNullable<DocumentType["paymentSummary"]>["paymentStatus"] = noCreditLeft
+            ? "PAID"
+            : hasCash
+              ? "PARTIAL"
+              : "UNPAID";
+
+          transaction.update(docRef, {
+            status: docStat as DocumentType["status"],
+            arStatus: arSt,
+            paymentSummary: { paidTotal: sumPaid, balance: arAmount, paymentStatus: ps },
+            updatedAt: serverTimestamp(),
+            paymentDate: entryYmd,
+            ...(arAmount > 0.01 ? { arObligationId: arId } : { arObligationId: deleteField() }),
+            ...(hasCash
+              ? { accountingEntryId: `AUTO_CASH_${docObj.id}`, receivedAccountId: payLines[0]!.accountId }
+              : { accountingEntryId: deleteField(), receivedAccountId: deleteField() }),
+          });
+          return;
         }
 
-        transaction.set(arRef, sanitizeForFirestore({
-          id: arId,
-          type: 'AR', 
-          status: 'UNPAID', 
-          sourceDocType: docObj.docType, 
-          sourceDocId: docObj.id, 
-          sourceDocNo: docObj.docNo,
-          amountTotal: docObj.grandTotal, 
-          amountPaid: 0, 
-          balance: docObj.grandTotal,
-          createdAt: serverTimestamp(), 
-          updatedAt: serverTimestamp(), 
-          customerId: docObj.customerId || docObj.customerSnapshot?.id || null,
-          customerNameSnapshot: customerName,
-          jobId: docObj.jobId || null,
-          dueDate: docObj.dueDate || null,
-          docDate: docObj.docDate || null,
-        }));
+        if (d.jobId) {
+          transaction.update(doc(db, "jobs", d.jobId), {
+            status: "PICKED_UP",
+            updatedAt: serverTimestamp(),
+            lastActivityAt: serverTimestamp(),
+          });
+          const activityRef = doc(collection(doc(db, "jobs", d.jobId), "activities"));
+          transaction.set(activityRef, {
+            text: `ฝ่ายบัญชียืนยันตั้งยอดค้างชำระ (Credit) ตามเลขที่บิล: ${d.docNo}`,
+            userName: profile.displayName,
+            userId: profile.uid,
+            createdAt: serverTimestamp(),
+          });
+        }
 
-        const targetDocStatus = isDeliveryNote || isDebitNote ? 'UNPAID' : 'APPROVED';
+        transaction.set(
+          arRef,
+          sanitizeForFirestore({
+            id: arId,
+            type: "AR",
+            status: "UNPAID",
+            sourceDocType: d.docType,
+            sourceDocId: docObj.id,
+            sourceDocNo: d.docNo,
+            amountTotal: d.grandTotal,
+            amountPaid: 0,
+            balance: d.grandTotal,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            customerId: d.customerId || d.customerSnapshot?.id || null,
+            customerNameSnapshot: customerName,
+            jobId: d.jobId || null,
+            dueDate: d.dueDate || null,
+            docDate: d.docDate || null,
+          })
+        );
+
+        const targetDocStatus: DocumentType["status"] = isDebitNote ? "UNPAID" : "APPROVED";
         transaction.update(docRef, {
-          status: targetDocStatus, 
-          arStatus: 'UNPAID',
-          paymentSummary: { paidTotal: 0, balance: docObj.grandTotal, paymentStatus: 'UNPAID' },
+          status: targetDocStatus,
+          arStatus: "UNPAID",
+          paymentSummary: { paidTotal: 0, balance: d.grandTotal, paymentStatus: "UNPAID" },
           arObligationId: arId,
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
         });
       });
       toast({
         title: isCreditNote ? "อนุมัติใบลดหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ",
         description: isCreditNote ? "แสดงในหน้าลูกหนี้และรวมในรอบวางบิลได้ (ยอดหักเป็นลบ)" : undefined,
       });
-      if (isDeliveryNote && docObj.jobId) await callCloseJobFunction(docObj.jobId, 'UNPAID');
+      if (isDeliveryNote && docObj.jobId) {
+        const paySum = roundMoney(
+          (docObj.suggestedPayments || [])
+            .filter((p) => p?.accountId && (p.amount || 0) > 0.01)
+            .reduce((s, p) => s + (p.amount || 0), 0)
+        );
+        const arLeft = roundMoney(Math.max(0, (docObj.grandTotal || 0) - paySum));
+        await callCloseJobFunction(docObj.jobId, arLeft > 0.01 ? "UNPAID" : "PAID");
+      }
       setArDocToConfirm(null);
     } catch(e: any) {
       toast({ variant: 'destructive', title: 'Error', description: e.message });
