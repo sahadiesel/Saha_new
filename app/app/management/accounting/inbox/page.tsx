@@ -47,6 +47,38 @@ const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLoca
 
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
+/** รวมยอดรับตาม suggestedPayments บนเอกสาร */
+const sumDocSuggestedPayments = (d: Pick<DocumentType, "suggestedPayments" | "grandTotal">) => {
+  return roundMoney(
+    (d.suggestedPayments || [])
+      .filter((p) => p?.accountId && (p.amount || 0) > 0.01)
+      .reduce((a, p) => a + (p.amount || 0), 0)
+  );
+};
+
+/** ใบส่งของ: รับเงินสด/โอน บางส่วน + ส่วนที่เหลือตั้งลูกหนี้ (ออฟฟิศมอบมา) */
+const isDeliveryNotePartialCashAndCredit = (d: WithId<DocumentType>) => {
+  if (d.docType !== "DELIVERY_NOTE" || d.paymentTerms !== "CREDIT") return false;
+  const sum = sumDocSuggestedPayments(d);
+  const ar = roundMoney(Math.max(0, (d.grandTotal || 0) - sum));
+  return sum > 0.01 && ar > 0.01;
+};
+
+/** ยอดแสดงใน Inbox: แยกเงินสด vs ยอดตั้งลูกหนี้ (ใบส่งของบางส่วน) */
+const inboxListAmountForDoc = (d: WithId<DocumentType>, tab: "receive" | "ar") => {
+  if (d.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(d)) {
+    if (tab === "receive" && !d.deliveryInboxCashConfirmed) {
+      return sumDocSuggestedPayments(d);
+    }
+    if (tab === "ar") {
+      const fromSummary = d.deliveryInboxCashConfirmed ? d.paymentSummary?.balance : undefined;
+      if (fromSummary != null && fromSummary > 0.01) return fromSummary;
+      return roundMoney(Math.max(0, (d.grandTotal || 0) - sumDocSuggestedPayments(d)));
+    }
+  }
+  return d.grandTotal ?? 0;
+};
+
 const docTypeThaiLabel = (docType?: string) => {
   if (docType === "TAX_INVOICE") return "ใบกำกับภาษี";
   if (docType === "DELIVERY_NOTE") return "ใบส่งของชั่วคราว";
@@ -209,14 +241,28 @@ function AccountingInboxPageContent() {
   }, [accountsQuery, db]);
 
   const filteredDocs = useMemo(() => {
-    let result = documents.filter(doc => {
+    let result = documents.filter((doc) => {
       if (activeTab === 'receive') {
         // ใบกำกับเงินสด: หลังบัญชียืนยันแล้วเป็น APPROVED → ไปขั้นตอนใบเสร็จ ไม่ให้ค้างในแท็บนี้
         if (doc.docType === 'TAX_INVOICE' && doc.status === 'APPROVED') return false;
-        return (doc.paymentTerms === 'CASH' || !doc.paymentTerms) && doc.docType !== 'RECEIPT';
+        if (doc.docType === 'RECEIPT') return false;
+        if (doc.docType === 'DELIVERY_NOTE' && isDeliveryNotePartialCashAndCredit(doc)) {
+          return !doc.deliveryInboxCashConfirmed;
+        }
+        return doc.paymentTerms === 'CASH' || !doc.paymentTerms;
       }
       if (activeTab === 'ar') {
-        return doc.paymentTerms === 'CREDIT' && doc.docType !== 'RECEIPT';
+        if (doc.docType === 'RECEIPT') return false;
+        if (doc.docType === 'DELIVERY_NOTE' && isDeliveryNotePartialCashAndCredit(doc)) {
+          if (doc.arObligationId) return false;
+          const arLeft = doc.deliveryInboxCashConfirmed
+            ? doc.paymentSummary != null
+              ? doc.paymentSummary.balance
+              : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)))
+            : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)));
+          return arLeft > 0.01;
+        }
+        return doc.paymentTerms === 'CREDIT';
       }
       if (activeTab === 'receipts') {
         return doc.docType === 'RECEIPT';
@@ -326,6 +372,58 @@ function AccountingInboxPageContent() {
                 throw new Error("ยอดรับเงินรวมเกินยอดบิล กรุณาตรวจสอบจำนวนเงิน");
             }
 
+            const isMixed = d.paymentTerms === 'CREDIT' && sumPaid > 0.01 && arBalance > 0.01;
+
+            if (isMixed) {
+                payLines.forEach((p, idx) => {
+                    const entryId = idx === 0 ? `AUTO_CASH_${d.id}` : `AUTO_CASH_${d.id}__${idx}`;
+                    const entryRef = doc(db, 'accountingEntries', entryId);
+                    transaction.set(
+                        entryRef,
+                        sanitizeForFirestore({
+                            entryType: 'CASH_IN',
+                            entryDate: payYmd,
+                            amount: p.amount,
+                            accountId: p.accountId,
+                            paymentMethod: p.method,
+                            categoryMain: 'งานซ่อม',
+                            categorySub: 'หน้าร้าน (CARS)',
+                            description: `รับเงินสด/โอนตามใบส่งของ: ${d.docNo} (${customerName})`,
+                            sourceDocType: 'DELIVERY_NOTE',
+                            sourceDocId: d.id,
+                            sourceDocNo: d.docNo,
+                            customerNameSnapshot: customerName,
+                            createdAt: serverTimestamp(),
+                        })
+                    );
+                });
+
+                transaction.update(docRef, {
+                    status: 'PARTIAL',
+                    arStatus: 'PARTIAL',
+                    paymentSummary: {
+                        paidTotal: sumPaid,
+                        balance: arBalance,
+                        paymentStatus: 'PARTIAL',
+                    },
+                    paymentDate: payYmd,
+                    updatedAt: serverTimestamp(),
+                    deliveryInboxCashConfirmed: true,
+                    deliveryInboxCashConfirmedAt: serverTimestamp(),
+                    accountingEntryId: `AUTO_CASH_${d.id}` as const,
+                    receivedAccountId: payLines[0]!.accountId,
+                });
+
+                if (jobId && jobSnap && jobSnap.exists()) {
+                    const activityRef = doc(collection(doc(db, 'jobs', jobId), 'activities'));
+                    transaction.set(activityRef, {
+                        text: `ฝ่ายบัญชียืนยันรับเงิน ฿${formatCurrency(sumPaid)} ตาม ${d.docNo} แล้ว — รอตั้งลูกหนี้ส่วนที่เหลือ (แท็บ รอตั้งลูกหนี้)`,
+                        userName: profile.displayName,
+                        userId: profile.uid,
+                        createdAt: serverTimestamp(),
+                    });
+                }
+            } else {
             payLines.forEach((p, idx) => {
                 const entryId = idx === 0 ? `AUTO_CASH_${d.id}` : `AUTO_CASH_${d.id}__${idx}`;
                 const entryRef = doc(db, 'accountingEntries', entryId);
@@ -432,6 +530,7 @@ function AccountingInboxPageContent() {
                     createdAt: serverTimestamp(),
                 });
             }
+            }
         } else {
             const arId = `AR_${confirmingDoc.id}`;
             const arRef = doc(db, 'accountingObligations', arId);
@@ -491,7 +590,11 @@ function AccountingInboxPageContent() {
               .reduce((s, p) => s + (p.amount || 0), 0)
           );
           const arLeft = roundMoney(Math.max(0, (confirmingDoc.grandTotal || 0) - paySum));
-          await callCloseJobFunction(jobId, arLeft > 0.01 ? 'UNPAID' : 'PAID');
+          const isMixed =
+            confirmingDoc.paymentTerms === "CREDIT" && paySum > 0.01 && arLeft > 0.01;
+          if (!isMixed) {
+            await callCloseJobFunction(jobId, arLeft > 0.01 ? "UNPAID" : "PAID");
+          }
       }
       
       setConfirmingDoc(null);
@@ -544,6 +647,8 @@ function AccountingInboxPageContent() {
     const isCreditNote = docObj.docType === 'CREDIT_NOTE';
     const arId = `AR_${docObj.id}`;
     const arRef = doc(db, 'accountingObligations', arId);
+
+    let postCloseArJob: string | null = null;
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -603,6 +708,76 @@ function AccountingInboxPageContent() {
         }
 
         if (d.docType === "DELIVERY_NOTE") {
+          const dW = { ...d, id: docObj.id } as WithId<DocumentType>;
+          if (d.arObligationId) {
+            throw new Error("เอกสารนี้ตั้งลูกหนี้แล้ว");
+          }
+          if (isDeliveryNotePartialCashAndCredit(dW) && !d.deliveryInboxCashConfirmed) {
+            throw new Error("กรุณาไปแท็บ รอตรวจสอบ (Cash/Mixed) ยืนยันรับเงินก่อน");
+          }
+
+          if (isDeliveryNotePartialCashAndCredit(dW) && d.deliveryInboxCashConfirmed) {
+            const arAmount =
+              d.paymentSummary != null
+                ? roundMoney(d.paymentSummary.balance)
+                : roundMoney(Math.max(0, (d.grandTotal || 0) - sumDocSuggestedPayments(d)));
+            if (arAmount <= 0.01) {
+              throw new Error("ไม่มียอดลูกหนี้คงค้าง หรืออาจลงรับรับรู้แล้ว กรุณารีเฟรช");
+            }
+            const dnArRef2 = doc(db, "accountingObligations", arId);
+            transaction.set(
+              dnArRef2,
+              sanitizeForFirestore({
+                id: arId,
+                type: "AR",
+                status: "UNPAID",
+                sourceDocType: "DELIVERY_NOTE",
+                sourceDocId: docObj.id,
+                sourceDocNo: d.docNo,
+                amountTotal: arAmount,
+                amountPaid: 0,
+                balance: arAmount,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                customerId: d.customerId || d.customerSnapshot?.id || null,
+                customerNameSnapshot: customerName,
+                jobId: d.jobId || null,
+                dueDate: d.dueDate || null,
+                docDate: d.docDate || null,
+              })
+            );
+            const sumPaid0 = sumDocSuggestedPayments(d);
+            transaction.update(docRef, {
+              arObligationId: arId,
+              arStatus: "PARTIAL",
+              status: "PARTIAL",
+              paymentSummary: {
+                paidTotal: sumPaid0,
+                balance: arAmount,
+                paymentStatus: "PARTIAL",
+              },
+              updatedAt: serverTimestamp(),
+            });
+
+            if (d.jobId) {
+              transaction.update(doc(db, "jobs", d.jobId), {
+                status: "CLOSED",
+                updatedAt: serverTimestamp(),
+                lastActivityAt: serverTimestamp(),
+              });
+              const actText = `ฝ่ายบัญชีตั้งลูกหนี้ ฿${formatCurrency(arAmount)} ส่วนที่ค้างชำระ ตาม ${d.docNo} แล้วปิดงาน (รับเงินลง cashbook ในรอบก่อน)`;
+              const activityRef2 = doc(collection(doc(db, "jobs", d.jobId), "activities"));
+              transaction.set(activityRef2, {
+                text: actText,
+                userName: profile.displayName,
+                userId: profile.uid,
+                createdAt: serverTimestamp(),
+              });
+              postCloseArJob = d.jobId;
+            }
+            return;
+          }
+
           const payLines = (d.suggestedPayments || [])
             .map((p) => {
               const m =
@@ -775,7 +950,9 @@ function AccountingInboxPageContent() {
         title: isCreditNote ? "อนุมัติใบลดหนี้สำเร็จ" : "ตั้งยอดลูกหนี้สำเร็จ",
         description: isCreditNote ? "แสดงในหน้าลูกหนี้และรวมในรอบวางบิลได้ (ยอดหักเป็นลบ)" : undefined,
       });
-      if (isDeliveryNote && docObj.jobId) {
+      if (postCloseArJob) {
+        await callCloseJobFunction(postCloseArJob, "UNPAID");
+      } else if (isDeliveryNote && docObj.jobId) {
         const paySum = roundMoney(
           (docObj.suggestedPayments || [])
             .filter((p) => p?.accountId && (p.amount || 0) > 0.01)
@@ -958,7 +1135,9 @@ function AccountingInboxPageContent() {
                         <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
                       </TableCell>
-                      <TableCell className="font-bold text-primary">{formatCurrency(docItem.grandTotal)}</TableCell>
+                      <TableCell className="font-bold text-primary">
+                        {formatCurrency(inboxListAmountForDoc(docItem, "receive"))}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           {closingJobId === docItem.jobId ? (
@@ -1025,8 +1204,17 @@ function AccountingInboxPageContent() {
                         <div className="font-medium">{docItem.docNo}</div>
                         <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
+                        {docItem.docType === "DELIVERY_NOTE" &&
+                          isDeliveryNotePartialCashAndCredit(docItem) &&
+                          !docItem.deliveryInboxCashConfirmed && (
+                            <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-amber-50 text-amber-900 border-amber-200">
+                              รอรับเงิน (Cash) ก่อน
+                            </Badge>
+                          )}
                       </TableCell>
-                      <TableCell className="font-bold text-amber-600">{formatCurrency(docItem.grandTotal)}</TableCell>
+                      <TableCell className="font-bold text-amber-600">
+                        {formatCurrency(inboxListAmountForDoc(docItem, "ar"))}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           {closingJobId === docItem.jobId ? (
@@ -1042,8 +1230,25 @@ function AccountingInboxPageContent() {
                                     <Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด
                                   </Link>
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => setArDocToConfirm(docItem)} disabled={isSubmitting} className="font-bold text-amber-600 focus:text-amber-600">
-                                  <HandCoins className="mr-2 h-4 w-4"/> {docItem.docType === 'CREDIT_NOTE' ? "อนุมัติและปรับยอดลูกหนี้" : "ยืนยันตั้งลูกหนี้"}
+                                <DropdownMenuItem
+                                  onSelect={() => setArDocToConfirm(docItem)}
+                                  disabled={
+                                    isSubmitting ||
+                                    (docItem.docType === "DELIVERY_NOTE" &&
+                                      isDeliveryNotePartialCashAndCredit(docItem) &&
+                                      !docItem.deliveryInboxCashConfirmed)
+                                  }
+                                  className="font-bold text-amber-600 focus:text-amber-600"
+                                  title={
+                                    docItem.docType === "DELIVERY_NOTE" &&
+                                    isDeliveryNotePartialCashAndCredit(docItem) &&
+                                    !docItem.deliveryInboxCashConfirmed
+                                      ? "ยืนยันรับเงินในแท็บ รอตรวจสอบ (Cash) ก่อน"
+                                      : undefined
+                                  }
+                                >
+                                  <HandCoins className="mr-2 h-4 w-4" />{" "}
+                                  {docItem.docType === "CREDIT_NOTE" ? "อนุมัติและปรับยอดลูกหนี้" : "ยืนยันตั้งลูกหนี้"}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onSelect={() => setDisputingDoc(docItem)} className="text-destructive focus:text-destructive">
                                   <Ban className="mr-2 h-4 w-4"/> ตีกลับให้แก้ไข
@@ -1191,9 +1396,13 @@ function AccountingInboxPageContent() {
           <DialogHeader className="p-6 pb-0">
             <DialogTitle>ตรวจสอบรายการขาย</DialogTitle>
             <DialogDescription>
-                {confirmingDoc?.docType === 'DELIVERY_NOTE' 
-                  ? "ยืนยันการรับเงินสด/โอน และปิดงานซ่อมทันที" 
-                  : "ตรวจสอบความถูกต้องของบิลก่อนส่งไปขั้นตอนออกใบเสร็จ"}
+                {confirmingDoc?.docType === "DELIVERY_NOTE" &&
+                isDeliveryNotePartialCashAndCredit(confirmingDoc) &&
+                !confirmingDoc.deliveryInboxCashConfirmed
+                  ? "ยืนยันรับเงินสด/โอน ส่วนนี้ (ส่วนลูกหนี้รออีกแท็บ) — ยังไม่ปิดงานจนกว่าจะตั้งลูกหนี้ครบ"
+                  : confirmingDoc?.docType === "DELIVERY_NOTE"
+                    ? "ยืนยันการรับเงินสด/โอน และปิดงานซ่อมทันที (เมื่อไม่มียอดเครดิตค้าง)"
+                    : "ตรวจสอบความถูกต้องของบิลก่อนส่งไปขั้นตอนออกใบเสร็จ"}
             </DialogDescription>
           </DialogHeader>
           
@@ -1208,9 +1417,19 @@ function AccountingInboxPageContent() {
           )}
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
-              <div className="p-4 bg-primary/5 rounded-lg border border-primary/20 text-center">
-                <p className="text-sm text-muted-foreground">ยอดเงินรวมบิล</p>
-                <p className="text-3xl font-black text-primary">฿{formatCurrency(confirmingDoc?.grandTotal ?? 0)}</p>
+              <div className="p-4 bg-primary/5 rounded-lg border border-primary/20 text-center space-y-1">
+                {confirmingDoc && isDeliveryNotePartialCashAndCredit(confirmingDoc) && !confirmingDoc.deliveryInboxCashConfirmed ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">ยอดรับ (เงินสด/โอน) ขั้นนี้ — ลง cashbook</p>
+                    <p className="text-3xl font-black text-primary">฿{formatCurrency(inboxListAmountForDoc(confirmingDoc, "receive"))}</p>
+                    <p className="text-xs text-muted-foreground">ยอดรวมบิล ฿{formatCurrency(confirmingDoc.grandTotal ?? 0)} (ส่วนลูกหนี้ ฿{formatCurrency(Math.max(0, (confirmingDoc.grandTotal ?? 0) - inboxListAmountForDoc(confirmingDoc, "receive")))} รอแท็บเครดิต)</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">ยอดเงินรวมบิล</p>
+                    <p className="text-3xl font-black text-primary">฿{formatCurrency(confirmingDoc?.grandTotal ?? 0)}</p>
+                  </>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -1261,7 +1480,11 @@ function AccountingInboxPageContent() {
                         <Info className="h-4 w-4 mt-0.5 shrink-0" />
                         <div className="space-y-1">
                             <p className="font-bold">ขั้นตอนการบันทึกบัญชี</p>
-                            {confirmingDoc?.docType === 'DELIVERY_NOTE' ? (
+                            {confirmingDoc?.docType === "DELIVERY_NOTE" &&
+                            isDeliveryNotePartialCashAndCredit(confirmingDoc) &&
+                            !confirmingDoc.deliveryInboxCashConfirmed ? (
+                                <p>เมื่อกดปุ่ม ระบบบันทึกรายรับ (cashbook) ตามยอดนี้เท่านั้น ยัง <b>ไม่ปิดงาน</b> — รอตั้งลูกหนี้ในแท็บเครดิตก่อนค่ะ</p>
+                            ) : confirmingDoc?.docType === "DELIVERY_NOTE" ? (
                                 <p>เมื่อกดปุ่มด้านล่าง ระบบจะบันทึกรายรับเข้าสมุดบัญชี ปรับสถานะบิลเป็น "รับเงินแล้ว" และ <b>ปิดงานซ่อมย้ายเข้าประวัติทันที</b> ค่ะ</p>
                             ) : (
                                 <>
@@ -1285,7 +1508,13 @@ function AccountingInboxPageContent() {
                 ) : (
                   <>
                     <CheckCircle className="mr-2 h-4 w-4" />
-                    {confirmingDoc?.docType === 'DELIVERY_NOTE' ? "ยืนยันรับเงินและปิดงาน" : "ยืนยันความถูกต้องของรายการ"}
+                    {confirmingDoc?.docType === "DELIVERY_NOTE" &&
+                    isDeliveryNotePartialCashAndCredit(confirmingDoc) &&
+                    !confirmingDoc.deliveryInboxCashConfirmed
+                      ? "ยืนยันรับเงิน (รอตั้งลูกหนี้แยก)"
+                      : confirmingDoc?.docType === "DELIVERY_NOTE"
+                        ? "ยืนยันรับเงินและปิดงาน"
+                        : "ยืนยันความถูกต้องของรายการ"}
                   </>
                 )}
             </Button>
@@ -1315,15 +1544,37 @@ function AccountingInboxPageContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>ยืนยันตั้งยอดลูกหนี้</AlertDialogTitle>
             <AlertDialogDescription>
-              {arDocToConfirm?.docType === 'CREDIT_NOTE'
+              {arDocToConfirm?.docType === "CREDIT_NOTE"
                 ? `ยืนยันการอนุมัติใบลดหนี้และหักยอดลูกหนี้จำนวน ${formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`
-                : `ยืนยันการตั้งยอดค้างชำระ (AR) จำนวน ${formatCurrency(arDocToConfirm?.grandTotal || 0)} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`}
-              {arDocToConfirm?.docType === 'DELIVERY_NOTE' && <p className="mt-2 font-bold text-primary">ระบบจะทำการปิดงานซ่อมนี้ให้ทันทีหลังจากตั้งลูกหนี้ค่ะ</p>}
+                : arDocToConfirm
+                  ? `ยืนยันการตั้งยอดค้างชำระ (AR) จำนวน ${formatCurrency(
+                      arDocToConfirm.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(arDocToConfirm)
+                        ? inboxListAmountForDoc(arDocToConfirm, "ar")
+                        : arDocToConfirm.grandTotal || 0
+                    )} บาท สำหรับลูกค้า ${arDocToConfirm?.customerSnapshot?.name}`
+                  : ""}
+              {arDocToConfirm?.docType === "DELIVERY_NOTE" && (
+                <p className="mt-2 font-bold text-primary">
+                  {arDocToConfirm.deliveryInboxCashConfirmed
+                    ? "รับเงินลง cashbook ไปแล้ว — รอบนี้เฉพาะตั้งลูกหนี้; จะปิดงานหลังยืนยัน"
+                    : "รายการนี้รอรับเงิน (Cash) ในอีกแท็บก่อน จึงจะกดยืนยันตั้งลูกหนี้ส่วนนี้ได้"}
+                </p>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={() => arDocToConfirm && handleCreateAR(arDocToConfirm)}>ตกลง ยืนยันข้อมูล</AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => arDocToConfirm && handleCreateAR(arDocToConfirm)}
+              disabled={
+                !!arDocToConfirm &&
+                arDocToConfirm.docType === "DELIVERY_NOTE" &&
+                isDeliveryNotePartialCashAndCredit(arDocToConfirm) &&
+                !arDocToConfirm.deliveryInboxCashConfirmed
+              }
+            >
+              ตกลง ยืนยันข้อมูล
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

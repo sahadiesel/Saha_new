@@ -531,6 +531,9 @@ export interface Document {
   // AR Fields
   paymentTerms?: 'CASH' | 'CREDIT';
   billingRequired?: boolean;
+  /** ใบส่งของ: ฝ่ายบัญชียืนยันรับเงินสด/โอน (แท็บรอตรวจสอบ) ก่อน — แยก flow กับตั้งลูกหนี้ (แท็บเครดิต) */
+  deliveryInboxCashConfirmed?: boolean;
+  deliveryInboxCashConfirmedAt?: Timestamp;
   arObligationId?: string;
   arStatus?: 'PENDING' | 'UNPAID' | 'PARTIAL' | 'PAID' | 'DISPUTED';
   receiptStatus?: 'ISSUED_NOT_CONFIRMED' | 'CONFIRMED';
