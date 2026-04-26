@@ -60,6 +60,11 @@ export default function PurchaseDocsListPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [monthFilter, setMonthFilter] = useState(() => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    return `${now.getFullYear()}-${month}`;
+  });
   const [docToDelete, setDocToDelete] = useState<WithId<PurchaseDoc> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -81,8 +86,22 @@ export default function PurchaseDocsListPage() {
     return () => unsubscribe();
   }, [db, toast]);
 
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    docs.forEach((d) => {
+      if (typeof d.docDate === "string" && d.docDate.length >= 7) {
+        months.add(d.docDate.slice(0, 7));
+      }
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [docs]);
+
   const filteredDocs = useMemo(() => {
     let result = [...docs];
+
+    if (monthFilter !== "ALL") {
+      result = result.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
+    }
 
     if (statusFilter !== "ALL") {
       result = result.filter(doc => doc.status === statusFilter);
@@ -99,7 +118,19 @@ export default function PurchaseDocsListPage() {
     }
     
     return result;
-  }, [docs, searchTerm, statusFilter]);
+  }, [docs, searchTerm, statusFilter, monthFilter]);
+
+  const totals = useMemo(() => {
+    return filteredDocs.reduce(
+      (acc, d) => {
+        acc.net += d.net ?? 0;
+        acc.vat += d.withTax ? (d.vatAmount ?? 0) : 0;
+        acc.grand += d.grandTotal ?? 0;
+        return acc;
+      },
+      { net: 0, vat: 0, grand: 0 }
+    );
+  }, [filteredDocs]);
 
   const handleDelete = async () => {
     if (!db || !docToDelete) return;
@@ -126,6 +157,20 @@ export default function PurchaseDocsListPage() {
 
       <Card>
         <CardContent className="pt-6 space-y-4">
+          <div className="flex justify-end gap-2">
+            <div className="rounded-md border bg-background px-4 py-2 min-w-[160px] text-right">
+              <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี</div>
+              <div className="text-sm font-bold">{formatCurrency(totals.net)}</div>
+            </div>
+            <div className="rounded-md border bg-background px-4 py-2 min-w-[120px] text-right">
+              <div className="text-[11px] text-muted-foreground">ภาษี</div>
+              <div className="text-sm font-bold">{formatCurrency(totals.vat)}</div>
+            </div>
+            <div className="rounded-md border bg-background px-4 py-2 min-w-[160px] text-right">
+              <div className="text-[11px] text-muted-foreground">ยอดรวม</div>
+              <div className="text-sm font-bold">{formatCurrency(totals.grand)}</div>
+            </div>
+          </div>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -136,6 +181,20 @@ export default function PurchaseDocsListPage() {
                 className="pl-10"
               />
             </div>
+            <Select value={monthFilter} onValueChange={setMonthFilter}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <SelectValue placeholder="เดือน..." />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                {availableMonths.map((m) => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-full sm:w-[200px]">
                 <div className="flex items-center gap-2">
@@ -165,13 +224,15 @@ export default function PurchaseDocsListPage() {
                   <TableHead>ร้านค้า</TableHead>
                   <TableHead>เลขที่บิล</TableHead>
                   <TableHead>สถานะ</TableHead>
+                  <TableHead className="text-right">ยอดก่อนภาษี</TableHead>
+                  <TableHead className="text-right">ภาษี</TableHead>
                   <TableHead className="text-right">ยอดรวม</TableHead>
                   <TableHead className="text-right">จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="mx-auto animate-spin" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="h-24 text-center"><Loader2 className="mx-auto animate-spin" /></TableCell></TableRow>
                 ) : filteredDocs.length > 0 ? (
                   filteredDocs.map(purchaseDoc => {
                     const statusInfo = getStatusDisplay(purchaseDoc.status);
@@ -198,6 +259,8 @@ export default function PurchaseDocsListPage() {
                             )}
                           </Tooltip>
                         </TableCell>
+                        <TableCell className="text-right">{formatCurrency(purchaseDoc.net)}</TableCell>
+                        <TableCell className="text-right">{purchaseDoc.withTax && purchaseDoc.vatAmount > 0 ? formatCurrency(purchaseDoc.vatAmount) : ""}</TableCell>
                         <TableCell className="text-right">{formatCurrency(purchaseDoc.grandTotal)}</TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
@@ -230,7 +293,7 @@ export default function PurchaseDocsListPage() {
                     )
                   })
                 ) : (
-                  <TableRow><TableCell colSpan={7} className="h-24 text-center">ไม่พบเอกสารจัดซื้อ</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="h-24 text-center">ไม่พบเอกสารจัดซื้อ</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>

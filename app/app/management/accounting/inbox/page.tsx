@@ -723,6 +723,13 @@ function AccountingInboxPageContent() {
             throw new Error("กรุณาไปแท็บ รอตรวจสอบ (Cash/Mixed) ยืนยันรับเงินก่อน");
           }
 
+          // Firestore บังคับ: อ่านทุก ref ก่อน — ห้าม get(job) หลัง set/update
+          let jobSnapForDn: Awaited<ReturnType<typeof transaction.get>> | null = null;
+          if (d.jobId) {
+            const jobRefPre = doc(db, "jobs", d.jobId);
+            jobSnapForDn = await transaction.get(jobRefPre);
+          }
+
           if (isDeliveryNotePartialCashAndCredit(dW) && d.deliveryInboxCashConfirmed) {
             const arAmount =
               d.paymentSummary != null
@@ -767,9 +774,8 @@ function AccountingInboxPageContent() {
             });
 
             if (d.jobId) {
-              const jobRef2 = doc(db, "jobs", d.jobId);
-              const jobSnap2 = await transaction.get(jobRef2);
-              if (jobSnap2.exists()) {
+              if (jobSnapForDn?.exists()) {
+                const jobRef2 = doc(db, "jobs", d.jobId);
                 transaction.update(jobRef2, {
                   status: "CLOSED",
                   updatedAt: serverTimestamp(),
@@ -837,8 +843,7 @@ function AccountingInboxPageContent() {
 
           if (d.jobId) {
             const jobRefDn = doc(db, "jobs", d.jobId);
-            const jobSnapDn = await transaction.get(jobRefDn);
-            if (jobSnapDn.exists()) {
+            if (jobSnapForDn?.exists()) {
               transaction.update(jobRefDn, {
                 status: "CLOSED",
                 updatedAt: serverTimestamp(),

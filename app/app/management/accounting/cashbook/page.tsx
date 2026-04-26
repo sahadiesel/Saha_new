@@ -102,6 +102,11 @@ const formatCurrency = (value: number) => {
   });
 };
 
+const isInterAccountTransfer = (entry: WithId<AccountingEntry>) => {
+  // รายการโอนระหว่างบัญชีจะถูกสร้างเป็นคู่ และผูกกันด้วย transferRefId
+  return Boolean(entry.transferRefId);
+};
+
 export default function CashbookPage() {
   const { db } = useFirebase();
   const { profile, loading: authLoading } = useAuth();
@@ -207,9 +212,11 @@ export default function CashbookPage() {
 
   const summary = useMemo(() => {
     const income = entries
+      .filter(e => !isInterAccountTransfer(e))
       .filter(e => e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN')
       .reduce((sum, e) => sum + e.amount, 0);
     const expense = entries
+      .filter(e => !isInterAccountTransfer(e))
       .filter(e => e.entryType === 'CASH_OUT')
       .reduce((sum, e) => sum + e.amount, 0);
     return { income, expense, net: income - expense };

@@ -45,10 +45,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, Receipt, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator, Trash2 } from "lucide-react";
+import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, MoreHorizontal, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -424,7 +424,7 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
     return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
-function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (total: number, count: number) => void; isAdmin?: boolean }) {
+function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (net: number, vat: number, grand: number, count: number) => void; isAdmin?: boolean }) {
     const { db } = useFirebase();
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
@@ -438,6 +438,9 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
           customerId?: string;
           customerNameFromDoc?: string;
           customerTaxNameFromDoc?: string;
+          netAmount?: number;
+          vatAmount?: number;
+          grandTotal?: number;
         }
       >
     >({});
@@ -672,26 +675,35 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     }, [obligationsQuery, type]);
 
     useEffect(() => {
-        if (type !== 'AR' || obligations.length === 0 || !db) return;
-        const arSourceDocIds = Array.from(new Set(obligations.map(ob => ob.sourceDocId).filter(Boolean)));
-        const unsubscribes = arSourceDocIds.map(docId => onSnapshot(doc(db, 'documents', docId!), (docSnap) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data();
+        if (obligations.length === 0 || !db) return;
+        const sourceIds = Array.from(new Set(obligations.map(ob => ob.sourceDocId).filter(Boolean)));
+        const unsubscribes = sourceIds.map((sourceId) => {
+            const ob = obligations.find((x) => x.sourceDocId === sourceId);
+            const sourceCol = ob?.sourceDocType === "PURCHASE" ? "purchaseDocs" : "documents";
+            return onSnapshot(doc(db, sourceCol, sourceId!), (docSnap) => {
+                if (!docSnap.exists()) return;
+                const data = docSnap.data() as Record<string, any>;
                 const snap = data.customerSnapshot as { name?: string; taxName?: string } | undefined;
+                const grandTotal = Number(data.grandTotal ?? ob?.amountTotal ?? 0);
+                const vatAmount = Number(data.vatAmount ?? 0);
+                const netAmount = Number(data.net ?? data.subtotal ?? Math.max(0, grandTotal - vatAmount));
                 setDocDetails((prev) => ({
                   ...prev,
-                  [docId!]: {
+                  [sourceId!]: {
                     receiptStatus: data.receiptStatus || "NONE",
                     billingNoteNo: data.billingNoteNo,
                     customerId: data.customerId || data.customerSnapshot?.id,
                     customerNameFromDoc: snap?.name,
                     customerTaxNameFromDoc: snap?.taxName,
+                    netAmount,
+                    vatAmount,
+                    grandTotal,
                   },
                 }));
-            }
-        }, () => {}));
-        return () => unsubscribes.forEach(unsub => unsub());
-    }, [obligations, type, db]);
+            }, () => {});
+        });
+        return () => unsubscribes.forEach((unsub) => unsub());
+    }, [obligations, db]);
 
     const filteredObligations = useMemo(() => {
         let result = [...obligations];
@@ -729,16 +741,28 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     }, [obligations, searchTerm, monthFilter, docDetails, type]);
 
     useEffect(() => {
-        const total = filteredObligations.reduce((sum, ob) => sum + (ob.balance || 0), 0);
-        onSummaryChange(total, filteredObligations.length);
-    }, [filteredObligations, onSummaryChange]);
+        const totals = filteredObligations.reduce(
+          (acc, ob) => {
+            const det = docDetails[ob.sourceDocId || ""];
+            const grand = Number(det?.grandTotal ?? ob.amountTotal ?? 0);
+            const vat = Number(det?.vatAmount ?? 0);
+            const net = Number(det?.netAmount ?? Math.max(0, grand - vat));
+            acc.net += net;
+            acc.vat += vat;
+            acc.grand += grand;
+            return acc;
+          },
+          { net: 0, vat: 0, grand: 0 }
+        );
+        onSummaryChange(totals.net, totals.vat, totals.grand, filteredObligations.length);
+    }, [filteredObligations, docDetails, onSummaryChange]);
 
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
 
     return (
         <>
-            <div className="border rounded-md overflow-x-auto">
-                <Table><TableHeader><TableRow className="bg-muted/50"><TableHead>Bill Date</TableHead><TableHead>Due Date</TableHead><TableHead>{type === 'AR' ? 'Doc No.' : 'Invoice No.'}</TableHead><TableHead>{type === 'AR' ? 'Customer' : 'Vendor'}</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+            <div className="border rounded-md overflow-hidden">
+                <Table className="w-full table-fixed"><TableHeader><TableRow><TableHead className="w-[10%] whitespace-nowrap">วันที่</TableHead><TableHead className="w-[14%] whitespace-nowrap">{type === 'AR' ? 'เลขที่เอกสาร' : 'เลขที่บิล'}</TableHead><TableHead className="w-[18%]">{type === 'AR' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดก่อนภาษี</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ภาษี</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดรวม</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ชำระแล้ว</TableHead><TableHead className="w-[12%] whitespace-nowrap text-right">ยอดคงค้าง</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">จัดการ</TableHead></TableRow></TableHeader>
                     <TableBody>{filteredObligations.length > 0 ? filteredObligations.map(ob => {
                             const details = docDetails[ob.sourceDocId || ''];
                             const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
@@ -761,10 +785,9 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                             })();
                             return (
                               <TableRow key={ob.id} className="hover:bg-muted/30">
-                                <TableCell className="text-xs">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
-                                <TableCell className="text-xs">{ob.dueDate ? safeFormat(parseISO(ob.dueDate), APP_DATE_FORMAT) : '-'}</TableCell>
+                                <TableCell className="text-xs whitespace-nowrap">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
                                 <TableCell>
-                                  <div className="font-medium">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
+                                  <div className="font-medium whitespace-nowrap">{type === 'AR' ? ob.sourceDocNo : (ob.invoiceNo || ob.sourceDocNo)}</div>
                                   {type === "AR" && ob.sourceDocType === "CREDIT_NOTE" && (
                                     <Badge variant="outline" className="text-[9px] h-4 mt-1 border-rose-200 text-rose-800 bg-rose-50">
                                       ใบลดหนี้ (หักยอดเก็บ)
@@ -781,111 +804,67 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                     </Badge>
                                   )}
                                 </TableCell>
-                                <TableCell className="text-sm">
+                                <TableCell className="text-sm truncate" title={type === 'AR'
+                                    ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
+                                    : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}>
                                   {type === 'AR'
                                     ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
                                     : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}
                                 </TableCell>
-                                <TableCell className="text-right text-xs">{formatCurrency(ob.amountTotal)}</TableCell>
-                                <TableCell className="text-right text-xs text-green-600">{formatCurrency(ob.amountPaid)}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.netAmount ?? Math.max(0, (details?.grandTotal ?? ob.amountTotal ?? 0) - (details?.vatAmount ?? 0))))}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{(details?.vatAmount ?? 0) > 0 ? formatCurrency(details?.vatAmount) : ""}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.grandTotal ?? ob.amountTotal ?? 0))}</TableCell>
+                                <TableCell className="text-right text-xs text-green-600 whitespace-nowrap">{formatCurrency(ob.amountPaid)}</TableCell>
                                 <TableCell
                                   className={cn(
-                                    "text-right font-bold",
+                                    "text-right font-bold whitespace-nowrap",
                                     type === "AR" && (ob.balance ?? 0) < 0 && "text-rose-700"
                                   )}
                                 >
                                   {formatCurrency(ob.balance)}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  <TooltipProvider delayDuration={300}>
-                                    <div className="flex justify-end gap-1 flex-wrap">
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" aria-label="จัดการ">
+                                        <MoreHorizontal className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
                                       {canIssueReceipt && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="inline-flex">
-                                              <Button
-                                                size="icon"
-                                                variant={isReceiptIssued ? "secondary" : "default"}
-                                                className={cn("h-9 w-9 shrink-0", !isReceiptIssued && "bg-green-600 hover:bg-green-700")}
-                                                disabled={isReceiptIssued}
-                                                onClick={() => router.push(receiptHref)}
-                                                aria-label="ออกใบเสร็จ"
-                                              >
-                                                <Receipt className="h-4 w-4" />
-                                              </Button>
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent>
-                                            {isReceiptIssued
-                                              ? `ออกใบเสร็จไปแล้ว (${details?.receiptStatus})`
-                                              : "ออกใบเสร็จ"}
-                                          </TooltipContent>
-                                        </Tooltip>
+                                        <DropdownMenuItem
+                                          disabled={isReceiptIssued}
+                                          onSelect={() => router.push(receiptHref)}
+                                        >
+                                          {isReceiptIssued ? `ออกใบเสร็จแล้ว (${details?.receiptStatus})` : "ออกใบเสร็จ"}
+                                        </DropdownMenuItem>
                                       )}
                                       {type === "AR" ? (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="inline-flex">
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-9 w-9 shrink-0"
-                                                disabled={arReceiveDisabled}
-                                                onClick={() => setPayingAR(ob)}
-                                                aria-label="รับชำระ"
-                                              >
-                                                <HandCoins className="h-4 w-4" />
-                                              </Button>
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent>
-                                            {ob.sourceDocType === "CREDIT_NOTE"
-                                              ? "ใบลดหนี้หักยอดเก็บ — ไม่ใช้ปุ่มรับเงินที่นี่"
-                                              : requireReceiptBeforeReceive && !isReceiptIssued
-                                              ? "เอกสารขายที่ต้องมีใบเสร็จ (ใบกำกับภาษี/ใบเพิ่มหนี้): ต้องออกใบเสร็จก่อน จึงจะบันทึกรับเงินจริงได้"
-                                              : (ob.balance ?? 0) <= 0.009
-                                              ? "ไม่มียอดค้างรับ"
-                                              : "รับ"}
-                                          </TooltipContent>
-                                        </Tooltip>
+                                        <DropdownMenuItem
+                                          disabled={arReceiveDisabled}
+                                          onSelect={() => setPayingAR(ob)}
+                                        >
+                                          รับชำระ
+                                        </DropdownMenuItem>
                                       ) : (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Button
-                                              size="icon"
-                                              variant="outline"
-                                              className="h-9 w-9 shrink-0"
-                                              onClick={() => setPayingAP(ob)}
-                                              aria-label="จ่ายบิล"
-                                            >
-                                              <HandCoins className="h-4 w-4" />
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>จ่ายบิล</TooltipContent>
-                                        </Tooltip>
+                                        <DropdownMenuItem onSelect={() => setPayingAP(ob)}>
+                                          จ่ายบิล
+                                        </DropdownMenuItem>
                                       )}
                                       {isAdmin && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Button
-                                              size="icon"
-                                              variant="outline"
-                                              className="h-9 w-9 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                              onClick={() => setObToDelete(ob)}
-                                              aria-label="ลบรายการ"
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>ลบรายการ</TooltipContent>
-                                        </Tooltip>
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onSelect={() => setObToDelete(ob)}
+                                        >
+                                          ลบรายการ
+                                        </DropdownMenuItem>
                                       )}
-                                    </div>
-                                  </TooltipProvider>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </TableCell>
                               </TableRow>
                             );
-                        }) : (<TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ค้างชำระ</TableCell></TableRow>)}
+                        }) : (<TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ค้างชำระ</TableCell></TableRow>)}
                     </TableBody>
                 </Table>
             </div>
@@ -927,11 +906,14 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
     const defaultTab = searchParams.get('tab') === 'creditors' ? 'creditors' : 'debtors';
     const [activeTab, setActiveTab] = useState(defaultTab);
     const [searchTerm, setSearchTerm] = useState("");
-    const [monthFilter, setMonthFilter] = useState<string>("ALL");
+    const [monthFilter, setMonthFilter] = useState<string>(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    });
     const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
     const [vendors, setVendors] = useState<WithId<Vendor>[]>([]);
     const [isAddingCreditor, setIsAddingCreditor] = useState(false);
-    const [summary, setSummary] = useState({ total: 0, count: 0 });
+    const [summary, setSummary] = useState({ net: 0, vat: 0, grand: 0, count: 0 });
     const { db } = useFirebase();
 
     useEffect(() => {
@@ -951,33 +933,41 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         return () => { unsubAccounts(); unsubVendors(); };
     }, [db]);
 
-    const handleSummaryChange = useCallback((total: number, count: number) => {
+    const handleSummaryChange = useCallback((net: number, vat: number, grand: number, count: number) => {
         setSummary(prev => {
-            if (prev.total === total && prev.count === count) return prev;
-            return { total, count };
+            if (prev.net === net && prev.vat === vat && prev.grand === grand && prev.count === count) return prev;
+            return { net, vat, grand, count };
         });
     }, []);
 
-    useEffect(() => { setSummary({ total: 0, count: 0 }); }, [activeTab]);
+    useEffect(() => { setSummary({ net: 0, vat: 0, grand: 0, count: 0 }); }, [activeTab]);
 
     const monthOptions = useMemo(() => {
-        const options = [{ value: 'ALL', label: 'ทุกเดือน' }];
+        const options = [{ value: "ALL", label: "ทุกเดือน" }];
         const now = new Date();
-        const year = now.getFullYear();
-        const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
-        for (let i = 0; i < 12; i++) { options.push({ value: `${year}-${String(i + 1).padStart(2, '0')}`, label: `${months[i]} ${year}` }); }
-        const prevYear = year - 1;
-        for (let i = 11; i >= 0; i--) { options.push({ value: `${prevYear}-${String(i + 1).padStart(2, '0')}`, label: `${months[i]} ${prevYear}` }); }
+        for (let i = 0; i < 24; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            options.push({ value: m, label: m });
+        }
         return options;
     }, []);
 
     return (
         <>
         <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้">
-            <div className="bg-primary/5 border border-primary/20 rounded-xl px-6 py-2 flex items-center gap-4 shadow-sm animate-in fade-in zoom-in-95 duration-500">
-                <div className="flex flex-col items-end">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">ยอดเงินค้างรวม ({summary.count} รายการ)</span>
-                    <span className="text-xl font-black text-primary leading-none">฿{formatCurrency(summary.total)}</span>
+            <div className="flex justify-end gap-2">
+                <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                    <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี ({summary.count} รายการ)</div>
+                    <div className="text-sm font-bold">{formatCurrency(summary.net)}</div>
+                </div>
+                <div className="rounded-md border bg-background px-4 py-2 min-w-[140px] text-right">
+                    <div className="text-[11px] text-muted-foreground">ภาษี</div>
+                    <div className="text-sm font-bold">{formatCurrency(summary.vat)}</div>
+                </div>
+                <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                    <div className="text-[11px] text-muted-foreground">ยอดรวม</div>
+                    <div className="text-sm font-bold">{formatCurrency(summary.grand)}</div>
                 </div>
             </div>
         </PageHeader>
@@ -986,7 +976,21 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
                 <TabsList><TabsTrigger value="debtors">ลูกหนี้ (Debtors)</TabsTrigger><TabsTrigger value="creditors">เจ้าหนี้ (Creditors)</TabsTrigger></TabsList>
                 <div className="flex flex-wrap w-full md:w-auto items-center gap-2">
                     {activeTab === 'creditors' && (<Button onClick={() => setIsAddingCreditor(true)}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มเจ้าหนี้</Button>)}
-                    <Select value={monthFilter} onValueChange={setMonthFilter}><SelectTrigger className="w-full sm:w-[180px] bg-background"><div className="flex items-center gap-2"><Filter className="h-4 w-4 text-muted-foreground"/><SelectValue placeholder="กรองตามเดือนบิล"/></div></SelectTrigger><SelectContent>{monthOptions.map(opt => (<SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>))}</SelectContent></Select>
+                    <div className="w-full md:w-40">
+                      <Select value={monthFilter} onValueChange={setMonthFilter}>
+                        <SelectTrigger className="bg-background">
+                          <div className="flex items-center gap-2">
+                            <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                            <SelectValue placeholder="เดือน..." />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {monthOptions.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="w-full md:w-64 relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input placeholder="ค้นหาชื่อ, เลขที่บิล..." className="pl-10" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/></div>
                 </div>
             </div>

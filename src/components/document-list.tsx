@@ -86,6 +86,12 @@ export function DocumentList({
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [prefixFilter, setPrefixFilter] = useState("ALL");
+  const [monthFilter, setMonthFilter] = useState(() => {
+    if (docType !== "TAX_INVOICE" && docType !== "DELIVERY_NOTE" && docType !== "RECEIPT") return "ALL";
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    return `${now.getFullYear()}-${month}`;
+  });
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   
   const [docToAction, setDocToAction] = useState<Document | null>(null);
@@ -103,6 +109,7 @@ export function DocumentList({
   const [billingSelected, setBillingSelected] = useState<Record<string, boolean>>({});
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
+  const hideSummaryForOfficeStaff = baseContext === "office" && profile?.department === "OFFICE" && !isUserAdmin;
 
   const canManageDocs = (isUserAdmin || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT') && 
                         profile?.department !== 'PURCHASING';
@@ -139,9 +146,21 @@ export function DocumentList({
         base = [...base.slice(0, i + 1), "OFFERED", ...base.slice(i + 1)];
       }
     }
-    if (docType === 'DELIVERY_NOTE') return base.filter(s => s !== "APPROVED");
+    if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");
+    if (docType === "RECEIPT") {
+      const available = new Set(allDocuments.map((d) => getDocDisplayStatus(d).key));
+      const ordered = base.filter((s) => s !== "ALL" && available.has(s));
+      const extra = Array.from(available).filter((s) => !base.includes(s)).sort();
+      return ["ALL", ...ordered, ...extra];
+    }
     return base;
-  }, [docType]);
+  }, [docType, allDocuments]);
+
+  useEffect(() => {
+    if (!uniqueStatuses.includes(statusFilter)) {
+      setStatusFilter("ALL");
+    }
+  }, [uniqueStatuses, statusFilter]);
 
   const availablePrefixes = useMemo(() => {
     const prefixes = new Set<string>();
@@ -150,6 +169,16 @@ export function DocumentList({
       if (match) prefixes.add(match[0]);
     });
     return Array.from(prefixes).sort();
+  }, [allDocuments]);
+
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    allDocuments.forEach((d) => {
+      if (typeof d.docDate === "string" && d.docDate.length >= 7) {
+        months.add(d.docDate.slice(0, 7));
+      }
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [allDocuments]);
 
   const stableQuery = useMemo(() => {
@@ -186,6 +215,7 @@ export function DocumentList({
   const processedDocuments = useMemo(() => {
     let filtered = [...allDocuments];
     if (prefixFilter !== "ALL") filtered = filtered.filter(doc => doc.docNo.startsWith(prefixFilter));
+    if (monthFilter !== "ALL") filtered = filtered.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
     if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
@@ -205,12 +235,32 @@ export function DocumentList({
       });
     }
     return filtered;
-  }, [allDocuments, searchTerm, statusFilter, prefixFilter]);
+  }, [allDocuments, searchTerm, statusFilter, prefixFilter, monthFilter]);
+
+  const taxInvoiceTotals = useMemo(() => {
+    if (docType !== "TAX_INVOICE" && docType !== "RECEIPT") return null;
+    return processedDocuments.reduce(
+      (acc, d) => {
+        const net = d.net ?? Math.max(0, (d.grandTotal || 0) - (d.vatAmount || 0));
+        const vat = d.vatAmount || 0;
+        acc.net += net;
+        acc.vat += vat;
+        acc.grand += d.grandTotal || 0;
+        return acc;
+      },
+      { net: 0, vat: 0, grand: 0 }
+    );
+  }, [processedDocuments, docType]);
+
+  const deliveryNoteTotal = useMemo(() => {
+    if (docType !== "DELIVERY_NOTE") return null;
+    return processedDocuments.reduce((sum, d) => sum + (d.grandTotal || 0), 0);
+  }, [processedDocuments, docType]);
   
   const paginatedDocuments = useMemo(() => processedDocuments.slice(currentPage * limitProp, (currentPage + 1) * limitProp), [processedDocuments, currentPage, limitProp]);
   const totalPages = Math.max(1, Math.ceil(processedDocuments.length / limitProp));
   
-  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter]);
+  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter]);
 
   /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
   const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
@@ -392,12 +442,51 @@ export function DocumentList({
               <Button asChild variant="outline" size="sm" className="mt-2"><a href={indexErrorUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="mr-2 h-4 w-4" /> สร้าง Index</a></Button>
             </Alert>
           )}
+          {(docType === "TAX_INVOICE" || docType === "RECEIPT") && taxInvoiceTotals && !hideSummaryForOfficeStaff && (
+            <div className="flex justify-end gap-2">
+              <div className="rounded-md border bg-background px-4 py-2 min-w-[160px] text-right">
+                <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี</div>
+                <div className="text-sm font-bold">{taxInvoiceTotals.net.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</div>
+              </div>
+              <div className="rounded-md border bg-background px-4 py-2 min-w-[120px] text-right">
+                <div className="text-[11px] text-muted-foreground">ภาษี</div>
+                <div className="text-sm font-bold">{taxInvoiceTotals.vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</div>
+              </div>
+              <div className="rounded-md border bg-background px-4 py-2 min-w-[160px] text-right">
+                <div className="text-[11px] text-muted-foreground">ยอดสุทธิ</div>
+                <div className="text-sm font-bold">{taxInvoiceTotals.grand.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+          )}
+          {docType === "DELIVERY_NOTE" && deliveryNoteTotal != null && !hideSummaryForOfficeStaff && (
+            <div className="flex justify-end gap-2">
+              <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                <div className="text-[11px] text-muted-foreground">ยอดรวม</div>
+                <div className="text-sm font-bold">{deliveryNoteTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col md:flex-row gap-3">
             <div className="w-full md:w-48"><Select value={prefixFilter} onValueChange={setPrefixFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Hash className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="Prefix..." /></div></SelectTrigger><SelectContent><SelectItem value="ALL">ทุก Prefix</SelectItem>{availablePrefixes.map(p => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent></Select></div>
+            {(docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE" || docType === "RECEIPT") && (
+              <div className="w-full md:w-40">
+                <Select value={monthFilter} onValueChange={setMonthFilter}>
+                  <SelectTrigger className="bg-background">
+                    <div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="เดือน..." /></div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                    {availableMonths.map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input placeholder={docType === "TAX_INVOICE" ? "ค้นหาเลขบิล, ชื่อผู้ติดต่อ, ชื่อบนใบกำกับ, เบอร์โทร..." : "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล..."} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 bg-background" /></div>
             <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
-          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">ยอดสุทธิ</TableHead><TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
+          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office') ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}` : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
@@ -410,7 +499,7 @@ export function DocumentList({
                       docItem.docType === "TAX_INVOICE" &&
                       taxInvoiceName &&
                       taxInvoiceName !== (docItem.customerSnapshot?.name || "").trim();
-                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell><TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'QUOTATION' && docItem.status === 'DRAFT' && canManageDocs && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); void handleMarkQuotationOffered(docItem); }}><Send className="mr-2 h-4 w-4"/> เสนอราคาลูกค้าแล้ว</DropdownMenuItem>)}{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
+                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableCell className="text-right font-bold">{(docItem.net ?? Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0))).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.vatAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell></>) : <TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>}<TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'QUOTATION' && docItem.status === 'DRAFT' && canManageDocs && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); void handleMarkQuotationOffered(docItem); }}><Send className="mr-2 h-4 w-4"/> เสนอราคาลูกค้าแล้ว</DropdownMenuItem>)}{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={docType === "TAX_INVOICE" || docType === "RECEIPT" ? 8 : 6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
         </CardContent>
         {totalPages > 1 && (<CardFooter className="justify-between"><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>

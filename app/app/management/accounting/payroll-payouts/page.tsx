@@ -18,7 +18,7 @@ import {
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { addMonths, subMonths, format as dfFormat, parseISO, startOfMonth } from "date-fns";
+import { format as dfFormat, parseISO } from "date-fns";
 import * as z from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,7 +27,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, ChevronLeft, ChevronRight, HandCoins, AlertCircle, ExternalLink, CheckCircle2, CalendarDays } from "lucide-react";
+import { Loader2, HandCoins, AlertCircle, ExternalLink, CheckCircle2, CalendarDays, Filter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -193,13 +193,23 @@ export default function PayrollPayoutsPage() {
   const { profile } = useAuth();
   const { toast } = useToast();
 
-  const [currentMonth, setCurrentMonth] = useState<Date | null>(null);
-  const [period, setPeriod] = useState<1 | 2 | null>(null);
+  const [monthFilter, setMonthFilter] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [period, setPeriod] = useState<"1" | "2" | "ALL">(() => {
+    const day = new Date().getDate();
+    return day <= 15 ? "1" : "2";
+  });
 
-  useEffect(() => {
-    const today = new Date();
-    setCurrentMonth(startOfMonth(today));
-    setPeriod(today.getDate() <= 15 ? 1 : 2);
+  const monthOptions = useMemo(() => {
+    const now = new Date();
+    const months: string[] = [];
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    return months;
   }, []);
 
   const [payslips, setPayslips] = useState<WithId<PayslipNew>[]>([]);
@@ -210,22 +220,23 @@ export default function PayrollPayoutsPage() {
   const [payingPayslip, setPayingPayslip] = useState<WithId<PayslipNew> | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  const hasPermission = useMemo(() => profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'MANAGEMENT', [profile]);
+  const hasPermission = useMemo(() => 
+    profile?.role === 'ADMIN' || 
+    profile?.role === 'MANAGER' || 
+    profile?.department === 'MANAGEMENT' ||
+    profile?.department === 'ACCOUNTING_HR'
+  , [profile]);
 
   useEffect(() => {
-    if (!db || !hasPermission || !currentMonth || !period) {
+    if (!db || !hasPermission || !monthFilter) {
       if (!db || !hasPermission) setLoading(false);
       return;
     }
     
     setLoading(true);
     setIndexErrorUrl(null);
-    const payrollBatchId = `${dfFormat(currentMonth, 'yyyy-MM')}-${period}`;
-    
-    const payslipsQuery = query(
-      collection(db, "payrollBatches", payrollBatchId, "payslips"),
-      where("status", "in", ["READY_TO_PAY", "PAID"])
-    );
+    const periods = period === "ALL" ? [1, 2] : [Number(period)];
+    const periodData = new Map<number, WithId<PayslipNew>[]>();
     
     const accountsQuery = query(
       collection(db, "accountingAccounts"),
@@ -233,20 +244,39 @@ export default function PayrollPayoutsPage() {
       orderBy("name", "asc")
     );
 
-    const unsubPayslips = onSnapshot(payslipsQuery, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as WithId<PayslipNew>));
-      data.sort((a, b) => {
-          if (a.status === b.status) return a.userName.localeCompare(b.userName, 'th');
-          return a.status === 'READY_TO_PAY' ? -1 : 1;
+    const buildAndSetPayslips = () => {
+      const merged = Array.from(periodData.values()).flat();
+      merged.sort((a, b) => {
+        if (a.status === b.status) return a.userName.localeCompare(b.userName, "th");
+        return a.status === "READY_TO_PAY" ? -1 : 1;
       });
-      setPayslips(data);
+      setPayslips(merged);
       setLoading(false);
-    }, (err) => {
-      setPayslips([]);
-      setLoading(false);
-      if(err.code !== 'not-found') {
-        toast({ variant: 'destructive', title: 'ไม่สามารถโหลดสลิปเงินเดือน', description: err.message });
-      }
+    };
+
+    const unsubPayslips = periods.map((p) => {
+      const payrollBatchId = `${monthFilter}-${p}`;
+      const payslipsQuery = query(
+        collection(db, "payrollBatches", payrollBatchId, "payslips"),
+        where("status", "in", ["READY_TO_PAY", "PAID"])
+      );
+      return onSnapshot(
+        payslipsQuery,
+        (snapshot) => {
+          periodData.set(
+            p,
+            snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id } as WithId<PayslipNew>))
+          );
+          buildAndSetPayslips();
+        },
+        (err) => {
+          periodData.set(p, []);
+          buildAndSetPayslips();
+          if (err.code !== "not-found") {
+            toast({ variant: "destructive", title: "ไม่สามารถโหลดสลิปเงินเดือน", description: err.message });
+          }
+        }
+      );
     });
 
     const unsubAccounts = onSnapshot(accountsQuery, (snapshot) => {
@@ -261,10 +291,21 @@ export default function PayrollPayoutsPage() {
     });
     
     return () => {
-      unsubPayslips();
+      unsubPayslips.forEach((unsub) => unsub());
       unsubAccounts();
     }
-  }, [db, hasPermission, toast, currentMonth, period]);
+  }, [db, hasPermission, toast, monthFilter, period]);
+
+  const payoutSummary = useMemo(() => {
+    return payslips.reduce(
+      (acc, p) => {
+        acc.total += Number(p.snapshot?.netPay ?? 0);
+        acc.count += 1;
+        return acc;
+      },
+      { total: 0, count: 0 }
+    );
+  }, [payslips]);
 
   const handleConfirmPayment = async (formData: PaymentFormData) => {
     if (!db || !profile || !payingPayslip) return;
@@ -331,7 +372,12 @@ export default function PayrollPayoutsPage() {
 
   return (
     <>
-      <PageHeader title="จ่ายเงินเดือน" description="ตรวจสอบและยืนยันการจ่ายเงินเดือนที่พนักงานอนุมัติแล้ว" />
+      <PageHeader title="จ่ายเงินเดือน" description="ตรวจสอบและยืนยันการจ่ายเงินเดือนที่พนักงานอนุมัติแล้ว">
+        <div className="rounded-md border bg-background px-4 py-2 min-w-[220px] text-right">
+          <div className="text-[11px] text-muted-foreground">ยอดรวมสุทธิ ({payoutSummary.count} รายการ)</div>
+          <div className="text-2xl font-black text-primary leading-none">{formatCurrency(payoutSummary.total)}</div>
+        </div>
+      </PageHeader>
       
       {indexErrorUrl && (
         <Alert variant="destructive" className="mb-6">
@@ -351,21 +397,32 @@ export default function PayrollPayoutsPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <CardTitle>รายการสลิปในงวดนี้</CardTitle>
             <div className="flex items-center gap-2 self-end sm:self-center">
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? subMonths(prev, 1) : null)}><ChevronLeft /></Button>
-              <span className="font-semibold text-lg text-center w-32">{currentMonth ? dfFormat(currentMonth, 'MMMM yyyy') : '...'}</span>
-              <Button variant="outline" size="icon" onClick={() => setCurrentMonth(prev => prev ? addMonths(prev, 1) : null)}><ChevronRight /></Button>
-              <Select value={period?.toString() || ""} onValueChange={(v) => setPeriod(Number(v) as 1 | 2)}>
-                <SelectTrigger className="w-[180px]"><SelectValue placeholder="..." /></SelectTrigger>
+              <Select value={monthFilter} onValueChange={setMonthFilter}>
+                <SelectTrigger className="w-[140px] bg-background">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                    <SelectValue placeholder="เดือน..." />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions.map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={period} onValueChange={(v) => setPeriod(v as "1" | "2" | "ALL")}>
+                <SelectTrigger className="w-[140px] bg-background"><SelectValue placeholder="งวด..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="1">งวดที่ 1</SelectItem>
                   <SelectItem value="2">งวดที่ 2</SelectItem>
+                  <SelectItem value="ALL">งวด 1+2</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {loading || !currentMonth ? (
+          {loading ? (
             <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>
           ) : payslips.length === 0 ? (
             <div className="text-center text-muted-foreground p-8">ไม่มีรายการที่พร้อมจ่ายหรือจ่ายแล้วในงวดนี้</div>
