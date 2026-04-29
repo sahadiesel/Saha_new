@@ -48,11 +48,38 @@ function VehicleInfo({ doc, isTaxInvoicePrint }: { doc: Document; isTaxInvoicePr
             >
                 รายละเอียดรถ / ชิ้นส่วน
             </h4>
-            {s.brand && <div className="flex justify-between gap-4"><span className="text-muted-foreground">ยี่ห้อ:</span><span className="font-medium text-right">{s.brand}</span></div>}
-            {s.model && <div className="flex justify-between gap-4"><span className="text-muted-foreground">รุ่นรถ:</span><span className="font-medium text-right">{s.model}</span></div>}
-            {s.licensePlate && <div className="flex justify-between gap-4"><span className="text-muted-foreground">ทะเบียน:</span><span className="font-medium text-right">{s.licensePlate}</span></div>}
-            {s.partNumber && <div className="flex justify-between gap-4"><span className="text-muted-foreground">เลขอะไหล่:</span><span className="font-medium text-right">{s.partNumber}</span></div>}
-            {s.registrationNumber && <div className="flex justify-between gap-4"><span className="text-muted-foreground">เลขทะเบียนชิ้นส่วน:</span><span className="font-medium text-right">{s.registrationNumber}</span></div>}
+            {s.brand && (
+                <div className="flex min-w-0 w-full items-start justify-between gap-2">
+                    <span className="shrink-0 text-muted-foreground">ยี่ห้อ:</span>
+                    <span className="min-w-0 max-w-full flex-1 break-words text-right font-medium leading-snug">{s.brand}</span>
+                </div>
+            )}
+            {s.model && (
+                <div className="flex min-w-0 w-full items-start justify-between gap-2">
+                    <span className="shrink-0 text-muted-foreground">รุ่นรถ:</span>
+                    <span className="min-w-0 max-w-full flex-1 break-words text-right font-medium leading-snug">{s.model}</span>
+                </div>
+            )}
+            {s.licensePlate && (
+                <div className="flex min-w-0 w-full items-start justify-between gap-2">
+                    <span className="shrink-0 text-muted-foreground">ทะเบียน:</span>
+                    <span className="min-w-0 max-w-full flex-1 break-words text-right font-medium leading-snug">{s.licensePlate}</span>
+                </div>
+            )}
+            {s.partNumber && (
+                <div className="flex min-w-0 w-full items-start justify-between gap-2">
+                    <span className="shrink-0 text-muted-foreground">เลขอะไหล่:</span>
+                    <span className="min-w-0 max-w-full flex-1 break-all text-right font-medium leading-snug whitespace-normal">
+                        {s.partNumber}
+                    </span>
+                </div>
+            )}
+            {s.registrationNumber && (
+                <div className="flex min-w-0 w-full items-start justify-between gap-2">
+                    <span className="shrink-0 text-muted-foreground">เลขทะเบียนชิ้นส่วน:</span>
+                    <span className="min-w-0 max-w-full flex-1 break-words text-right font-medium leading-snug">{s.registrationNumber}</span>
+                </div>
+            )}
         </div>
     );
 }
