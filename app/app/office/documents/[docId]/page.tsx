@@ -32,13 +32,22 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 
-function VehicleInfo({ doc }: { doc: Document }) {
+function VehicleInfo({ doc, isTaxInvoicePrint }: { doc: Document; isTaxInvoicePrint?: boolean }) {
     const s = doc.carSnapshot;
     if (!s || (!s.licensePlate && !s.brand && !s.model && !s.partNumber && !s.registrationNumber)) return null;
 
     return (
         <div className="space-y-1 text-sm border-l-2 border-muted pl-4">
-            <h4 className="font-bold text-primary mb-1 uppercase tracking-wider text-[10px]">รายละเอียดรถ / ชิ้นส่วน</h4>
+            <h4
+                className={cn(
+                    "font-bold text-primary mb-1 uppercase",
+                    isTaxInvoicePrint
+                        ? "text-xs tracking-wide"
+                        : "tracking-wider text-[10px]"
+                )}
+            >
+                รายละเอียดรถ / ชิ้นส่วน
+            </h4>
             {s.brand && <div className="flex justify-between gap-4"><span className="text-muted-foreground">ยี่ห้อ:</span><span className="font-medium text-right">{s.brand}</span></div>}
             {s.model && <div className="flex justify-between gap-4"><span className="text-muted-foreground">รุ่นรถ:</span><span className="font-medium text-right">{s.model}</span></div>}
             {s.licensePlate && <div className="flex justify-between gap-4"><span className="text-muted-foreground">ทะเบียน:</span><span className="font-medium text-right">{s.licensePlate}</span></div>}
@@ -145,24 +154,29 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-4 gap-4 w-full",
-                        isTaxInvoice ? "flex flex-row" : "grid grid-cols-2 gap-8"
+                        isTaxInvoice ? "flex flex-row" : isQuotation ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start" : "grid grid-cols-2 gap-8"
                     )}
                 >
                     <div
-                        className={cn("space-y-1", isTaxInvoice ? "w-[60%] min-w-0 shrink-0 pr-2" : undefined)}
+                        className={cn("space-y-1 min-w-0", isTaxInvoice ? "w-[65%] shrink-0 pr-2" : undefined)}
                     >
-                        <h2 className="text-base font-bold leading-snug">
+                        <h2
+                            className={cn(
+                                "font-bold leading-snug",
+                                isTaxInvoice ? "text-lg" : "text-base"
+                            )}
+                        >
                             {(document.storeSnapshot.taxName || document.storeSnapshot.informalName) || "Sahadiesel Service"}
                             {storeBranchLabel && <span className="font-bold"> ({storeBranchLabel})</span>}
                         </h2>
                         {isTaxInvoice ? (
                             <>
-                                <p className="text-[11px] leading-snug break-words print:text-[10px]">{storeAddressOneLine || "—"}</p>
+                                <p className="text-sm leading-snug break-words">{storeAddressOneLine || "—"}</p>
                                 {document.storeSnapshot.phone && (
-                                    <p className="text-[11px] leading-snug print:text-[10px]">โทร {document.storeSnapshot.phone}</p>
+                                    <p className="text-sm leading-snug">โทร {document.storeSnapshot.phone}</p>
                                 )}
                                 {document.storeSnapshot.taxId && !isBilling && (
-                                    <p className="text-[10px] leading-tight">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</p>
+                                    <p className="text-xs leading-snug">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</p>
                                 )}
                             </>
                         ) : (
@@ -182,7 +196,7 @@ function DocumentView({
                     <div
                         className={cn(
                             "text-right",
-                            isTaxInvoice ? "w-[40%] min-w-0 space-y-0.5" : "space-y-1"
+                            isTaxInvoice ? "w-[35%] min-w-0 space-y-0.5" : isQuotation ? "min-w-0 space-y-1" : "space-y-1"
                         )}
                     >
                         {isTaxInvoice ? (
@@ -211,26 +225,37 @@ function DocumentView({
                     className={cn(
                         "mb-4 p-3 border rounded-md w-full",
                         isTaxInvoice
-                            ? "grid gap-3 [grid-template-columns:minmax(0,4fr)_minmax(0,1fr)]"
-                            : "grid grid-cols-2 gap-8"
+                            ? "grid gap-3 [grid-template-columns:minmax(0,13fr)_minmax(0,7fr)]"
+                            : isQuotation
+                              ? "grid gap-3 [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)]"
+                              : "grid grid-cols-2 gap-8"
                     )}
                 >
-                    <div className={cn("space-y-1", isTaxInvoice && "min-w-0")}>
-                        <h4 className="font-bold text-[10px] text-primary uppercase tracking-wider mb-1">ข้อมูลลูกค้า</h4>
+                    <div className="space-y-1 min-w-0">
+                        <h4
+                            className={cn(
+                                "font-bold text-primary uppercase mb-1",
+                                isTaxInvoice
+                                    ? "text-xs tracking-wide"
+                                    : "text-[10px] tracking-wider"
+                            )}
+                        >
+                            ข้อมูลลูกค้า
+                        </h4>
                         {document.docType === "TAX_INVOICE" ? (
                             <>
-                                <p className="text-sm font-bold leading-tight text-foreground">
+                                <p className="text-base font-bold leading-tight text-foreground">
                                     <span>{taxInvoiceCustomerNameOneLine || displayCustomerName}</span>
                                     {showTaxInvoiceBranchAfterName && <span className="text-primary">&nbsp;({branchLabel})</span>}
                                 </p>
-                                <p className="text-[11px] leading-tight print:text-[10px]">
+                                <p className="text-sm leading-snug">
                                     {taxInvoiceAddressOneLine}
                                     {displayCustomerPhone && (
                                         <span className="whitespace-nowrap">{"\u00A0"}โทร: {displayCustomerPhone}</span>
                                     )}
                                 </p>
                                 {(isTaxDoc || customer.useTax) && customer.taxId && (
-                                    <p className="text-[11px] font-bold">
+                                    <p className="text-sm font-bold">
                                         เลขประจำตัวผู้เสียภาษี: {customer.taxId}
                                     </p>
                                 )}
@@ -253,15 +278,16 @@ function DocumentView({
                             </>
                         )}
                     </div>
-                    <div className={cn(isTaxInvoice && "min-w-0")}>
-                        <VehicleInfo doc={document} />
+                    <div className="min-w-0">
+                        <VehicleInfo doc={document} isTaxInvoicePrint={isTaxInvoice} />
                     </div>
                 </div>
 
                 <Table
                     className={cn(
                         "mb-4 border-t border-b",
-                        isTaxInvoice && "text-[11px] [&_th]:h-6 [&_th]:py-1 [&_th]:text-[11px] [&_td]:py-0.5 [&_tr]:h-auto"
+                        isTaxInvoice &&
+                            "text-sm [&_th]:h-8 [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5 [&_tr]:h-auto"
                     )}
                 >
                     <TableHeader className="bg-muted/20">
@@ -269,20 +295,20 @@ function DocumentView({
                             <TableHead
                                 className={cn(
                                     "w-12 text-center text-black font-bold",
-                                    isTaxInvoice ? "h-6 py-1" : "h-8"
+                                    isTaxInvoice ? "h-8 py-1.5" : "h-8"
                                 )}
                             >
                                 #
                             </TableHead>
                             <TableHead
-                                className={cn("text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                className={cn("text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
                             >
                                 รายการ
                             </TableHead>
                             <TableHead
                                 className={cn(
                                     "text-right text-black font-bold",
-                                    isTaxInvoice ? "h-6 py-1" : "h-8",
+                                    isTaxInvoice ? "h-8 py-1.5" : "h-8",
                                     isWithdrawal ? "w-32" : "w-20"
                                 )}
                             >
@@ -290,19 +316,19 @@ function DocumentView({
                             </TableHead>
                             {isWithdrawal ? (
                                 <TableHead
-                                    className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                    className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
                                 >
                                     คงเหลือในคลัง
                                 </TableHead>
                             ) : (
                                 <>
                                     <TableHead
-                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
                                     >
                                         ราคา/หน่วย
                                     </TableHead>
                                     <TableHead
-                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-6 py-1" : "h-8")}
+                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
                                     >
                                         รวมเงิน
                                     </TableHead>
@@ -314,35 +340,35 @@ function DocumentView({
                         {document.items.map((item, index) => (
                             <TableRow key={index} className="border-b hover:bg-transparent">
                                 <TableCell
-                                    className={cn("text-center", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                    className={cn("text-center", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
                                 >
                                     {index + 1}
                                 </TableCell>
                                 <TableCell
-                                    className={isTaxInvoice ? "py-0.5 leading-snug" : "py-1.5 h-8"}
+                                    className={isTaxInvoice ? "py-1.5 leading-normal" : "py-1.5 h-8"}
                                 >
                                     {item.description}
                                 </TableCell>
                                 <TableCell
-                                    className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                    className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
                                 >
                                     {item.quantity}
                                 </TableCell>
                                 {isWithdrawal ? (
                                     <TableCell
-                                        className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                        className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
                                     >
                                         {item.stockSnapshot !== undefined ? item.stockSnapshot : "-"}
                                     </TableCell>
                                 ) : (
                                     <>
                                         <TableCell
-                                            className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                            className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
                                         >
                                             {item.unitPrice.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
                                         <TableCell
-                                            className={cn("text-right", isTaxInvoice ? "py-0.5" : "py-1.5 h-8")}
+                                            className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
                                         >
                                             {item.total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
@@ -357,8 +383,8 @@ function DocumentView({
                     <div className="text-left space-y-4">
                         {document.docType === "TAX_INVOICE" ? (
                             <div className="border border-neutral-400 rounded-sm p-2.5 min-h-[5.5rem] print:border-neutral-500">
-                                <p className="text-[10px] font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
-                                <div className="text-[11px] whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
+                                <p className="text-xs font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
+                                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
                                     {document.notes?.trim() ?? ""}
                                 </div>
                             </div>
@@ -388,7 +414,14 @@ function DocumentView({
                             <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
                             
                             <div className="text-right pt-1">
-                                <span className="text-[11px] font-bold italic">{thaiBahtText(document.grandTotal)}</span>
+                                <span
+                                    className={cn(
+                                        "font-bold italic",
+                                        isTaxInvoice ? "text-sm" : "text-[11px]"
+                                    )}
+                                >
+                                    {thaiBahtText(document.grandTotal)}
+                                </span>
                             </div>
                         </div>
                     )}
