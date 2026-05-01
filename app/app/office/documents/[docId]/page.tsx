@@ -484,7 +484,10 @@ function DocumentPageContent() {
     const searchParams = useSearchParams();
 
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
-    const [printCopies, setPrintCopies] = useState<1 | 2>(1);
+    /** ต้นฉบับอย่างเดียว / +สำเนา 1 / +สำเนา 2 — default ต้นฉบับ+สำเนา 1 */
+    const [printChoice, setPrintChoice] = useState<
+        "ORIGINAL_ONLY" | "ORIGINAL_PLUS_1_COPY" | "ORIGINAL_PLUS_2_COPIES"
+    >("ORIGINAL_PLUS_1_COPY");
     const [accountName, setAccountName] = useState<string>("");
     const [isProcessing, setIsProcessing] = useState(false);
 
@@ -550,6 +553,10 @@ function DocumentPageContent() {
             return () => clearTimeout(timer);
         }
     }, [document, searchParams]);
+
+    useEffect(() => {
+        setPrintChoice("ORIGINAL_PLUS_1_COPY");
+    }, [document?.id, document?.docType]);
 
     useEffect(() => {
         if (document?.docType === 'RECEIPT' && document.receivedAccountId && db) {
@@ -660,10 +667,13 @@ function DocumentPageContent() {
                         {showMultiCopy ? (
                             <div className="space-y-8 print:space-y-0">
                                 <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} />
-                                <div className="hidden print:block break-before-page" />
-                                <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
-                                
-                                {printCopies === 2 && (
+                                {printChoice !== "ORIGINAL_ONLY" && (
+                                    <>
+                                        <div className="hidden print:block break-before-page" />
+                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
+                                    </>
+                                )}
+                                {printChoice === "ORIGINAL_PLUS_2_COPIES" && (
                                     <>
                                         <div className="hidden print:block break-before-page" />
                                         <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
@@ -684,9 +694,51 @@ function DocumentPageContent() {
                         <AlertDialogDescription>เลือกจำนวนสำเนาที่ต้องการพิมพ์</AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="py-4">
-                        <RadioGroup value={String(printCopies)} onValueChange={(v) => setPrintCopies(Number(v) as 1 | 2)}>
-                            <div className="flex items-center space-x-2"><RadioGroupItem value="1" id="c1" /><Label htmlFor="c1" className="cursor-pointer">ต้นฉบับ 1 + สำเนา 1</Label></div>
-                            <div className="flex items-center space-x-2"><RadioGroupItem value="2" id="c2" /><Label htmlFor="c2" className="cursor-pointer">ต้นฉบับ 1 + สำเนา 2 (ออฟฟิศ/บัญชี)</Label></div>
+                        <RadioGroup
+                            value={printChoice}
+                            onValueChange={(v) =>
+                                setPrintChoice(
+                                    v as "ORIGINAL_ONLY" | "ORIGINAL_PLUS_1_COPY" | "ORIGINAL_PLUS_2_COPIES"
+                                )
+                            }
+                        >
+                            {document.docType === "RECEIPT" ? (
+                                <>
+                                    <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_ONLY" id="rc0" />
+                                        <Label htmlFor="rc0" className="cursor-pointer">
+                                            ต้นฉบับ 1 ใบ
+                                        </Label>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_PLUS_1_COPY" id="rc1" />
+                                        <Label htmlFor="rc1" className="cursor-pointer">
+                                            ต้นฉบับ 1 ใบ + สำเนา 1 ใบ
+                                        </Label>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_PLUS_2_COPIES" id="rc2" />
+                                        <Label htmlFor="rc2" className="cursor-pointer">
+                                            ต้นฉบับ 1 ใบ + สำเนา 2 ใบ
+                                        </Label>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_PLUS_1_COPY" id="c1" />
+                                        <Label htmlFor="c1" className="cursor-pointer">
+                                            ต้นฉบับ 1 + สำเนา 1
+                                        </Label>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_PLUS_2_COPIES" id="c2" />
+                                        <Label htmlFor="c2" className="cursor-pointer">
+                                            ต้นฉบับ 1 + สำเนา 2 (ออฟฟิศ/บัญชี)
+                                        </Label>
+                                    </div>
+                                </>
+                            )}
                         </RadioGroup>
                     </div>
                     <AlertDialogFooter><AlertDialogCancel>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={() => { setIsPrintOptionsOpen(false); setTimeout(() => window.print(), 300); }}>ยืนยันและเปิดหน้าต่างพิมพ์</AlertDialogAction></AlertDialogFooter>

@@ -50,14 +50,35 @@ const formatCurrency = (value: number) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+/** docDate เป็น YYYY-MM-DD — คืนวันแรก/วันสุดท้ายของเดือน YYYY-MM */
+function purchaseMonthBounds(yyyyMm: string): { start: string; end: string } {
+  const [yStr, mStr] = yyyyMm.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr);
+  if (!y || !m || m < 1 || m > 12) {
+    return { start: `${yyyyMm}-01`, end: `${yyyyMm}-31` };
+  }
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    start: `${yyyyMm}-01`,
+    end: `${yyyyMm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+/** โหลดล่าสุดสำหรับมุมมอง "ทุกเดือน" และใช้สร้างรายการเดือนใน dropdown */
+const RECENT_PURCHASE_DOCS_LIMIT = 2500;
+
 export default function PurchaseDocsListPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
   const { profile } = useAuth();
   const router = useRouter();
 
-  const [docs, setDocs] = useState<WithId<PurchaseDoc>[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recentDocs, setRecentDocs] = useState<WithId<PurchaseDoc>[]>([]);
+  const [monthScopedDocs, setMonthScopedDocs] = useState<WithId<PurchaseDoc>[]>([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  /** เริ่ม true เพื่อไม่ให้แว็บ "ไม่พบเอกสาร" ก่อน snapshot เดือนที่เลือกจะมา */
+  const [monthScopedLoading, setMonthScopedLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [monthFilter, setMonthFilter] = useState(() => {
@@ -73,31 +94,77 @@ export default function PurchaseDocsListPage() {
 
   useEffect(() => {
     if (!db) return;
-    setLoading(true);
-    const q = query(collection(db, "purchaseDocs"), orderBy("docDate", "desc"), limit(100));
+    setRecentLoading(true);
+    const q = query(
+      collection(db, "purchaseDocs"),
+      orderBy("docDate", "desc"),
+      limit(RECENT_PURCHASE_DOCS_LIMIT)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setDocs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<PurchaseDoc>)));
-      setLoading(false);
+      setRecentDocs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<PurchaseDoc>)));
+      setRecentLoading(false);
     }, (error) => {
       console.error("Error loading purchase documents: ", error);
       toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: "ไม่สามารถโหลดข้อมูลการซื้อได้" });
-      setLoading(false);
+      setRecentLoading(false);
     });
     return () => unsubscribe();
   }, [db, toast]);
 
+  useEffect(() => {
+    if (!db || monthFilter === "ALL") {
+      setMonthScopedDocs([]);
+      setMonthScopedLoading(false);
+      return;
+    }
+    const { start, end } = purchaseMonthBounds(monthFilter);
+    setMonthScopedLoading(true);
+    const q = query(
+      collection(db, "purchaseDocs"),
+      where("docDate", ">=", start),
+      where("docDate", "<=", end),
+      orderBy("docDate", "desc")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setMonthScopedDocs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<PurchaseDoc>)));
+        setMonthScopedLoading(false);
+      },
+      (error) => {
+        console.error("Error loading purchase documents by month: ", error);
+        toast({
+          variant: "destructive",
+          title: "เกิดข้อผิดพลาด",
+          description: "ไม่สามารถโหลดรายการตามเดือนที่เลือกได้",
+        });
+        setMonthScopedDocs([]);
+        setMonthScopedLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [db, monthFilter, toast]);
+
+  const tableSourceDocs =
+    monthFilter === "ALL" ? recentDocs : monthScopedDocs;
+
+  const listLoading = monthFilter === "ALL" ? recentLoading : monthScopedLoading;
+
   const availableMonths = useMemo(() => {
     const months = new Set<string>();
-    docs.forEach((d) => {
+    recentDocs.forEach((d) => {
       if (typeof d.docDate === "string" && d.docDate.length >= 7) {
         months.add(d.docDate.slice(0, 7));
       }
     });
+    if (monthFilter !== "ALL") {
+      months.add(monthFilter);
+    }
     return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [docs]);
+  }, [recentDocs, monthFilter]);
 
   const filteredDocs = useMemo(() => {
-    let result = [...docs];
+    let result = [...tableSourceDocs];
 
     if (monthFilter !== "ALL") {
       result = result.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
@@ -118,7 +185,7 @@ export default function PurchaseDocsListPage() {
     }
     
     return result;
-  }, [docs, searchTerm, statusFilter, monthFilter]);
+  }, [tableSourceDocs, searchTerm, statusFilter, monthFilter]);
 
   const totals = useMemo(() => {
     return filteredDocs.reduce(
@@ -231,7 +298,7 @@ export default function PurchaseDocsListPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
+                {listLoading ? (
                   <TableRow><TableCell colSpan={9} className="h-24 text-center"><Loader2 className="mx-auto animate-spin" /></TableCell></TableRow>
                 ) : filteredDocs.length > 0 ? (
                   filteredDocs.map(purchaseDoc => {
