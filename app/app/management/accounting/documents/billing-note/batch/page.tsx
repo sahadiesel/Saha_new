@@ -18,6 +18,7 @@ import {
   onSnapshot,
   deleteField,
   writeBatch,
+  FieldPath,
 } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth, subMonths, addMonths } from 'date-fns';
 import {
@@ -65,6 +66,7 @@ import { BillingNoteBatchEditDialog } from '@/components/billing-note-batch-edit
 import { createDocument } from '@/firebase/documents';
 import { safeFormat } from '@/lib/date-utils';
 import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
+import { fpBillingRunCreatedBucket, fpBillingRunCreatedSeparate } from '@/lib/billing-run-field-paths';
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -335,10 +337,13 @@ export default function BatchBillingNotePage() {
             { merge: true }
           );
         } else {
-          await updateDoc(billingRunRef, {
-            [`createdBillingNotes.${targetBucket}.separate.${splitInvoiceGroupKey}`]: sid,
-            updatedAt: serverTimestamp(),
-          });
+          await updateDoc(
+            billingRunRef,
+            fpBillingRunCreatedSeparate(targetBucket, splitInvoiceGroupKey),
+            sid,
+            'updatedAt',
+            serverTimestamp()
+          );
         }
       }
       return { success: !hasError, error: hasError ? "Some notes failed." : "" };
@@ -399,15 +404,21 @@ export default function BatchBillingNotePage() {
     setIsResetting(data.customer.id);
     try {
       if (splitKey) {
-        await updateDoc(billingRunRef, {
-          [`createdBillingNotes.${target}.separate.${splitKey}`]: deleteField(),
-          updatedAt: serverTimestamp(),
-        });
+        await updateDoc(
+          billingRunRef,
+          fpBillingRunCreatedSeparate(target, splitKey),
+          deleteField(),
+          'updatedAt',
+          serverTimestamp()
+        );
       } else {
-        await updateDoc(billingRunRef, {
-          [`createdBillingNotes.${target}`]: deleteField(),
-          updatedAt: serverTimestamp(),
-        });
+        await updateDoc(
+          billingRunRef,
+          fpBillingRunCreatedBucket(target),
+          deleteField(),
+          'updatedAt',
+          serverTimestamp()
+        );
       }
       toast({
         title: "รีเซ็ตสถานะสำเร็จ",
@@ -446,27 +457,30 @@ export default function BatchBillingNotePage() {
       const snap = await getDoc(billingRunRef);
       const br = (snap.exists() ? snap.data() : {}) as Partial<BillingRun>;
       const batch = writeBatch(db);
-      const runPatch: Record<string, unknown> = {
-        updatedAt: serverTimestamp(),
-        updatedByUid: profile.uid,
-        updatedByName: profile.displayName,
-      };
+      const billingRunUpdates: unknown[] = [
+        'updatedAt',
+        serverTimestamp(),
+        'updatedByUid',
+        profile.uid,
+        'updatedByName',
+        profile.displayName,
+      ];
       if (splitKey) {
-        runPatch[`createdBillingNotes.${targetBucket}.separate.${splitKey}`] = deleteField();
+        billingRunUpdates.push(fpBillingRunCreatedSeparate(targetBucket, splitKey), deleteField());
       } else {
-        runPatch[`createdBillingNotes.${targetBucket}`] = deleteField();
+        billingRunUpdates.push(fpBillingRunCreatedBucket(targetBucket), deleteField());
       }
 
       const merged = br.billingMergedBuckets || {};
       for (const [k, v] of Object.entries(merged)) {
         if (k === mergeKey || v === mergeKey) {
-          runPatch[`billingMergedBuckets.${k}`] = deleteField();
+          billingRunUpdates.push(`billingMergedBuckets.${k}`, deleteField());
         }
       }
 
       for (const inv of allInvoices) {
-        runPatch[`deferredInvoices.${inv.id}`] = deleteField();
-        runPatch[`separateInvoiceGroups.${inv.id}`] = deleteField();
+        billingRunUpdates.push(`deferredInvoices.${inv.id}`, deleteField());
+        billingRunUpdates.push(`separateInvoiceGroups.${inv.id}`, deleteField());
       }
 
       for (const inv of allInvoices) {
@@ -478,7 +492,12 @@ export default function BatchBillingNotePage() {
         });
       }
 
-      batch.update(billingRunRef, runPatch as import("firebase/firestore").UpdateData<import("@/lib/types").BillingRun>);
+      batch.update(
+        billingRunRef,
+        billingRunUpdates[0] as string | FieldPath,
+        billingRunUpdates[1],
+        ...(billingRunUpdates.slice(2) as unknown[])
+      );
       await batch.commit();
 
       toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });
