@@ -137,6 +137,16 @@
     margin: 0 auto !important;
     box-sizing: border-box !important;
     overflow: visible !important;
+    /* flex ทำให้ Chrome/Edge มักไม่ซ้ำ thead ตอนตัดหน้า */
+    display: block !important;
+  }
+
+  /*
+    shadcn Table = div.relative > table — ห่อนี้ทำให้ Chromium ไม่ยอมติด thead ซ้ำบนหน้าถัดไป
+    display:contents ให้ table เป็นลูกโดยตรงของ .printable-document ตอนพิมพ์
+  */
+  .printable-document > div.relative {
+    display: contents !important;
   }
 
   .printable-document * {
