@@ -37,26 +37,30 @@ const getStatusDisplay = (status?: PurchaseDoc['status']) => {
 function PurchaseDocView({ document }: { document: PurchaseDoc }) {
     const statusInfo = getStatusDisplay(document.status);
     return (
-        <div className="printable-document p-8 border rounded-lg bg-card text-card-foreground shadow-sm print:shadow-none print:border-none">
-            {/* Header */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <div className="space-y-2">
-                    <h2 className="text-xl font-bold">{document.vendorSnapshot.companyName}</h2>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{document.vendorSnapshot.address}</p>
-                    <p className="text-sm text-muted-foreground">เลขที่บิลร้านค้า: {document.invoiceNo}</p>
-                </div>
-                <div className="space-y-2 text-left md:text-right">
-                    <h1 className="text-2xl font-bold text-primary">บันทึกรายการซื้อ</h1>
-                    <div className="flex md:justify-end gap-4 text-sm font-mono"><span className="font-medium">เลขที่ระบบ:</span><span>{document.docNo}</span></div>
-                    <div className="flex md:justify-end gap-4 text-sm"><span className="font-medium">วันที่:</span><span>{safeFormat(new Date(document.docDate), 'dd/MM/yyyy')}</span></div>
-                    <div className="flex md:justify-end gap-4 text-sm items-center"><span className="font-medium">สถานะ:</span><Badge variant={statusInfo.variant}>{statusInfo.label}</Badge></div>
-                </div>
-            </div>
-
-            {/* Items Table */}
-            <Table className="mb-8">
-                <TableHeader>
-                    <TableRow>
+        <div className="printable-document p-8 border rounded-lg bg-card text-card-foreground shadow-sm print:shadow-none print:border-none print:p-0">
+            <Table className="mb-8 border-collapse print:mb-4">
+                <TableHeader className="[&_tr]:border-b-0">
+                    <TableRow className="print-doc-repeat-header border-0 hover:bg-transparent">
+                        <TableHead
+                            colSpan={5}
+                            className="h-auto border-0 bg-transparent p-0 py-3 text-left align-top font-normal print:border-0"
+                        >
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-2 print:mb-0">
+                                <div className="space-y-2">
+                                    <h2 className="text-xl font-bold">{document.vendorSnapshot.companyName}</h2>
+                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{document.vendorSnapshot.address}</p>
+                                    <p className="text-sm text-muted-foreground">เลขที่บิลร้านค้า: {document.invoiceNo}</p>
+                                </div>
+                                <div className="space-y-2 text-left md:text-right">
+                                    <h1 className="text-2xl font-bold text-primary">บันทึกรายการซื้อ</h1>
+                                    <div className="flex md:justify-end gap-4 text-sm font-mono"><span className="font-medium">เลขที่ระบบ:</span><span>{document.docNo}</span></div>
+                                    <div className="flex md:justify-end gap-4 text-sm"><span className="font-medium">วันที่:</span><span>{safeFormat(new Date(document.docDate), 'dd/MM/yyyy')}</span></div>
+                                    <div className="flex md:justify-end gap-4 text-sm items-center"><span className="font-medium">สถานะ:</span><Badge variant={statusInfo.variant}>{statusInfo.label}</Badge></div>
+                                </div>
+                            </div>
+                        </TableHead>
+                    </TableRow>
+                    <TableRow className="border-b bg-muted/30 hover:bg-transparent">
                         <TableHead className="w-12 text-center">#</TableHead>
                         <TableHead>รายการ</TableHead>
                         <TableHead className="text-right">จำนวน</TableHead>

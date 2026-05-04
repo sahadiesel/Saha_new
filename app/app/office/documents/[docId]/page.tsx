@@ -177,13 +177,26 @@ function DocumentView({
     
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
+    const itemColCount = isWithdrawal ? 4 : 5;
 
     return (
-        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col">
-            <div className="flex-1">
+        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+            <Table
+                className={cn(
+                    "mb-4 border-t border-b",
+                    isTaxInvoice &&
+                        "text-sm [&_th]:h-8 [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5 [&_tr]:h-auto"
+                )}
+            >
+                <TableHeader className="[&_tr]:border-b-0">
+                    <TableRow className="print-doc-repeat-header border-0 hover:bg-transparent">
+                        <TableHead
+                            colSpan={itemColCount}
+                            className="h-auto border-0 bg-white p-0 py-2 text-left align-top font-normal text-black print:border-0 [&_*]:text-black"
+                        >
                 <div
                     className={cn(
-                        "mb-4 gap-4 w-full",
+                        "mb-2 gap-4 w-full",
                         isTaxInvoice ? "flex flex-row" : isQuotation ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start" : "grid grid-cols-2 gap-8"
                     )}
                 >
@@ -250,10 +263,16 @@ function DocumentView({
                         )}
                     </div>
                 </div>
-
+                        </TableHead>
+                    </TableRow>
+                    <TableRow className="print-doc-repeat-header border-0 hover:bg-transparent">
+                        <TableHead
+                            colSpan={itemColCount}
+                            className="h-auto border-0 bg-white p-0 py-1 text-left align-top font-normal text-black print:border-0 [&_*]:text-black"
+                        >
                 <div
                     className={cn(
-                        "mb-4 p-3 border rounded-md w-full",
+                        "mb-0 p-3 border rounded-md w-full",
                         isTaxInvoice
                             ? "grid gap-3 [grid-template-columns:minmax(0,13fr)_minmax(0,7fr)]"
                             : isQuotation
@@ -312,16 +331,9 @@ function DocumentView({
                         <VehicleInfo doc={document} isTaxInvoicePrint={isTaxInvoice} />
                     </div>
                 </div>
-
-                <Table
-                    className={cn(
-                        "mb-4 border-t border-b",
-                        isTaxInvoice &&
-                            "text-sm [&_th]:h-8 [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5 [&_tr]:h-auto"
-                    )}
-                >
-                    <TableHeader className="bg-muted/20">
-                        <TableRow className="hover:bg-transparent">
+                        </TableHead>
+                    </TableRow>
+                    <TableRow className="border-b bg-muted/20 hover:bg-transparent">
                             <TableHead
                                 className={cn(
                                     "w-12 text-center text-black font-bold",
@@ -365,7 +377,7 @@ function DocumentView({
                                 </>
                             )}
                         </TableRow>
-                    </TableHeader>
+                </TableHeader>
                     <TableBody>
                         {document.items.map((item, index) => (
                             <TableRow key={index} className="border-b hover:bg-transparent">
@@ -456,8 +468,7 @@ function DocumentView({
                         </div>
                     )}
                 </div>
-            </div>
-            
+
             <div className="grid grid-cols-2 gap-12 mt-auto text-center text-[11px] pb-4 pt-10">
                 <div className="flex flex-col items-center">
                     <p className="mb-6">.................................................</p>
