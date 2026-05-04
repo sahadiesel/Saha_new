@@ -44,7 +44,8 @@ export function customerForBillingNoteDocument(groupInvoices: Document[], rowCus
   const snap = inv.customerSnapshot;
   if (!snap) return rowCustomer;
   const cid = (inv.customerId || snap.id || rowCustomer.id) as string;
-  return { ...snap, id: cid } as Customer;
+  /** snapshot จากบิลต้นทางทับชื่อแถวรวม / ชื่อสังเคราะห์ (แยก …) เพื่อให้ใบวางบิลตรงใบกำกับภาษี */
+  return { ...rowCustomer, ...snap, id: cid } as Customer;
 }
 
 export type BillingCreatedNotes = { main?: string; separate?: Record<string, string> };
@@ -91,8 +92,6 @@ export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] 
   }
 
   const c = row.customer;
-  const label = c.useTax ? c.taxName || c.name || '' : c.name || '';
-  const suffix = (k: string) => ` (แยก ${k})`;
 
   const mainRow: BillingTableRow = {
     ...row,
@@ -109,9 +108,8 @@ export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] 
     const invs = row.separateGroups[key]!;
     const virtualId = `${baseBucket}::split::${key}`;
     const sepId = parentNotes?.separate?.[key];
-    const nextCustomer = c.useTax
-      ? ({ ...c, id: virtualId, taxName: `${label}${suffix(key)}` } as Customer)
-      : ({ ...c, id: virtualId, name: `${label}${suffix(key)}` } as Customer);
+    const fromInvoices = customerForBillingNoteDocument(invs, c);
+    const nextCustomer = { ...fromInvoices, id: virtualId } as Customer;
 
     return {
       ...row,

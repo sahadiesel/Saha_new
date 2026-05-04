@@ -123,12 +123,10 @@ function DocumentView({
     const isBilling = document.docType === 'BILLING_NOTE';
     const isWithdrawal = document.docType === 'WITHDRAWAL';
     
-    const displayCustomerName =
-        document.docType === 'BILLING_NOTE' && document.receiverName?.trim()
-            ? document.receiverName.trim()
-            : customer.useTax
-              ? customer.taxName || customer.name
-              : customer.name;
+    /** ใบวางบิล: หัวลูกค้าต้องตรง customerSnapshot (เดียวกับใบกำกับภาษี) — ไม่ใช้ receiverName ทับ */
+    const displayCustomerName = customer.useTax
+        ? customer.taxName || customer.name
+        : customer.name;
         
     const displayCustomerAddress = isTaxDoc 
         ? (customer.taxAddress || customer.detail || '---') 
