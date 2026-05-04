@@ -29,6 +29,7 @@ import {
   explodeSeparateSubRows,
   billingRowUiStatus,
   billingSignedGrandTotal,
+  billingRowPreviewItems,
   billingTargetBucket,
   fetchDeferredRollInDocuments,
   excludeInvoicesDeferredToFutureMonth,
@@ -788,8 +789,7 @@ function BillingNoteBatchTab() {
                   customerData.map((data) => {
                     const rowStatus = billingRowUiStatus(data);
                     const noteLock = bucketHasAnyCreatedNote(data.parentBillingNotesSnapshot);
-                    const previewNotes = data.parentBillingNotesSnapshot ?? data.createdNoteIds;
-                    const previewSep = previewNotes?.separate || {};
+                    const previewItems = billingRowPreviewItems(data);
                     return (
                     <TableRow key={data.customer.id} className="hover:bg-muted/30 transition-colors">
                       <TableCell className="align-middle">
@@ -872,14 +872,9 @@ function BillingNoteBatchTab() {
                               </>
                             ) : (
                               <>
-                                {previewNotes?.main && (
-                                  <DropdownMenuItem onClick={() => handlePreview(previewNotes.main!)}>
-                                    <Eye className="mr-2 h-4 w-4" /> พรีวิว (ใบหลัก)
-                                  </DropdownMenuItem>
-                                )}
-                                {Object.entries(previewSep).map(([key, id]) => (
-                                  <DropdownMenuItem key={id} onClick={() => handlePreview(id)}>
-                                    <Eye className="mr-2 h-4 w-4" /> พรีวิว ({key})
+                                {previewItems.map(({ docId, label }) => (
+                                  <DropdownMenuItem key={docId} onClick={() => handlePreview(docId)}>
+                                    <Eye className="mr-2 h-4 w-4" /> {label}
                                   </DropdownMenuItem>
                                 ))}
                                 <DropdownMenuSeparator />

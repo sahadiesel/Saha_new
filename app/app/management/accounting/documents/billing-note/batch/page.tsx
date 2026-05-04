@@ -26,6 +26,7 @@ import {
   billingDocLineLabel,
   billingRowUiStatus,
   billingSignedGrandTotal,
+  billingRowPreviewItems,
   billingTargetBucket,
   bucketHasAnyCreatedNote,
   explodeSeparateSubRows,
@@ -643,8 +644,7 @@ export default function BatchBillingNotePage() {
                 customerData.map((data) => {
                   const rowStatus = billingRowUiStatus(data);
                   const noteLock = bucketHasAnyCreatedNote(data.parentBillingNotesSnapshot);
-                  const previewNotes = data.parentBillingNotesSnapshot ?? data.createdNoteIds;
-                  const previewSep = previewNotes?.separate || {};
+                  const previewItems = billingRowPreviewItems(data);
                   return (
                   <Fragment key={data.customer.id}>
                     <TableRow>
@@ -705,8 +705,11 @@ export default function BatchBillingNotePage() {
                                     <Button size="sm" variant="secondary">ดูเอกสาร <ChevronDown className="ml-2 h-4 w-4"/></Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                    {previewNotes?.main && <DropdownMenuItem onClick={() => handlePreview(previewNotes.main!)}><FileText className="mr-2 h-4 w-4"/> พรีวิว (ใบหลัก)</DropdownMenuItem>}
-                                    {Object.entries(previewSep).map(([key, id]) => <DropdownMenuItem key={id} onClick={() => handlePreview(id)}><FileText className="mr-2 h-4 w-4"/> พรีวิว ({key})</DropdownMenuItem>)}
+                                    {previewItems.map(({ docId, label }) => (
+                                      <DropdownMenuItem key={docId} onClick={() => handlePreview(docId)}>
+                                        <FileText className="mr-2 h-4 w-4" /> {label}
+                                      </DropdownMenuItem>
+                                    ))}
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem 
                                         className="text-destructive focus:text-destructive"

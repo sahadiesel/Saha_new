@@ -158,6 +158,25 @@ export function billingRowUiStatus(row: BillingTableRow): 'created' | 'pending' 
   return anyCreated ? 'created' : 'pending';
 }
 
+/**
+ * รายการพรีวิวใบวางบิลต่อแถว — แถวแยกชื่อเห็นแค่ใบของแถวนั้น
+ * (ไม่ใช้ parent snapshot ที่รวมทุกใบแยกในบัคเก็ต)
+ */
+export function billingRowPreviewItems(row: BillingTableRow): { docId: string; label: string }[] {
+  const notes = row.createdNoteIds;
+  if (!notes?.main && !(notes?.separate && Object.keys(notes.separate).length > 0)) {
+    return [];
+  }
+  if (row.splitInvoiceGroupKey) {
+    return notes.main ? [{ docId: notes.main, label: "พรีวิว" }] : [];
+  }
+  const items: { docId: string; label: string }[] = [];
+  if (notes.main) {
+    items.push({ docId: notes.main, label: "พรีวิว (ใบหลัก)" });
+  }
+  return items;
+}
+
 export function billingTargetBucket(row: BillingTableRow): string {
   return row.billingTargetBucketId ?? row.customer.id;
 }
