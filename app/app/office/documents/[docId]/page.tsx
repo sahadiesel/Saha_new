@@ -123,9 +123,12 @@ function DocumentView({
     const isBilling = document.docType === 'BILLING_NOTE';
     const isWithdrawal = document.docType === 'WITHDRAWAL';
     
-    const displayCustomerName = customer.useTax 
-        ? (customer.taxName || customer.name) 
-        : (customer.name);
+    const displayCustomerName =
+        document.docType === 'BILLING_NOTE' && document.receiverName?.trim()
+            ? document.receiverName.trim()
+            : customer.useTax
+              ? customer.taxName || customer.name
+              : customer.name;
         
     const displayCustomerAddress = isTaxDoc 
         ? (customer.taxAddress || customer.detail || '---') 
@@ -513,13 +516,17 @@ function DocumentPageContent() {
         if (!document) return null;
         const snap = document.customerSnapshot;
 
+        // ใบวางบิล: หัวเอกสารต้องตรง snapshot ตอนออกเอกสาร (แถวแยกเล่มใช้ customerId เสมือน — ดึงจาก customers/ จะได้ชื่อหลักผิด)
+        if (document.docType === 'BILLING_NOTE' && snap) {
+            return snap as Customer;
+        }
+
         // เอกสารที่บันทึก snapshot ลูกค้า/ภาษีไว้แล้ว ต้องพิมพ์ตาม snapshot เท่านั้น
         // ข้อมูลลูกค้าสดมี tax* ชุดเดียวที่ราก — ถ้า merge ทับ snapshot จะได้ชื่อสาขาผิด
         // เมื่อลูกค้ามีหลายนามภาษี (หลาย tax profile)
         const freezeSnapshotTypes: Document["docType"][] = [
             "TAX_INVOICE",
             "RECEIPT",
-            "BILLING_NOTE",
             "CREDIT_NOTE",
             "WITHHOLDING_TAX",
         ];

@@ -32,6 +32,7 @@ import {
   excludeInvoicesDeferredToFutureMonth,
   fetchDeferredRollInDocuments,
   isUnpaidBillingCandidate,
+  customerForBillingNoteDocument,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -53,7 +54,6 @@ import {
   Rocket,
   Edit,
   FileText,
-  Printer,
   ChevronDown,
   RotateCcw,
   AlertCircle,
@@ -278,13 +278,14 @@ export default function BatchBillingNotePage() {
       });
 
       try {
+        const billingCustomer = customerForBillingNoteDocument(groupInvoices, customer);
         const { docId, docNo } = await createDocument(
           db,
           'BILLING_NOTE',
           {
-            customerId: customer.id,
+            customerId: billingCustomer.id,
             docDate: format(new Date(), 'yyyy-MM-dd'),
-            customerSnapshot: customer,
+            customerSnapshot: billingCustomer,
             storeSnapshot: storeSettings,
             items: itemsForDoc,
             invoiceIds: groupInvoices.map((inv) => inv.id),
@@ -296,7 +297,9 @@ export default function BatchBillingNotePage() {
             grandTotal: totalAmount,
             notes: groupKey === 'MAIN' ? '' : `เอกสารกลุ่ม: ${groupKey}`,
             senderName: profile.displayName,
-            receiverName: customer.useTax ? (customer.taxName || customer.name) : customer.name,
+            receiverName: billingCustomer.useTax
+              ? billingCustomer.taxName || billingCustomer.name
+              : billingCustomer.name,
             billingRunId: monthId,
           },
           profile
@@ -523,7 +526,6 @@ export default function BatchBillingNotePage() {
   }, [customerData]);
 
   const handlePreview = (docId: string) => router.push(`/app/documents/${docId}`);
-  const handlePrint = (docId: string) => router.push(`/app/documents/${docId}?print=1&autoprint=1`);
 
   return (
     <>
@@ -623,9 +625,6 @@ export default function BatchBillingNotePage() {
                                 <DropdownMenuContent align="end">
                                     {previewNotes?.main && <DropdownMenuItem onClick={() => handlePreview(previewNotes.main!)}><FileText className="mr-2 h-4 w-4"/> พรีวิว (ใบหลัก)</DropdownMenuItem>}
                                     {Object.entries(previewSep).map(([key, id]) => <DropdownMenuItem key={id} onClick={() => handlePreview(id)}><FileText className="mr-2 h-4 w-4"/> พรีวิว ({key})</DropdownMenuItem>)}
-                                    {previewNotes?.main && <DropdownMenuItem onClick={() => handlePrint(previewNotes.main!)}><Printer className="mr-2 h-4 w-4"/> พิมพ์ PDF (ใบหลัก)</DropdownMenuItem>}
-                                    {Object.entries(previewSep).map(([key, id]) => <DropdownMenuItem key={`p-${id}`} onClick={() => handlePrint(id)}><Printer className="mr-2 h-4 w-4"/> พิมพ์ PDF ({key})</DropdownMenuItem>)}
-                                    
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem 
                                         className="text-destructive focus:text-destructive"

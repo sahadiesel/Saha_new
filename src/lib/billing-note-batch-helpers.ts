@@ -27,6 +27,26 @@ export function isUnpaidBillingCandidate(doc: Document): boolean {
   return false;
 }
 
+/**
+ * ชื่อ/ที่อยู่บนใบวางบิลต้องตรง snapshot บนบิลต้นทาง (ใบกำกับ/ใบส่งของ/ลดหนี้ ฯลฯ)
+ * ไม่ใช้ customer จากแถวรวมใน batch ที่อาจเป็นบริษัทแม่คนละชื่อกับบิลจริง
+ */
+export function customerForBillingNoteDocument(groupInvoices: Document[], rowCustomer: Customer): Customer {
+  if (groupInvoices.length === 0) return rowCustomer;
+  const sorted = [...groupInvoices].sort((a, b) => {
+    const da = String(a.docDate || '');
+    const db = String(b.docDate || '');
+    const cmp = da.localeCompare(db);
+    if (cmp !== 0) return cmp;
+    return String(a.docNo || '').localeCompare(String(b.docNo || ''));
+  });
+  const inv = sorted[0]!;
+  const snap = inv.customerSnapshot;
+  if (!snap) return rowCustomer;
+  const cid = (inv.customerId || snap.id || rowCustomer.id) as string;
+  return { ...snap, id: cid } as Customer;
+}
+
 export type BillingCreatedNotes = { main?: string; separate?: Record<string, string> };
 
 /** แถวก่อน/หลังแยกเป็นหลายแถวในตาราง */
