@@ -69,7 +69,7 @@ import {
   Unlink,
   Trash2,
 } from 'lucide-react';
-import type { Customer, Document, BillingRun, StoreSettings } from '@/lib/types';
+import type { Customer, CustomerTaxProfile, Document, BillingRun, StoreSettings } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
 import { BillingNoteBatchEditDialog } from '@/components/billing-note-batch-edit-dialog';
 import { createDocument } from '@/firebase/documents';
@@ -80,6 +80,12 @@ import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
 import { fpBillingRunCreatedBucket, fpBillingRunCreatedSeparate } from '@/lib/billing-run-field-paths';
+import {
+  getInvoiceableTaxProfiles,
+  guessTaxProfileFromInvoices,
+  overlayTaxProfileForBillingNote,
+} from '@/lib/customer-utils';
+import { BillingNoteTaxProfilePickDialog } from '@/components/billing-note-tax-profile-pick-dialog';
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -103,6 +109,13 @@ function BillingNoteBatchTab() {
   const [selectedBucketIds, setSelectedBucketIds] = useState<string[]>([]);
   const [isSavingMerge, setIsSavingMerge] = useState(false);
   const [isPurgingBucket, setIsPurgingBucket] = useState<string | null>(null);
+  /** เลือกชุดภาษีก่อนสร้างใบวางบิล (ลูกค้ามีหลายชุด) */
+  const [billingTaxPick, setBillingTaxPick] = useState<{
+    row: GroupedCustomerData;
+    profiles: CustomerTaxProfile[];
+    selectedProfileId: string;
+  } | null>(null);
+  const [billingTaxPickBusy, setBillingTaxPickBusy] = useState(false);
 
   const isAdminUser = profile?.role === 'ADMIN';
   
@@ -381,7 +394,10 @@ function BillingNoteBatchTab() {
     }
   };
 
-  const createBillingNotesForCustomer = async (targetCustomerData: GroupedCustomerData) => {
+  const createBillingNotesForCustomer = async (
+    targetCustomerData: GroupedCustomerData,
+    headerTaxProfile?: CustomerTaxProfile
+  ) => {
     if (!profile || !storeSettings || !db || !billingRunRef) return { success: false, error: "Required data missing." };
 
     const { customer, includedInvoices, splitInvoiceGroupKey } = targetCustomerData;
@@ -408,7 +424,10 @@ function BillingNoteBatchTab() {
       });
 
       try {
-        const billingCustomer = customerForBillingNoteDocument(groupInvoices, customer);
+        let billingCustomer = customerForBillingNoteDocument(groupInvoices, customer);
+        if (headerTaxProfile) {
+          billingCustomer = overlayTaxProfileForBillingNote(billingCustomer, headerTaxProfile);
+        }
         const { docId, docNo } = await createDocument(
           db,
           'BILLING_NOTE',
@@ -507,10 +526,59 @@ function BillingNoteBatchTab() {
     return { success: !hasError, error: hasError ? "Some notes failed." : "" };
   };
 
+  const beginCreateBillingNotesForCustomer = async (data: GroupedCustomerData) => {
+    if (!db || !profile || !storeSettings || !billingRunRef) return;
+    const bucketId = billingTargetBucket(data);
+    try {
+      const custSnap = await getDoc(doc(db, "customers", bucketId));
+      if (!custSnap.exists()) {
+        toast({
+          variant: "destructive",
+          title: "ไม่พบลูกค้า",
+          description: "ไม่สามารถโหลดข้อมูลลูกค้าจากระบบสำหรับแถวนี้",
+        });
+        return;
+      }
+      const full = { id: custSnap.id, ...custSnap.data() } as Customer;
+      const profiles = getInvoiceableTaxProfiles(full);
+      if (full.useTax && profiles.length > 1) {
+        const guess =
+          guessTaxProfileFromInvoices(data.includedInvoices, profiles) ?? profiles[0];
+        setBillingTaxPick({
+          row: data,
+          profiles,
+          selectedProfileId: guess!.id,
+        });
+        return;
+      }
+      await createBillingNotesForCustomer(data);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ผิดพลาด", description: msg });
+    }
+  };
+
+  const confirmBillingTaxPick = async () => {
+    if (!billingTaxPick) return;
+    const profile = billingTaxPick.profiles.find((p) => p.id === billingTaxPick.selectedProfileId);
+    if (!profile) return;
+    setBillingTaxPickBusy(true);
+    try {
+      await createBillingNotesForCustomer(billingTaxPick.row, profile);
+      setBillingTaxPick(null);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "สร้างใบวางบิลไม่สำเร็จ", description: msg });
+    } finally {
+      setBillingTaxPickBusy(false);
+    }
+  };
+
   const handleBulkCreate = async () => {
     setIsBulkCreating(true);
     let successCount = 0;
     let skippedCount = 0;
+    let skippedMultiTaxProfile = 0;
 
     for (const data of customerData) {
       const st = billingRowUiStatus(data);
@@ -519,12 +587,27 @@ function BillingNoteBatchTab() {
         continue;
       }
       if (st === "empty") continue;
+      if (db) {
+        const bucketId = billingTargetBucket(data);
+        const custSnap = await getDoc(doc(db, "customers", bucketId));
+        if (custSnap.exists()) {
+          const full = { id: custSnap.id, ...custSnap.data() } as Customer;
+          if (full.useTax && getInvoiceableTaxProfiles(full).length > 1) {
+            skippedMultiTaxProfile++;
+            continue;
+          }
+        }
+      }
       const result = await createBillingNotesForCustomer(data);
       if (result.success) successCount++;
     }
     toast({
       title: "สร้างใบวางบิลเสร็จสิ้น",
-      description: `สร้างใหม่ ${successCount} รายการ, ข้ามรายที่ทำไปแล้ว ${skippedCount} รายการ`,
+      description:
+        `สร้างใหม่ ${successCount} รายการ, ข้ามรายที่ทำไปแล้ว ${skippedCount} รายการ` +
+        (skippedMultiTaxProfile > 0
+          ? ` — ข้าม ${skippedMultiTaxProfile} รายที่มีหลายชุดภาษี (ให้สร้างทีละรายจากเมนูเพื่อเลือกชื่อบนใบวางบิล)`
+          : ""),
     });
     setIsBulkCreating(false);
   };
@@ -780,7 +863,7 @@ function BillingNoteBatchTab() {
                                   </DropdownMenuItem>
                                 )}
                                 <DropdownMenuItem
-                                  onClick={() => void createBillingNotesForCustomer(data)}
+                                  onClick={() => void beginCreateBillingNotesForCustomer(data)}
                                   disabled={rowStatus === "empty"}
                                   className="text-primary focus:text-primary font-bold"
                                 >
@@ -842,6 +925,20 @@ function BillingNoteBatchTab() {
         </Card>
       </TooltipProvider>
       
+      <BillingNoteTaxProfilePickDialog
+        open={!!billingTaxPick}
+        onOpenChange={(open) => {
+          if (!open && !billingTaxPickBusy) setBillingTaxPick(null);
+        }}
+        profiles={billingTaxPick?.profiles ?? []}
+        selectedProfileId={billingTaxPick?.selectedProfileId ?? ""}
+        onSelectedProfileIdChange={(id) =>
+          setBillingTaxPick((prev) => (prev ? { ...prev, selectedProfileId: id } : prev))
+        }
+        onConfirm={confirmBillingTaxPick}
+        confirming={billingTaxPickBusy}
+      />
+
       {editingCustomerData && (
         <BillingNoteBatchEditDialog
           isOpen={!!editingCustomerData}

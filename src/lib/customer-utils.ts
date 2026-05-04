@@ -128,6 +128,59 @@ export function findCustomerPhoneConflict(
 }
 
 /** snapshot สำหรับบันทึกในเอกสาร — ผูกกับโปรไฟล์ภาษีที่เลือก */
+/** เลือกโปรไฟล์ที่ตรงกับบิลในแถวมากที่สุด (จาก customerSnapshot.taxProfileId) */
+export function guessTaxProfileFromInvoices(
+  invoices: { customerSnapshot?: { taxProfileId?: string } }[],
+  profiles: CustomerTaxProfile[]
+): CustomerTaxProfile | undefined {
+  if (profiles.length === 0) return undefined;
+  const counts = new Map<string, number>();
+  for (const inv of invoices) {
+    const pid = inv.customerSnapshot?.taxProfileId;
+    if (pid && typeof pid === "string") {
+      counts.set(pid, (counts.get(pid) || 0) + 1);
+    }
+  }
+  let bestId: string | undefined;
+  let bestN = -1;
+  for (const [id, n] of counts) {
+    if (n > bestN) {
+      bestN = n;
+      bestId = id;
+    }
+  }
+  if (bestId) {
+    const found = profiles.find((p) => p.id === bestId);
+    if (found) return found;
+  }
+  return profiles[0];
+}
+
+/** ทับชื่อ/ที่อยู่บน snapshot ใบวางบิลตามชุดภาษีที่ผู้ใช้เลือก (หลังรวมจากบิลต้นทาง) */
+export function overlayTaxProfileForBillingNote(
+  billingCustomer: Customer,
+  profile: CustomerTaxProfile
+): Customer {
+  const phone =
+    profile.taxPhone?.trim() ||
+    billingCustomer.taxPhone?.trim() ||
+    billingCustomer.phone;
+  return {
+    ...billingCustomer,
+    useTax: true,
+    taxName: profile.taxName.trim(),
+    taxAddress: profile.taxAddress.trim(),
+    taxId: profile.taxId.trim(),
+    taxPhone: phone,
+    taxBranchType: profile.taxBranchType || "HEAD_OFFICE",
+    taxBranchNo:
+      profile.taxBranchType === "BRANCH"
+        ? profile.taxBranchNo || ""
+        : "00000",
+    taxProfileId: profile.id,
+  };
+}
+
 export function buildCustomerSnapshotForTaxInvoice(
   c: Customer,
   profile: CustomerTaxProfile
