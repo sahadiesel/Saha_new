@@ -152,6 +152,7 @@ function DocumentView({
     const isQuotation = document.docType === 'QUOTATION';
     const isReceipt = document.docType === 'RECEIPT';
     const isTaxInvoice = document.docType === "TAX_INVOICE";
+    const isDeliveryNote = document.docType === "DELIVERY_NOTE";
 
     /** รวมบรรทัดใน string สำหรับพิมพ์ (newline / ช่องว่างพิเศษ) */
     const collapseToSingleLine = (s: string) =>
@@ -182,8 +183,8 @@ function DocumentView({
             <Table
                 className={cn(
                     "mb-4 border-t border-b",
-                    /* เฉพาะ tbody tr h-auto — ช่วยให้ Chrome ซ้ำ thead; ไม่ใส่ text-sm/py เล็กทั้งตาราง */
-                    isTaxInvoice && "[&_tbody_tr]:h-auto"
+                    /* เฉพาะ tbody tr h-auto — ช่วยให้ Chrome ซ้ำ thead */
+                    (isTaxInvoice || isDeliveryNote) && "[&_tbody_tr]:h-auto"
                 )}
             >
                 <TableHeader className="[&_tr]:border-b-0">
@@ -195,7 +196,7 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-2 gap-4 w-full",
-                        isTaxInvoice || isQuotation
+                        isTaxInvoice || isQuotation || isDeliveryNote
                             ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start"
                             : "grid grid-cols-2 gap-8"
                     )}
@@ -204,7 +205,7 @@ function DocumentView({
                         <h2
                             className={cn(
                                 "font-bold leading-snug",
-                                isTaxInvoice ? "text-lg" : "text-base"
+                                isTaxInvoice || isDeliveryNote ? "text-lg" : "text-base"
                             )}
                         >
                             {(document.storeSnapshot.taxName || document.storeSnapshot.informalName) || "Sahadiesel Service"}
@@ -213,6 +214,18 @@ function DocumentView({
                         {isTaxInvoice ? (
                             <>
                                 <p className="text-sm leading-snug break-words">{storeAddressOneLine || "—"}</p>
+                                {document.storeSnapshot.phone && (
+                                    <p className="text-sm leading-snug">โทร {document.storeSnapshot.phone}</p>
+                                )}
+                                {document.storeSnapshot.taxId && !isBilling && (
+                                    <p className="text-xs leading-snug">เลขประจำตัวผู้เสียภาษี {document.storeSnapshot.taxId}</p>
+                                )}
+                            </>
+                        ) : isDeliveryNote ? (
+                            <>
+                                <p className="text-sm leading-snug whitespace-pre-wrap break-words">
+                                    {document.storeSnapshot.taxAddress}
+                                </p>
                                 {document.storeSnapshot.phone && (
                                     <p className="text-sm leading-snug">โทร {document.storeSnapshot.phone}</p>
                                 )}
@@ -237,7 +250,7 @@ function DocumentView({
                     <div
                         className={cn(
                             "text-right min-w-0",
-                            isTaxInvoice ? "space-y-0.5" : isQuotation ? "space-y-1" : "space-y-1"
+                            isTaxInvoice || isDeliveryNote ? "space-y-0.5" : isQuotation ? "space-y-1" : "space-y-1"
                         )}
                     >
                         {isTaxInvoice ? (
@@ -249,6 +262,12 @@ function DocumentView({
                                 </h1>
                                 <h2 className="text-base font-bold text-primary leading-tight sm:text-lg">Tax Invoice</h2>
                                 <p className="text-sm font-medium text-foreground pt-0.5">เอกสารออกเป็นชุด</p>
+                                <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
+                                <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), "dd/MM/yyyy")}</p>
+                            </>
+                        ) : isDeliveryNote ? (
+                            <>
+                                <h1 className="text-lg font-bold text-primary leading-tight sm:text-xl">{finalDocTitle}</h1>
                                 <p className="text-sm font-bold">เลขที่: {document.docNo}</p>
                                 <p className="text-sm">วันที่: {safeFormat(new Date(document.docDate), "dd/MM/yyyy")}</p>
                             </>
@@ -271,7 +290,7 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-0 p-3 border rounded-md w-full",
-                        isTaxInvoice || isQuotation
+                        isTaxInvoice || isQuotation || isDeliveryNote
                             ? "grid gap-3 [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)]"
                             : "grid grid-cols-2 gap-8"
                     )}
@@ -280,7 +299,7 @@ function DocumentView({
                         <h4
                             className={cn(
                                 "font-bold text-primary uppercase mb-1",
-                                isTaxInvoice
+                                isTaxInvoice || isDeliveryNote
                                     ? "text-xs tracking-wide"
                                     : "text-[10px] tracking-wider"
                             )}
@@ -305,6 +324,20 @@ function DocumentView({
                                     </p>
                                 )}
                             </>
+                        ) : isDeliveryNote ? (
+                            <>
+                                <p className="text-base font-bold leading-tight text-foreground">
+                                    <span>{displayCustomerName}</span>
+                                    {branchLabel && <span className="font-bold text-primary ml-2">({branchLabel})</span>}
+                                </p>
+                                <p className="text-sm leading-snug whitespace-pre-wrap">{displayCustomerAddress}</p>
+                                <div className="text-sm space-y-0.5">
+                                    <p>โทร: {displayCustomerPhone}</p>
+                                    {(isTaxDoc || customer.useTax) && customer.taxId && (
+                                        <p className="font-bold">เลขประจำตัวผู้เสียภาษี: {customer.taxId}</p>
+                                    )}
+                                </div>
+                            </>
                         ) : (
                             <>
                                 <p className="text-sm">
@@ -324,7 +357,7 @@ function DocumentView({
                         )}
                     </div>
                     <div className="min-w-0">
-                        <VehicleInfo doc={document} isTaxInvoicePrint={isTaxInvoice} />
+                        <VehicleInfo doc={document} isTaxInvoicePrint={isTaxInvoice || isDeliveryNote} />
                     </div>
                 </div>
                         </TableHead>
