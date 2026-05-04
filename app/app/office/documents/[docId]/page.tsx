@@ -180,12 +180,13 @@ function DocumentView({
     const itemColCount = isWithdrawal ? 4 : 5;
 
     return (
-        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:block print:min-h-0">
             <Table
                 className={cn(
                     "mb-4 border-t border-b",
+                    /* h-auto เฉพาะ tbody — [&_tr]:h-auto เดิมทำให้ Chrome ไม่ซ้ำ thead ใบกำกับภาษี */
                     isTaxInvoice &&
-                        "text-sm [&_th]:h-8 [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5 [&_tr]:h-auto"
+                        "text-sm [&_tbody_tr]:h-auto [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5"
                 )}
             >
                 <TableHeader className="[&_tr]:border-b-0">
@@ -197,12 +198,14 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-2 gap-4 w-full",
-                        isTaxInvoice ? "flex flex-row" : isQuotation ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start" : "grid grid-cols-2 gap-8"
+                        isTaxInvoice
+                            ? "grid [grid-template-columns:minmax(0,13fr)_minmax(0,7fr)] items-start gap-4"
+                            : isQuotation
+                              ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start"
+                              : "grid grid-cols-2 gap-8"
                     )}
                 >
-                    <div
-                        className={cn("space-y-1 min-w-0", isTaxInvoice ? "w-[65%] shrink-0 pr-2" : undefined)}
-                    >
+                    <div className={cn("space-y-1 min-w-0", isTaxInvoice ? "pr-1" : undefined)}>
                         <h2
                             className={cn(
                                 "font-bold leading-snug",
@@ -238,8 +241,8 @@ function DocumentView({
                     </div>
                     <div
                         className={cn(
-                            "text-right",
-                            isTaxInvoice ? "w-[35%] min-w-0 space-y-0.5" : isQuotation ? "min-w-0 space-y-1" : "space-y-1"
+                            "text-right min-w-0",
+                            isTaxInvoice ? "space-y-0.5" : isQuotation ? "space-y-1" : "space-y-1"
                         )}
                     >
                         {isTaxInvoice ? (
