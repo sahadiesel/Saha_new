@@ -418,73 +418,83 @@ function DocumentView({
                                 )}
                             </TableRow>
                         ))}
+                        {/*
+                          หมายเหตุ/ยอด/ลายเซ็นต้องอยู่ใน tbody เดียวกับรายการ — ถ้าอยู่นอก table
+                          Chrome/Edge จะตัดหน้าหลังจบตาราง ทำให้หน้า 2 ไม่มี thead ซ้ำ
+                        */}
+                        <TableRow className="print-doc-footer-row border-0 hover:bg-transparent">
+                            <TableCell
+                                colSpan={itemColCount}
+                                className="border-0 p-0 align-top print:border-0 [&_*]:text-black"
+                            >
+                                <div className="grid grid-cols-2 gap-8 items-start">
+                                    <div className="text-left space-y-4">
+                                        {document.docType === "TAX_INVOICE" ? (
+                                            <div className="border border-neutral-400 rounded-sm p-2.5 min-h-[5.5rem] print:border-neutral-500">
+                                                <p className="text-xs font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
+                                                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
+                                                    {document.notes?.trim() ?? ""}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            document.notes && (
+                                                <div className="text-[11px] whitespace-pre-wrap">
+                                                    <span className="font-bold">หมายเหตุ:</span> {document.notes}
+                                                </div>
+                                            )
+                                        )}
+
+                                        {isReceipt && (
+                                            <div className="p-3 border rounded bg-muted/5 space-y-1">
+                                                <p className="text-[10px] font-bold text-primary uppercase tracking-widest">ข้อมูลการชำระเงิน</p>
+                                                <p className="text-xs font-bold">ชำระโดย: <span className="font-normal">{accountName || (document.paymentMethod === 'CASH' ? 'เงินสด' : 'เงินโอน')}</span></p>
+                                                <p className="text-[10px] text-muted-foreground italic">วันที่ได้รับเงิน: {safeFormat(new Date(document.paymentDate || document.docDate), 'dd/MM/yyyy')}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {!isWithdrawal && (
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-sm"><span>รวมเป็นเงิน</span><span>{document.subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            <div className="flex justify-between text-sm"><span>ส่วนลด</span><span>{document.discountAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            <div className="flex justify-between font-bold text-sm"><span>ยอดหลังหักส่วนลด</span><span>{document.net.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            {document.withTax && <div className="flex justify-between text-sm"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{document.vatAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>}
+                                            <Separator className="my-1" />
+                                            <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+
+                                            <div className="text-right pt-1">
+                                                <span
+                                                    className={cn(
+                                                        "font-bold italic",
+                                                        isTaxInvoice ? "text-sm" : "text-[11px]"
+                                                    )}
+                                                >
+                                                    {thaiBahtText(document.grandTotal)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-12 text-center text-[11px] pb-4 pt-10">
+                                    <div className="flex flex-col items-center">
+                                        <p className="mb-6">.................................................</p>
+                                        <p className="font-bold">{labelSender}</p>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <p className="mb-6">.................................................</p>
+                                        <p className="font-bold">{labelReceiver}</p>
+                                    </div>
+                                </div>
+
+                                {(isReceipt || isWithdrawal) && (
+                                    <div className="text-center text-[10px] text-muted-foreground border-t pt-2 mt-4 italic">
+                                        {isReceipt ? "\"เอกสารฉบับนี้จะสมบูรณ์เมื่อได้รับเงินครบถ้วนแล้วเท่านั้น\"" : "\"ใช้สำหรับการเบิกอะไหล่ภายในคลังสินค้า Sahadiesel เท่านั้น\""}
+                                    </div>
+                                )}
+                            </TableCell>
+                        </TableRow>
                     </TableBody>
                 </Table>
-
-                <div className="grid grid-cols-2 gap-8 items-start">
-                    <div className="text-left space-y-4">
-                        {document.docType === "TAX_INVOICE" ? (
-                            <div className="border border-neutral-400 rounded-sm p-2.5 min-h-[5.5rem] print:border-neutral-500">
-                                <p className="text-xs font-bold text-primary uppercase tracking-wide mb-1.5">หมายเหตุ</p>
-                                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground min-h-[3rem]">
-                                    {document.notes?.trim() ?? ""}
-                                </div>
-                            </div>
-                        ) : (
-                            document.notes && (
-                                <div className="text-[11px] whitespace-pre-wrap">
-                                    <span className="font-bold">หมายเหตุ:</span> {document.notes}
-                                </div>
-                            )
-                        )}
-
-                        {isReceipt && (
-                            <div className="p-3 border rounded bg-muted/5 space-y-1">
-                                <p className="text-[10px] font-bold text-primary uppercase tracking-widest">ข้อมูลการชำระเงิน</p>
-                                <p className="text-xs font-bold">ชำระโดย: <span className="font-normal">{accountName || (document.paymentMethod === 'CASH' ? 'เงินสด' : 'เงินโอน')}</span></p>
-                                <p className="text-[10px] text-muted-foreground italic">วันที่ได้รับเงิน: {safeFormat(new Date(document.paymentDate || document.docDate), 'dd/MM/yyyy')}</p>
-                            </div>
-                        )}
-                    </div>
-                    {!isWithdrawal && (
-                        <div className="space-y-1">
-                            <div className="flex justify-between text-sm"><span>รวมเป็นเงิน</span><span>{document.subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
-                            <div className="flex justify-between text-sm"><span>ส่วนลด</span><span>{document.discountAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
-                            <div className="flex justify-between font-bold text-sm"><span>ยอดหลังหักส่วนลด</span><span>{document.net.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
-                            {document.withTax && <div className="flex justify-between text-sm"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{document.vatAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>}
-                            <Separator className="my-1" />
-                            <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
-                            
-                            <div className="text-right pt-1">
-                                <span
-                                    className={cn(
-                                        "font-bold italic",
-                                        isTaxInvoice ? "text-sm" : "text-[11px]"
-                                    )}
-                                >
-                                    {thaiBahtText(document.grandTotal)}
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-            <div className="grid grid-cols-2 gap-12 mt-auto text-center text-[11px] pb-4 pt-10">
-                <div className="flex flex-col items-center">
-                    <p className="mb-6">.................................................</p>
-                    <p className="font-bold">{labelSender}</p>
-                </div>
-                <div className="flex flex-col items-center">
-                    <p className="mb-6">.................................................</p>
-                    <p className="font-bold">{labelReceiver}</p>
-                </div>
-            </div>
-
-            {(isReceipt || isWithdrawal) && (
-                <div className="text-center text-[10px] text-muted-foreground border-t pt-2 mt-4 italic">
-                    {isReceipt ? "\"เอกสารฉบับนี้จะสมบูรณ์เมื่อได้รับเงินครบถ้วนแล้วเท่านั้น\"" : "\"ใช้สำหรับการเบิกอะไหล่ภายในคลังสินค้า Sahadiesel เท่านั้น\""}
-                </div>
-            )}
         </div>
     );
 }

@@ -169,8 +169,19 @@
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }
-  .printable-document tbody tr {
+  .printable-document tbody tr:not(.print-doc-footer-row) {
       break-inside: avoid !important;
+  }
+  /* แถวท้าย (หมายเหตุ/ยอด/ลายเซ็น) อยู่ใน tbody เดียวกับรายการเพื่อให้ Chrome ซ้ำ thead */
+  .printable-document tbody tr.print-doc-footer-row td,
+  .printable-document tbody tr.print-doc-footer-row th {
+    border: none !important;
+    padding: 0 !important;
+    vertical-align: top !important;
+  }
+  .printable-document tbody tr.print-doc-footer-row {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
   .printable-document th,
   .printable-document td {
