@@ -137,7 +137,6 @@
     margin: 0 auto !important;
     box-sizing: border-box !important;
     overflow: visible !important;
-    display: block !important;
   }
 
   .printable-document * {
@@ -183,10 +182,5 @@
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }
-  .printable-document th,
-  .printable-document td {
-    padding: 4px 6px !important;
-    vertical-align: middle !important;
-    border: 1px solid #ddd !important;
-  }
+  /* ไม่บังคับ padding/font ทุกเซลล์ — จะทับ Tailwind (เช่น p-4) ทำให้ตัวหนังสือดูบีบตอนพิมพ์ */
 }

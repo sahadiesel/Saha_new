@@ -178,13 +178,12 @@ function DocumentView({
     const itemColCount = isWithdrawal ? 4 : 5;
 
     return (
-        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:block print:min-h-0">
+        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
             <Table
                 className={cn(
                     "mb-4 border-t border-b",
-                    /* h-auto เฉพาะ tbody — [&_tr]:h-auto เดิมทำให้ Chrome ไม่ซ้ำ thead ใบกำกับภาษี */
-                    isTaxInvoice &&
-                        "text-sm [&_tbody_tr]:h-auto [&_th]:py-1.5 [&_th]:text-sm [&_td]:py-1.5"
+                    /* เฉพาะ tbody tr h-auto — ช่วยให้ Chrome ซ้ำ thead; ไม่ใส่ text-sm/py เล็กทั้งตาราง */
+                    isTaxInvoice && "[&_tbody_tr]:h-auto"
                 )}
             >
                 <TableHeader className="[&_tr]:border-b-0">
@@ -196,14 +195,12 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-2 gap-4 w-full",
-                        isTaxInvoice
-                            ? "grid [grid-template-columns:minmax(0,13fr)_minmax(0,7fr)] items-start gap-4"
-                            : isQuotation
-                              ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start"
-                              : "grid grid-cols-2 gap-8"
+                        isTaxInvoice || isQuotation
+                            ? "grid [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start"
+                            : "grid grid-cols-2 gap-8"
                     )}
                 >
-                    <div className={cn("space-y-1 min-w-0", isTaxInvoice ? "pr-1" : undefined)}>
+                    <div className="space-y-1 min-w-0">
                         <h2
                             className={cn(
                                 "font-bold leading-snug",
@@ -274,11 +271,9 @@ function DocumentView({
                 <div
                     className={cn(
                         "mb-0 p-3 border rounded-md w-full",
-                        isTaxInvoice
-                            ? "grid gap-3 [grid-template-columns:minmax(0,13fr)_minmax(0,7fr)]"
-                            : isQuotation
-                              ? "grid gap-3 [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)]"
-                              : "grid grid-cols-2 gap-8"
+                        isTaxInvoice || isQuotation
+                            ? "grid gap-3 [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)]"
+                            : "grid grid-cols-2 gap-8"
                     )}
                 >
                     <div className="space-y-1 min-w-0">
@@ -335,44 +330,30 @@ function DocumentView({
                         </TableHead>
                     </TableRow>
                     <TableRow className="border-b bg-muted/20 hover:bg-transparent">
-                            <TableHead
-                                className={cn(
-                                    "w-12 text-center text-black font-bold",
-                                    isTaxInvoice ? "h-8 py-1.5" : "h-8"
-                                )}
-                            >
+                            <TableHead className="h-8 w-12 text-center text-black font-bold">
                                 #
                             </TableHead>
-                            <TableHead
-                                className={cn("text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
-                            >
+                            <TableHead className="h-8 text-black font-bold">
                                 รายการ
                             </TableHead>
                             <TableHead
                                 className={cn(
-                                    "text-right text-black font-bold",
-                                    isTaxInvoice ? "h-8 py-1.5" : "h-8",
+                                    "h-8 text-right text-black font-bold",
                                     isWithdrawal ? "w-32" : "w-20"
                                 )}
                             >
                                 {isWithdrawal ? "จำนวนเบิก" : "จำนวน"}
                             </TableHead>
                             {isWithdrawal ? (
-                                <TableHead
-                                    className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
-                                >
+                                <TableHead className="h-8 w-32 text-right text-black font-bold">
                                     คงเหลือในคลัง
                                 </TableHead>
                             ) : (
                                 <>
-                                    <TableHead
-                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
-                                    >
+                                    <TableHead className="h-8 w-32 text-right text-black font-bold">
                                         ราคา/หน่วย
                                     </TableHead>
-                                    <TableHead
-                                        className={cn("w-32 text-right text-black font-bold", isTaxInvoice ? "h-8 py-1.5" : "h-8")}
-                                    >
+                                    <TableHead className="h-8 w-32 text-right text-black font-bold">
                                         รวมเงิน
                                     </TableHead>
                                 </>
@@ -382,37 +363,25 @@ function DocumentView({
                     <TableBody>
                         {document.items.map((item, index) => (
                             <TableRow key={index} className="border-b hover:bg-transparent">
-                                <TableCell
-                                    className={cn("text-center", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
-                                >
+                                <TableCell className="h-8 py-1.5 text-center">
                                     {index + 1}
                                 </TableCell>
-                                <TableCell
-                                    className={isTaxInvoice ? "py-1.5 leading-normal" : "py-1.5 h-8"}
-                                >
+                                <TableCell className="h-8 py-1.5">
                                     {item.description}
                                 </TableCell>
-                                <TableCell
-                                    className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
-                                >
+                                <TableCell className="h-8 py-1.5 text-right">
                                     {item.quantity}
                                 </TableCell>
                                 {isWithdrawal ? (
-                                    <TableCell
-                                        className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
-                                    >
+                                    <TableCell className="h-8 py-1.5 text-right">
                                         {item.stockSnapshot !== undefined ? item.stockSnapshot : "-"}
                                     </TableCell>
                                 ) : (
                                     <>
-                                        <TableCell
-                                            className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
-                                        >
+                                        <TableCell className="h-8 py-1.5 text-right">
                                             {item.unitPrice.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
-                                        <TableCell
-                                            className={cn("text-right", isTaxInvoice ? "py-1.5" : "py-1.5 h-8")}
-                                        >
+                                        <TableCell className="h-8 py-1.5 text-right">
                                             {item.total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
                                     </>
@@ -463,12 +432,7 @@ function DocumentView({
                                             <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
 
                                             <div className="text-right pt-1">
-                                                <span
-                                                    className={cn(
-                                                        "font-bold italic",
-                                                        isTaxInvoice ? "text-sm" : "text-[11px]"
-                                                    )}
-                                                >
+                                                <span className="font-bold italic text-[11px]">
                                                     {thaiBahtText(document.grandTotal)}
                                                 </span>
                                             </div>
