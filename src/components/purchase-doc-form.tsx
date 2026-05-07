@@ -121,6 +121,7 @@ const purchaseFormSchema = z.object({
   grandTotal: z.coerce.number(),
   paymentMode: z.enum(["CASH", "CREDIT"]),
   dueDate: z.string().optional().nullable(),
+  expectedPaymentAccountId: z.string().optional(),
   note: z.string().optional(),
   suggestedAccountId: z.string().optional(),
   suggestedPaymentMethod: z.enum(["CASH", "TRANSFER"]).optional(),
@@ -266,6 +267,7 @@ export function PurchaseDocForm() {
         grandTotal: docToEdit.grandTotal || 0,
         paymentMode: docToEdit.paymentMode || "CASH",
         dueDate: docToEdit.dueDate || null,
+        expectedPaymentAccountId: docToEdit.expectedPaymentAccountId || "",
         note: docToEdit.note || "",
         suggestedAccountId: docToEdit.suggestedAccountId || '',
         suggestedPaymentMethod: docToEdit.suggestedPaymentMethod || 'CASH',
@@ -443,6 +445,9 @@ export function PurchaseDocForm() {
                 amountTotal: data.grandTotal,
                 suggestedAccountId: data.suggestedAccountId || null,
                 suggestedPaymentMethod: data.suggestedPaymentMethod || null,
+                expectedPaymentAccountId: data.paymentMode === 'CREDIT'
+                  ? (data.expectedPaymentAccountId?.trim() && data.expectedPaymentAccountId !== '__none__' ? data.expectedPaymentAccountId.trim() : null)
+                  : null,
                 note: data.note || "",
                 updatedAt: serverTimestamp(),
                 createdAt: serverTimestamp(),
@@ -602,17 +607,31 @@ export function PurchaseDocForm() {
                           </FormItem>
                       )} />
                       {watchedPaymentMode === 'CREDIT' ? (
-                          <FormField control={form.control} name="dueDate" render={({ field }) => (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <FormField control={form.control} name="dueDate" render={({ field }) => (
                               <FormItem className="flex flex-col">
-                                <FormLabel>วันครบกำหนด</FormLabel>
+                                <FormLabel>วันครบกำหนด (ไม่บังคับ)</FormLabel>
                                 <Popover>
                                   <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
                                   <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
                                 </Popover>
                                 <FormMessage />
                               </FormItem>
-                            )}
-                          />
+                            )} />
+                            <FormField control={form.control} name="expectedPaymentAccountId" render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>บัญชีที่คาดว่าจะจ่าย (ไม่บังคับ)</FormLabel>
+                                <Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"} disabled={isSubmitting || isLocked}>
+                                  <FormControl><SelectTrigger><SelectValue placeholder="ไม่ระบุ" /></SelectTrigger></FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">ไม่ระบุ</SelectItem>
+                                    {accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )} />
+                          </div>
                       ) : (
                           <div className="grid grid-cols-2 gap-4">
                               <FormField name="suggestedPaymentMethod" render={({ field }) => (

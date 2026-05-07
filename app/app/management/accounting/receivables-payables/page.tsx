@@ -19,19 +19,16 @@ import {
   type Firestore,
   type QueryDocumentSnapshot,
   type DocumentData,
-  type DocumentReference,
-  type Query,
   addDoc,
   limit,
   orderBy,
   startAfter,
-  runTransaction,
 } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { format as dfFormat, parseISO, startOfMonth, endOfMonth, getYear } from "date-fns";
+import { format as dfFormat, parseISO } from "date-fns";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -44,8 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Search, AlertCircle, HandCoins, ExternalLink, PlusCircle, ChevronsUpDown, MoreHorizontal, Wallet, ArrowDownCircle, Info, FileStack, CalendarDays, Filter, Calculator } from "lucide-react";
+import { Loader2, Search, AlertCircle, ExternalLink, PlusCircle, ChevronsUpDown, MoreHorizontal, Info, FileStack, CalendarDays, Filter, Calculator } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -59,7 +55,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Separator } from "@/components/ui/separator";
 import { Calendar } from "@/components/ui/calendar";
 
 import type {
@@ -68,10 +63,6 @@ import type {
   UserProfile,
   Vendor,
   Document as DocumentType,
-  AccountingEntry,
-  PurchaseDoc,
-  StoreSettings,
-  DocumentSettings,
 } from "@/lib/types";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
@@ -83,7 +74,7 @@ import {
   dedupeUnpaidArBySalesDocNo,
   isArDedupeDocType,
 } from "@/lib/accounting-ar-dedupe";
-import { validateAccountingEntryDate, validateCheckDueDate } from "@/lib/accounting-entry-date";
+import { PayCreditorDialog } from "@/components/accounting/pay-creditor-dialog";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', {
@@ -124,285 +115,177 @@ async function getApprovedTaxInvoiceSnapshotsPaged(db: Firestore): Promise<Query
   return out;
 }
 
-const apPaymentSchema = z.object({
-  paymentDate: z.string().min(1, "กรุณาเลือกวันที่"),
-  amount: z.coerce.number().positive("จำนวนเงินต้องมากกว่า 0"),
-  accountId: z.string().min(1, "กรุณาเลือกบัญชี"),
-  paymentInstrument: z.enum(["CASH", "TRANSFER", "CHECK"]).default("TRANSFER"),
-  checkDueDate: z.string().optional(),
-  notes: z.string().optional(),
-  withholdingEnabled: z.boolean().default(false),
-  withholdingPercent: z.coerce.number().min(0).max(100).optional(),
-}).superRefine((data, ctx) => {
-  if (data.paymentInstrument === "CHECK" && !data.checkDueDate?.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "กรุณาระบุวันครบกำหนดเช็ค",
-      path: ["checkDueDate"],
-    });
-  }
-});
-
-function PayCreditorDialog({ obligation, accounts, isOpen, onClose }: { obligation: WithId<AccountingObligation>; accounts: WithId<AccountingAccount>[]; isOpen: boolean; onClose: () => void; }) {
-  const { db } = useFirebase();
-  const { profile } = useAuth();
-  const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const form = useForm<z.infer<typeof apPaymentSchema>>({
-    resolver: zodResolver(apPaymentSchema),
-    defaultValues: {
-      paymentDate: "",
-      amount: obligation.balance,
-      notes: "",
-      accountId: accounts[0]?.id || "",
-      paymentInstrument: "TRANSFER",
-      checkDueDate: "",
-      withholdingEnabled: false,
-      withholdingPercent: 3,
-    },
-  });
-  
-  const watchedAccountId = form.watch("accountId");
-  const watchedAmount = form.watch("amount") || 0;
-  const watchedWhtEnabled = form.watch("withholdingEnabled");
-  const watchedWhtPercent = form.watch("withholdingPercent") || 0;
-  const watchedInstrument = form.watch("paymentInstrument");
-
-  const sourceDocRef = useMemo(() => {
-      if (!db || !obligation.sourceDocId) return null;
-      const col = obligation.sourceDocType === 'PURCHASE' ? 'purchaseDocs' : 'documents';
-      return doc(db, col, obligation.sourceDocId);
-  }, [db, obligation.sourceDocId, obligation.sourceDocType]);
-  const { data: sourceDoc } = useDoc<any>(sourceDocRef);
-
-  const accountRef = useMemo((): DocumentReference<AccountingAccount> | null => {
-    if (!db || !watchedAccountId) return null;
-    return doc(db, "accountingAccounts", watchedAccountId) as DocumentReference<AccountingAccount>;
-  }, [db, watchedAccountId]);
-  const { data: accountData, isLoading: isLoadingAccount } = useDoc<AccountingAccount>(accountRef);
-
-  const entriesQuery = useMemo((): Query<AccountingEntry> | null => {
-    if (!db || !watchedAccountId) return null;
-    return query(
-      collection(db, "accountingEntries"),
-      where("accountId", "==", watchedAccountId)
-    ) as Query<AccountingEntry>;
-  }, [db, watchedAccountId]);
-  const { data: accountEntries, isLoading: isLoadingEntries } = useCollection<AccountingEntry>(entriesQuery);
-
-  const storeSettingsRef = useMemo((): DocumentReference<StoreSettings> | null => {
-    if (!db) return null;
-    return doc(db, "settings", "store") as DocumentReference<StoreSettings>;
-  }, [db]);
-  const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
-
-  const currentBalance = useMemo(() => {
-    if (!accountData) return 0;
-    let balance = accountData.openingBalance || 0;
-    if (accountEntries) {
-      accountEntries.forEach(e => {
-        if (e.entryType === 'RECEIPT' || e.entryType === 'CASH_IN') balance += e.amount;
-        else if (e.entryType === 'CASH_OUT') balance -= e.amount;
-      });
-    }
-    return balance;
-  }, [accountData, accountEntries]);
-
-  const whtInfo = useMemo(() => {
-      if (!sourceDoc || !watchedWhtEnabled) return { whtBase: 0, whtAmount: 0 };
-      const isPurchase = obligation.sourceDocType === 'PURCHASE';
-      if (!isPurchase) return { whtBase: watchedAmount, whtAmount: watchedAmount * (watchedWhtPercent / 100) };
-      const purchase = sourceDoc as PurchaseDoc;
-      const whtBase = (purchase.withTax && purchase.vatAmount > 0) ? purchase.subtotal : purchase.grandTotal;
-      return { whtBase, whtAmount: whtBase * (watchedWhtPercent / 100) };
-  }, [sourceDoc, watchedWhtEnabled, watchedWhtPercent, watchedAmount, obligation.sourceDocType]);
-
-  const cashOutAmount = watchedAmount - whtInfo.whtAmount;
-  const balanceAfter = currentBalance - cashOutAmount;
-  const isInsufficient = currentBalance < cashOutAmount;
-  const canOverride = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
-  const isBlocked = isInsufficient && !canOverride;
-
-  useEffect(() => {
-    if (isOpen) {
-        form.reset({ paymentDate: dfFormat(new Date(), "yyyy-MM-dd"), amount: obligation.balance, notes: "", accountId: accounts[0]?.id || "", paymentInstrument: "TRANSFER", checkDueDate: "", withholdingEnabled: false, withholdingPercent: 3 });
-    }
-  }, [obligation, accounts, form, isOpen]);
-
-  const handleSavePayment = async (data: z.infer<typeof apPaymentSchema>) => {
-    if (!db || !profile || !storeSettings) return;
-    const account = accounts.find(a => a.id === data.accountId);
-    if (!account) return;
-    if (data.withholdingEnabled) {
-        if (!storeSettings.taxId) { toast({ variant: 'destructive', title: 'ข้อมูลร้านไม่ครบถ้วน', description: 'กรุณาตั้งค่าเลขผู้เสียภาษีของร้านก่อนออกใบหัก ณ ที่จ่าย'}); return; }
-        if (obligation.sourceDocType === 'PURCHASE' && sourceDoc) {
-            const purchase = sourceDoc as PurchaseDoc;
-            if (!purchase.vendorSnapshot.taxId || !purchase.vendorSnapshot.address) { toast({ variant: 'destructive', title: 'ข้อมูลร้านค้าไม่ครบถ้วน', description: 'ร้านค้าต้องมีเลขผู้เสียภาษีและที่อยู่เพื่อออกใบหัก ณ ที่จ่าย'}); return; }
-        }
-    }
-    if (data.paymentInstrument === "CASH" && account.type !== "CASH") {
-      toast({ variant: "destructive", title: "บัญชีไม่ตรงกับวิธีจ่าย", description: "เลือกบัญชีเงินสดเมื่อจ่ายเงินสด" });
-      return;
-    }
-    if ((data.paymentInstrument === "TRANSFER" || data.paymentInstrument === "CHECK") && account.type === "CASH") {
-      toast({ variant: "destructive", title: "บัญชีไม่ตรงกับวิธีจ่าย", description: "เลือกบัญชีธนาคารเมื่อจ่ายโอนหรือจ่ายเช็ค" });
-      return;
-    }
-
-    let payYmd = data.paymentDate;
-    let checkDueNormalized = "";
-    if (data.paymentInstrument === "CHECK") {
-      const checkDue = data.checkDueDate?.trim();
-      if (!checkDue) {
-        toast({ variant: "destructive", title: "กรุณาระบุวันครบกำหนดเช็ค" });
-        return;
-      }
-      const vc = validateCheckDueDate(checkDue);
-      if (!vc.ok) {
-        toast({ variant: "destructive", title: "วันครบกำหนดเช็คไม่ถูกต้อง", description: vc.message });
-        return;
-      }
-      checkDueNormalized = vc.normalized;
-    } else {
-      const vd = validateAccountingEntryDate(data.paymentDate);
-      if (!vd.ok) {
-        toast({ variant: "destructive", title: "วันที่จ่ายไม่ถูกต้อง", description: vd.message });
-        return;
-      }
-      payYmd = vd.normalized;
-    }
-
-    setIsSubmitting(true);
-    const paymentMethod = data.paymentInstrument === "CASH" ? "CASH" : "TRANSFER";
-    try {
-      if (data.paymentInstrument === "CHECK") {
-        await addDoc(collection(db, "accountingCheckItems"), sanitizeForFirestore({
-          direction: "PAY",
-          status: "PENDING",
-          amount: data.amount,
-          dueDate: checkDueNormalized,
-          accountId: data.accountId,
-          obligationId: obligation.id,
-          purchaseDocId: obligation.sourceDocType === "PURCHASE" ? obligation.sourceDocId : undefined,
-          sourceDocType: obligation.sourceDocType,
-          sourceDocId: obligation.sourceDocId,
-          sourceDocNo: obligation.invoiceNo || obligation.sourceDocNo,
-          vendorId: obligation.vendorId,
-          vendorNameSnapshot: obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot,
-          withholdingEnabled: data.withholdingEnabled,
-          withholdingPercent: data.withholdingEnabled ? data.withholdingPercent : null,
-          notes: data.notes || null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdByUid: profile.uid,
-          createdByName: profile.displayName ?? "",
-        }));
-        toast({ title: "บันทึกเช็คจ่ายแล้ว", description: "จะตัดบัญชีและตัดเจ้าหนี้เมื่อกดยืนยันในแท็บเช็ค" });
-        onClose();
-        return;
-      }
-
-      await runTransaction(db, async (transaction) => {
-        const year = Number(payYmd.slice(0, 4));
-        const counterRef = doc(db, 'documentCounters', String(year));
-        const docSettingsRef = doc(db, 'settings', 'documents');
-        const [counterSnap, settingsSnap] = await Promise.all([ transaction.get(counterRef), transaction.get(docSettingsRef) ]);
-        const settingsData = settingsSnap.exists() ? settingsSnap.data() as DocumentSettings : {};
-        const whtPrefix = settingsData.withholdingTaxPrefix || 'WHT';
-        let currentCounters = counterSnap.exists() ? counterSnap.data() as any : { year };
-        const lastWhtPrefix = currentCounters.withholdingTaxPrefix;
-        const lastWhtCount = currentCounters.withholdingTax || 0;
-        let newWhtCount = (lastWhtPrefix !== whtPrefix) ? 1 : lastWhtCount + 1;
-        let whtDocId = '';
-        if (data.withholdingEnabled && obligation.sourceDocType === 'PURCHASE' && sourceDoc) {
-            const purchase = sourceDoc as PurchaseDoc;
-            const whtDocNo = `${whtPrefix}${year}-${String(newWhtCount).padStart(4, '0')}`;
-            const whtRef = doc(collection(db, 'documents'));
-            whtDocId = whtRef.id;
-            transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, docType: 'WITHHOLDING_TAX', docNo: whtDocNo, docDate: payYmd, payerSnapshot: storeSettings, payeeSnapshot: { name: purchase.vendorSnapshot.companyName, taxId: purchase.vendorSnapshot.taxId, address: purchase.vendorSnapshot.address }, vendorId: purchase.vendorId, paidMonth: Number(payYmd.slice(5, 7)), paidYear: year, incomeTypeCode: 'ITEM5', paidAmountGross: whtInfo.whtBase, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount, status: 'ISSUED', senderName: profile.displayName, receiverName: purchase.vendorSnapshot.companyName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
-            transaction.set(counterRef, { ...currentCounters, withholdingTax: newWhtCount, withholdingTaxPrefix: whtPrefix }, { merge: true });
-        }
-        const entryRef = doc(collection(db, "accountingEntries"));
-        transaction.set(entryRef, sanitizeForFirestore({ entryType: "CASH_OUT", entryDate: payYmd, amount: cashOutAmount, grossAmount: data.amount, accountId: data.accountId, paymentMethod: paymentMethod, description: `จ่ายเจ้าหนี้: ${obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot} (บิล: ${obligation.invoiceNo || obligation.sourceDocNo})`, notes: data.notes, vendorId: obligation.vendorId, vendorShortNameSnapshot: obligation.vendorShortNameSnapshot, vendorNameSnapshot: obligation.vendorNameSnapshot, sourceDocNo: obligation.invoiceNo || obligation.sourceDocNo, obligationId: obligation.id, sourceDocType: obligation.sourceDocType, sourceDocId: obligation.sourceDocId, withholdingEnabled: data.withholdingEnabled, withholdingPercent: data.withholdingPercent, withholdingAmount: whtInfo.whtAmount, withholdingTaxDocId: whtDocId, vatAmount: sourceDoc?.vatAmount || 0, netAmount: sourceDoc?.subtotal || data.amount, createdAt: serverTimestamp() }));
-        const obligationRef = doc(db, 'accountingObligations', obligation.id);
-        const newAmountPaid = Math.round(((obligation.amountPaid || 0) + data.amount) * 100) / 100;
-        const newBalance = Math.max(0, Math.round((obligation.amountTotal - newAmountPaid) * 100) / 100);
-        const newStatus = newBalance <= 0.05 ? 'PAID' : 'PARTIAL';
-        transaction.update(obligationRef, { amountPaid: newAmountPaid, balance: newBalance, status: newStatus, lastPaymentDate: payYmd, paidOffDate: newStatus === 'PAID' ? payYmd : null, updatedAt: serverTimestamp() });
-        if (obligation.sourceDocId) {
-            const col = obligation.sourceDocType === 'PURCHASE' ? 'purchaseDocs' : 'documents';
-            transaction.update(doc(db, col, obligation.sourceDocId), { status: newStatus, updatedAt: serverTimestamp(), accountingEntryId: entryRef.id });
-        }
-      });
-      toast({ title: "บันทึกการจ่ายเจ้าหนี้สำเร็จ" });
-      onClose();
-    } catch (e: any) { toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message }); } finally { setIsSubmitting(false); }
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col p-0 overflow-hidden">
-        <DialogHeader className="p-6 pb-0"><DialogTitle>จ่ายเจ้าหนี้</DialogTitle><DialogDescription>สำหรับบิลเลขที่: {obligation.invoiceNo || obligation.sourceDocNo} ({obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot})</DialogDescription></DialogHeader>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          <Form {...form}>
-            <form id="ap-payment-form" onSubmit={form.handleSubmit(handleSavePayment)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <FormField control={form.control} name="paymentDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่จ่ายเงิน</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} />
-                <FormField name="amount" render={({ field }) => (<FormItem><FormLabel>ยอดตัดหนี้ (Gross)</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)} />
-              </div>
-              <div className="grid grid-cols-1 gap-4">
-                <FormField name="accountId" control={form.control} render={({ field }) => (<FormItem><FormLabel>หักจากบัญชี</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่ใช้จ่าย..."/></SelectTrigger></FormControl><SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent></Select><FormMessage/></FormItem>)} />
-              </div>
-              <FormField control={form.control} name="paymentInstrument" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>วิธีจ่ายจริง</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      <SelectItem value="TRANSFER">โอนเงิน (ตัดบัญชีทันที)</SelectItem>
-                      <SelectItem value="CASH">เงินสด (ตัดบัญชีทันที)</SelectItem>
-                      <SelectItem value="CHECK">เช็คจ่าย (รอยืนยันในแท็บเช็ค)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              {watchedInstrument === "CHECK" ? (
-                <FormField control={form.control} name="checkDueDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>วันครบกำหนดเช็ค</FormLabel>
-                    <FormControl><Input type="date" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-              ) : null}
-              <div className="p-4 border rounded-md bg-muted/20 space-y-4">
-                  <FormField control={form.control} name="withholdingEnabled" render={({ field }) => (<FormItem className="flex items-center gap-2 space-y-0"><FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl><FormLabel className="font-semibold text-primary cursor-pointer">หักภาษี ณ ที่จ่าย (WHT)</FormLabel></FormItem>)} />
-                  {watchedWhtEnabled && (<div className="space-y-3 pt-2 animate-in slide-in-from-top-1"><FormField control={form.control} name="withholdingPercent" render={({ field }) => (<FormItem><FormLabel>อัตราหัก (%)</FormLabel><Select onValueChange={(v) => field.onChange(Number(v))} value={field.value?.toString()}><FormControl><SelectTrigger className="h-8"><SelectValue/></SelectTrigger></FormControl><SelectContent><SelectItem value="1">1% (ขนส่ง)</SelectItem><SelectItem value="3">3% (บริการ)</SelectItem></SelectContent></Select></FormItem>)} />{sourceDoc?.withTax && (<div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 p-1 rounded"><Info className="h-3 w-3" />มี VAT: คำนวณ WHT จากยอดก่อนภาษี ({formatCurrency(sourceDoc.subtotal)})</div>)}<div className="flex justify-between text-xs font-medium text-destructive"><span>ยอดหักภาษี:</span><span>-{formatCurrency(whtInfo.whtAmount)}</span></div></div>)}
-              </div>
-              <div className="p-4 border rounded-md bg-muted/30 space-y-2"><h4 className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-2"><Wallet className="h-3 w-3" /> ตรวจสอบยอดเงิน</h4>{isLoadingAccount || isLoadingEntries ? (<div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin"/> กำลังคำนวณ...</div>) : (<div className="space-y-1 text-sm"><div className="flex justify-between"><span>ยอดคงเหลือปัจจุบัน:</span><span className="font-medium">{formatCurrency(currentBalance)}</span></div><div className="flex justify-between text-destructive"><span>เงินออกจริงครั้งนี้:</span><span className="font-medium">-{formatCurrency(cashOutAmount)}</span></div><Separator className="my-1"/><div className={cn("flex justify-between font-bold", balanceAfter < 0 ? "text-destructive" : "text-green-600")}><span>คงเหลือประมาณการ:</span><span>{formatCurrency(balanceAfter)}</span></div></div>)}</div>
-              {isInsufficient && (<div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /><div><p className="font-bold">ยอดเงินไม่เพียงพอ</p>{isBlocked ? (<p className="text-xs">กรุณาเลือกบัญชีที่มีเงินพอ หรือติดต่อ Admin</p>) : (<p className="text-xs italic">Admin/Manager: กด "บันทึก" เพื่อยืนยันรายการติดลบ</p>)}</div></div>)}
-              <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)} />
-            </form>
-          </Form>
-        </div>
-        <DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="ap-payment-form" disabled={isSubmitting || isBlocked}>{isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <HandCoins className="mr-2 h-4 w-4"/>}บันทึกการจ่าย</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 const addCreditorSchema = z.object({
   vendorId: z.string().min(1, "กรุณาเลือก Vendor"),
   invoiceNo: z.string().min(1, "กรุณากรอกเลขที่บิล"),
   docDate: z.string().min(1, "กรุณาเลือกวันที่เอกสาร"),
   dueDate: z.string().optional(),
+  expectedPaymentAccountId: z.string().optional(),
   amountTotal: z.coerce.number().positive("ยอดเงินต้องมากกว่า 0"),
   notes: z.string().optional(),
 });
 
-function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendor>[]; isOpen: boolean; onClose: () => void; }) {
+const editApTermsSchema = z.object({
+  dueDate: z.string().optional(),
+  expectedPaymentAccountId: z.string().optional(),
+});
+
+function EditApTermsDialog({
+  obligation,
+  accounts,
+  isOpen,
+  onClose,
+}: {
+  obligation: WithId<AccountingObligation> | null;
+  accounts: WithId<AccountingAccount>[];
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  const { db } = useFirebase();
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const form = useForm<z.infer<typeof editApTermsSchema>>({
+    resolver: zodResolver(editApTermsSchema),
+    defaultValues: { dueDate: "", expectedPaymentAccountId: "" },
+  });
+  useEffect(() => {
+    if (obligation && isOpen) {
+      form.reset({
+        dueDate: obligation.dueDate || "",
+        expectedPaymentAccountId: obligation.expectedPaymentAccountId || "",
+      });
+    }
+  }, [obligation, isOpen, form]);
+  const handleSave = async (data: z.infer<typeof editApTermsSchema>) => {
+    if (!db || !obligation) return;
+    setSaving(true);
+    try {
+      const due = data.dueDate?.trim() || null;
+      const expRaw = data.expectedPaymentAccountId?.trim();
+      const expAcc = expRaw && expRaw !== "__none__" ? expRaw : null;
+      const batch = writeBatch(db);
+      batch.update(doc(db, "accountingObligations", obligation.id), {
+        dueDate: due,
+        expectedPaymentAccountId: expAcc,
+        updatedAt: serverTimestamp(),
+      });
+      if (obligation.sourceDocType === "PURCHASE" && obligation.sourceDocId) {
+        batch.update(doc(db, "purchaseDocs", obligation.sourceDocId), {
+          dueDate: due,
+          expectedPaymentAccountId: expAcc,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      toast({ title: "อัปเดตข้อมูลเจ้าหนี้แล้ว" });
+      onClose();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "บันทึกไม่สำเร็จ", description: msg });
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (!obligation) return null;
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !saving) onClose();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>แก้ไขกำหนดจ่าย / บัญชีที่คาดจ่าย</DialogTitle>
+          <DialogDescription>
+            {obligation.invoiceNo || obligation.sourceDocNo} — {obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot}
+          </DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form id="edit-ap-terms" onSubmit={form.handleSubmit(handleSave)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="dueDate"
+              render={({ field }) => (
+                <FormItem className="flex flex-col">
+                  <FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <FormControl>
+                        <Button
+                          variant="outline"
+                          className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}
+                        >
+                          {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>ไม่ระบุ</span>}
+                          <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                        </Button>
+                      </FormControl>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={field.value ? parseISO(field.value) : undefined}
+                        onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="expectedPaymentAccountId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>บัญชีที่คาดว่าจะจ่าย</FormLabel>
+                  <Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="ไม่ระบุ" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__none__">ไม่ระบุ</SelectItem>
+                      {accounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            ยกเลิก
+          </Button>
+          <Button type="submit" form="edit-ap-terms" disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            บันทึก
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AddCreditorDialog({
+  vendors,
+  accounts,
+  isOpen,
+  onClose,
+}: {
+  vendors: WithId<Vendor>[];
+  accounts: WithId<AccountingAccount>[];
+  isOpen: boolean;
+  onClose: () => void;
+}) {
     const { db } = useFirebase();
     const { toast } = useToast();
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -417,11 +300,13 @@ function AddCreditorDialog({ vendors, isOpen, onClose }: { vendors: WithId<Vendo
         const selectedVendor = vendors.find(v => v.id === data.vendorId);
         if (!selectedVendor) { toast({ variant: 'destructive', title: 'ไม่พบ Vendor' }); setIsSubmitting(false); return; }
         try {
-            await addDoc(collection(db, 'accountingObligations'), { type: 'AP', status: 'UNPAID', vendorId: selectedVendor.id, vendorShortNameSnapshot: selectedVendor.shortName, vendorNameSnapshot: selectedVendor.companyName, invoiceNo: data.invoiceNo, sourceDocNo: data.invoiceNo, sourceDocType: 'PURCHASE_ORDER', docDate: data.docDate, dueDate: data.dueDate || null, amountTotal: data.amountTotal, amountPaid: 0, balance: data.amountTotal, notes: data.notes || '', createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+            const expAcc = data.expectedPaymentAccountId?.trim();
+            const expectedPaymentAccountId = expAcc && expAcc !== "__none__" ? expAcc : null;
+            await addDoc(collection(db, 'accountingObligations'), { type: 'AP', status: 'UNPAID', vendorId: selectedVendor.id, vendorShortNameSnapshot: selectedVendor.shortName, vendorNameSnapshot: selectedVendor.companyName, invoiceNo: data.invoiceNo, sourceDocNo: data.invoiceNo, sourceDocType: 'PURCHASE_ORDER', docDate: data.docDate, dueDate: data.dueDate || null, expectedPaymentAccountId, amountTotal: data.amountTotal, amountPaid: 0, balance: data.amountTotal, notes: data.notes || '', createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
             toast({ title: 'บันทึกเจ้าหนี้สำเร็จ' }); onClose(); form.reset();
         } catch (e: any) { toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message }); } finally { setIsSubmitting(false); }
     };
-    return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
+    return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="expectedPaymentAccountId" render={({ field }) => (<FormItem><FormLabel>บัญชีที่คาดว่าจะจ่าย (ไม่บังคับ)</FormLabel><Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"}><FormControl><SelectTrigger><SelectValue placeholder="ไม่ระบุ"/></SelectTrigger></FormControl><SelectContent><SelectItem value="__none__">ไม่ระบุ</SelectItem>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select></FormItem>)}/><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
 function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (net: number, vat: number, grand: number, count: number) => void; isAdmin?: boolean }) {
@@ -446,6 +331,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     >({});
     const [payingAR, setPayingAR] = useState<WithId<AccountingObligation> | null>(null);
     const [payingAP, setPayingAP] = useState<WithId<AccountingObligation> | null>(null);
+    const [editingAp, setEditingAp] = useState<WithId<AccountingObligation> | null>(null);
     const [obToDelete, setObToDelete] = useState<WithId<AccountingObligation> | null>(null);
     const [isDeletingOb, setIsDeletingOb] = useState(false);
     const { toast } = useToast();
@@ -657,13 +543,15 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
         setLoading(true);
         const unsubscribe = onSnapshot(obligationsQuery, (snap) => {
             const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<AccountingObligation>));
-            let filtered = data.filter(ob => ob.status === 'UNPAID' || ob.status === 'PARTIAL');
-            filtered.sort((a, b) => {
+            const rank = (s: AccountingObligation["status"]) => (s === "PAID" ? 2 : s === "PARTIAL" ? 1 : 0);
+            const sorted = [...data].sort((a, b) => {
+                const r = rank(a.status) - rank(b.status);
+                if (r !== 0) return r;
                 const da = a.dueDate ? parseISO(a.dueDate).getTime() : Number.POSITIVE_INFINITY;
                 const db = b.dueDate ? parseISO(b.dueDate).getTime() : Number.POSITIVE_INFINITY;
                 return da - db;
             });
-            setObligations(filtered);
+            setObligations(sorted);
             setLoading(false);
         }, (err: FirestoreError) => {
             if (err.code === 'permission-denied') {
@@ -735,13 +623,16 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
             });
         }
         if (type === 'AR') {
-            result = dedupeUnpaidArBySalesDocNo(result);
+            const unpaidPart = result.filter((o) => o.status !== "PAID");
+            const paidPart = result.filter((o) => o.status === "PAID");
+            result = [...dedupeUnpaidArBySalesDocNo(unpaidPart), ...paidPart];
         }
         return result;
     }, [obligations, searchTerm, monthFilter, docDetails, type]);
 
     useEffect(() => {
-        const totals = filteredObligations.reduce(
+        const outstanding = filteredObligations.filter((ob) => ob.status !== "PAID");
+        const totals = outstanding.reduce(
           (acc, ob) => {
             const det = docDetails[ob.sourceDocId || ""];
             const grand = Number(det?.grandTotal ?? ob.amountTotal ?? 0);
@@ -754,7 +645,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
           },
           { net: 0, vat: 0, grand: 0 }
         );
-        onSummaryChange(totals.net, totals.vat, totals.grand, filteredObligations.length);
+        onSummaryChange(totals.net, totals.vat, totals.grand, outstanding.length);
     }, [filteredObligations, docDetails, onSummaryChange]);
 
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
@@ -783,6 +674,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                               q.set('presetAmount', String(ob.balance ?? ''));
                               return `/app/management/accounting/documents/receipt?${q.toString()}`;
                             })();
+                            const apPayDisabled = type === "AP" && (ob.status === "PAID" || (ob.balance ?? 0) <= 0.009);
                             return (
                               <TableRow key={ob.id} className="hover:bg-muted/30">
                                 <TableCell className="text-xs whitespace-nowrap">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
@@ -801,6 +693,11 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                   {details?.billingNoteNo && (
                                     <Badge variant="secondary" className="text-[9px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">
                                       <FileStack className="h-2.5 w-2.5 mr-1" /> วางบิลแล้ว: {details.billingNoteNo}
+                                    </Badge>
+                                  )}
+                                  {ob.status === "PAID" && (
+                                    <Badge variant="outline" className="text-[9px] h-4 mt-1 border-emerald-200 text-emerald-800 bg-emerald-50">
+                                      ชำระครบแล้ว
                                     </Badge>
                                   )}
                                 </TableCell>
@@ -847,9 +744,12 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                           รับชำระ
                                         </DropdownMenuItem>
                                       ) : (
-                                        <DropdownMenuItem onSelect={() => setPayingAP(ob)}>
-                                          จ่ายบิล
-                                        </DropdownMenuItem>
+                                        <>
+                                          <DropdownMenuItem disabled={apPayDisabled} onSelect={() => setPayingAP(ob)}>
+                                            {apPayDisabled ? "ชำระครบแล้ว" : "จ่ายบิล"}
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onSelect={() => setEditingAp(ob)}>แก้ไขกำหนด/บัญชีคาดจ่าย</DropdownMenuItem>
+                                        </>
                                       )}
                                       {isAdmin && (
                                         <DropdownMenuItem
@@ -864,12 +764,13 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                 </TableCell>
                               </TableRow>
                             );
-                        }) : (<TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ค้างชำระ</TableCell></TableRow>)}
+                        }) : (<TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ในช่วงที่เลือก (รวมทั้งชำระแล้ว)</TableCell></TableRow>)}
                     </TableBody>
                 </Table>
             </div>
             {payingAR && (<ReceiveArPaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />)}
             {payingAP && (<PayCreditorDialog isOpen={!!payingAP} onClose={() => setPayingAP(null)} obligation={payingAP} accounts={accounts} />)}
+            <EditApTermsDialog obligation={editingAp} accounts={accounts} isOpen={!!editingAp} onClose={() => setEditingAp(null)} />
             <AlertDialog open={!!obToDelete} onOpenChange={(open) => !open && !isDeletingOb && setObToDelete(null)}>
               <AlertDialogContent>
                 <AlertDialogHeader>
@@ -958,7 +859,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้">
             <div className="flex justify-end gap-2">
                 <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
-                    <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี ({summary.count} รายการ)</div>
+                    <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี — ค้างชำระ ({summary.count} รายการ)</div>
                     <div className="text-sm font-bold">{formatCurrency(summary.net)}</div>
                 </div>
                 <div className="rounded-md border bg-background px-4 py-2 min-w-[140px] text-right">
@@ -966,7 +867,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
                     <div className="text-sm font-bold">{formatCurrency(summary.vat)}</div>
                 </div>
                 <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
-                    <div className="text-[11px] text-muted-foreground">ยอดรวม</div>
+                    <div className="text-[11px] text-muted-foreground">ยอดรวม (ค้างชำระ)</div>
                     <div className="text-sm font-bold">{formatCurrency(summary.grand)}</div>
                 </div>
             </div>
@@ -1001,7 +902,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
               </CardContent>
             </Card>
         </Tabs>
-        <AddCreditorDialog vendors={vendors} isOpen={isAddingCreditor} onClose={() => setIsAddingCreditor(false)} />
+        <AddCreditorDialog vendors={vendors} accounts={accounts} isOpen={isAddingCreditor} onClose={() => setIsAddingCreditor(false)} />
         </>
     );
 }

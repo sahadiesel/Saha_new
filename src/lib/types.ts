@@ -832,6 +832,8 @@ export interface AccountingObligation {
   createdAt: Timestamp;
   updatedAt: Timestamp;
   dueDate?: string; // YYYY-MM-DD
+  /** บัญชีที่วางแผนจะใช้จ่าย (เครดิต) — แก้ไขได้ภายหลัง ไม่ตัดบัญชีอัตโนมัติ */
+  expectedPaymentAccountId?: string | null;
   lastPaymentDate?: string; // YYYY-MM-DD
   paidOffDate?: string; // YYYY-MM-DD
   /** วันที่เอกสารต้นทาง (ใบกำกับ ฯลฯ) YYYY-MM-DD */
@@ -878,6 +880,8 @@ export interface PurchaseDoc {
   grandTotal: number;
   paymentMode: 'CASH' | 'CREDIT';
   dueDate?: string | null;
+  /** บัญชีที่คาดว่าจะจ่ายเมื่อซื้อเครดิต — ไม่บังคับ แก้ไขได้ภายหลัง */
+  expectedPaymentAccountId?: string | null;
   status: 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'UNPAID' | 'PAID' | 'CANCELLED';
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -910,6 +914,8 @@ export interface PurchaseClaim {
   amountTotal: number;
   suggestedAccountId?: string;
   suggestedPaymentMethod?: 'CASH' | 'TRANSFER';
+  /** บัญชีที่คาดว่าจะจ่าย (เครดิต) */
+  expectedPaymentAccountId?: string | null;
   note?: string;
   approvedAt?: Timestamp;
   approvedByUid?: string;

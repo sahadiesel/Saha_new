@@ -111,7 +111,7 @@ function PurchaseDocView({ document }: { document: PurchaseDoc }) {
                     <Separator className="my-2" />
                     <div className="flex justify-between text-lg font-bold text-primary"><span>ยอดสุทธิ</span><span>{formatCurrency(document.grandTotal)}</span></div>
                     <div className="text-[10px] text-muted-foreground text-right mt-2">
-                        เงื่อนไข: {document.paymentMode === 'CASH' ? 'เงินสด/โอน' : `เครดิต (ครบกำหนด: ${document.dueDate || '-'})`}
+                        เงื่อนไข: {document.paymentMode === 'CASH' ? 'เงินสด/โอน' : `เครดิต (ครบกำหนด: ${document.dueDate || 'ไม่ระบุ'})${document.expectedPaymentAccountId ? ' · มีบัญชีคาดจ่าย' : ''}`}
                     </div>
                 </div>
             </div>

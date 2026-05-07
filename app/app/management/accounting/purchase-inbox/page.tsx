@@ -285,6 +285,7 @@ function PurchaseInboxPageContent() {
                 sourceDocNo: purchaseDocData.docNo,
                 docDate: purchaseDocData.docDate, 
                 dueDate: purchaseDocData.dueDate || null,
+                expectedPaymentAccountId: purchaseDocData.expectedPaymentAccountId || null,
                 amountTotal: purchaseDocData.grandTotal, 
                 amountPaid: 0, 
                 balance: purchaseDocData.grandTotal,
