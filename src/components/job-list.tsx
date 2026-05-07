@@ -548,11 +548,16 @@ export function JobList({
           const hasQuotation = !!job.salesDocId && job.salesDocType === 'QUOTATION';
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
           const ageDays = getJobAgeDays(job);
-          
+          const thumbUrl = job.photos?.find(Boolean);
+
           return (
             <Card key={job.id} className="flex flex-col overflow-hidden hover:shadow-md transition-shadow">
               <div className="relative aspect-video bg-muted">
-                {job.photos?.[0] ? (<Image src={job.photos[0]} alt={job.description} fill className="object-cover" />) : (<div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>)}
+                {thumbUrl ? (
+                  <Image src={thumbUrl} alt={job.description} fill unoptimized className="object-cover" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>
+                )}
                 <Badge className={cn("absolute top-2 right-2 shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
                 {showSystemAgeBadge && ageDays > 0 && (
                   <Badge className={cn("absolute top-2 left-2 shadow-sm border border-black/80 font-bold", getStaleAgeBadgeClass(ageDays))}>

@@ -228,10 +228,10 @@ export async function createDocument(
       // LOG ACTIVITY: Standardized log for document creation
       const activityRef = doc(collection(jobRef, 'activities'));
       transaction.set(activityRef, {
-        text: `สร้างเอกสาร ${docTypeLabel(docType)} เลขที่: ${finalDocNo}`,
+        text: `สร้าง${docTypeLabel(docType)} เลขที่ ${finalDocNo} วันที่ ${docData.docDate}`,
         userName: userProfile.displayName,
         userId: userProfile.uid,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
 
       // For withdrawals, we don't necessarily want to change status to WAITING_APPROVE

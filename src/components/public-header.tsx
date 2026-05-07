@@ -100,9 +100,11 @@ export function PublicHeader() {
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-white/10" />
-                  <DropdownMenuItem className="focus:bg-primary/20 focus:text-white cursor-pointer py-3 opacity-50">
-                    <User className="mr-2 h-4 w-4 text-blue-400" /> 
-                    สำหรับลูกค้า (Customer)
+                  <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3">
+                    <Link href="/login/customer">
+                      <User className="mr-2 h-4 w-4 text-blue-400" /> 
+                      สำหรับลูกค้า (Customer)
+                    </Link>
                   </DropdownMenuItem>
                 </>
               ) : (
@@ -112,7 +114,7 @@ export function PublicHeader() {
                   </div>
                   <DropdownMenuSeparator className="bg-white/10" />
                   <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3 font-bold text-primary">
-                    <Link href="/app">
+                    <Link href={profile?.role === "CUSTOMER" ? "/customer" : "/app"}>
                       <LayoutDashboard className="mr-2 h-4 w-4" /> 
                       หน้าหลักของฉัน
                     </Link>
@@ -179,11 +181,17 @@ export function PublicHeader() {
                           ลงชื่อเข้าใช้ (พนักงาน)
                         </Link>
                       </Button>
+                      <Button variant="outline" asChild className="w-full justify-start border-white/20 bg-white/5 h-12" onClick={closeMobileMenu}>
+                        <Link href="/login/customer">
+                          <User className="mr-3 h-5 w-5 text-blue-400" />
+                          ลงชื่อเข้าใช้ (ลูกค้า)
+                        </Link>
+                      </Button>
                     </div>
                   ) : (
                     <div className="space-y-2">
                       <Button variant="ghost" asChild className="justify-start text-primary h-12 font-bold" onClick={closeMobileMenu}>
-                        <Link href="/app">
+                        <Link href={profile?.role === "CUSTOMER" ? "/customer" : "/app"}>
                           <LayoutDashboard className="mr-3 h-5 w-5" />
                           หน้าหลักของฉัน
                         </Link>

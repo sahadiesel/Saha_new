@@ -1,8 +1,14 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import {
+  lookupCustomerForPortalSignup,
+  rejectPortalCustomerRegistration,
+} from "./customerPortalSignup";
 
 initializeApp();
+
+export { lookupCustomerForPortalSignup, rejectPortalCustomerRegistration };
 const db = getFirestore();
 
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---

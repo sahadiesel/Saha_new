@@ -43,6 +43,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import type { Part, PartCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/context/auth-context";
+import Link from "next/link";
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +70,8 @@ function PlaceholderCard() {
 export default function PublicProductsPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
+  const { user, profile } = useAuth();
+  const canUseCart = !!(user && profile?.role === "CUSTOMER" && profile?.status === "ACTIVE");
   
   const [parts, setParts] = useState<Part[]>([]);
   const [categories, setCategories] = useState<PartCategory[]>([]);
@@ -132,6 +136,14 @@ export default function PublicProductsPage() {
   }, [parts, activeCategory, searchTerm]);
 
   const addToCart = (part: Part) => {
+    if (!canUseCart) {
+      toast({
+        variant: "destructive",
+        title: "เข้าสู่ระบบลูกค้าเพื่อสั่งซื้อ",
+        description: "ทุกคนดูรายการสินค้าได้ แต่เฉพาะลูกค้าที่อนุมัติแล้วเท่านั้นที่ใส่ตะกร้าได้",
+      });
+      return;
+    }
     const existing = cart.find(item => item.id === part.id);
     
     setCart(prev => {
@@ -191,7 +203,16 @@ export default function PublicProductsPage() {
               <p className="text-white/60 text-sm md:text-base">เลือกชมรายการอะไหล่มาตรฐาน Sahadiesel ในราคาพิเศษ</p>
             </div>
             
-            <div className="flex w-full md:w-auto items-center gap-3">
+            <div className="flex w-full md:w-auto flex-col md:flex-row items-stretch md:items-center gap-3">
+              {!canUseCart && (
+                <p className="text-white/70 text-xs md:max-w-xs order-2 md:order-none">
+                  ดูรายการได้โดยไม่ต้องล็อกอิน —{" "}
+                  <Link href="/login/customer" className="text-primary font-bold underline">
+                    เข้าสู่ระบบลูกค้า
+                  </Link>{" "}
+                  เพื่อใส่ตะกร้าและสั่งซื้อ
+                </p>
+              )}
               <div className="relative flex-1 md:w-80">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
                 <Input 
@@ -204,9 +225,14 @@ export default function PublicProductsPage() {
 
               <Sheet open={isCartOpen} onOpenChange={setIsCartOpen}>
                 <SheetTrigger asChild>
-                  <Button variant="outline" className="relative h-11 w-11 rounded-full border-white/20 bg-white/10 text-white backdrop-blur-md hover:bg-white/20">
+                  <Button
+                    variant="outline"
+                    className="relative h-11 w-11 rounded-full border-white/20 bg-white/10 text-white backdrop-blur-md hover:bg-white/20 disabled:opacity-40"
+                    disabled={!canUseCart}
+                    title={canUseCart ? "ตะกร้า" : "เข้าสู่ระบบลูกค้าเพื่อใช้ตะกร้า"}
+                  >
                     <ShoppingCart className="h-5 w-5" />
-                    {cartCount > 0 && <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-primary border-slate-900">{cartCount}</Badge>}
+                    {canUseCart && cartCount > 0 && <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-primary border-slate-900">{cartCount}</Badge>}
                   </Button>
                 </SheetTrigger>
                 <SheetContent className="w-full sm:max-w-md flex flex-col p-0 bg-slate-950 border-white/10 text-white">
@@ -333,7 +359,12 @@ export default function PublicProductsPage() {
                         <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setViewingPart(part)} title="ดูรายละเอียด">
                             <FileText className="h-4 w-4" />
                         </Button>
-                        <Button className="flex-1 h-9 rounded-lg text-xs font-bold gap-2" onClick={() => addToCart(part)} disabled={part.stockQty <= 0}>
+                        <Button
+                          className="flex-1 h-9 rounded-lg text-xs font-bold gap-2"
+                          onClick={() => addToCart(part)}
+                          disabled={part.stockQty <= 0 || !canUseCart}
+                          title={!canUseCart ? "เข้าสู่ระบบลูกค้าเพื่อใส่ตะกร้า" : undefined}
+                        >
                           <Plus className="h-3.5 w-3.5" /> ใส่ตะกร้า
                         </Button>
                       </CardFooter>
@@ -398,7 +429,15 @@ export default function PublicProductsPage() {
                     </div>
 
                     <div className="pt-6 border-t border-white/10 mt-6 flex gap-3">
-                        <Button className="flex-1 h-12 text-base font-bold rounded-xl" onClick={() => { if(viewingPart) addToCart(viewingPart); setViewingPart(null); }} disabled={viewingPart && viewingPart.stockQty <= 0}>
+                        <Button
+                          className="flex-1 h-12 text-base font-bold rounded-xl"
+                          onClick={() => {
+                            if (viewingPart) addToCart(viewingPart);
+                            setViewingPart(null);
+                          }}
+                          disabled={(viewingPart && viewingPart.stockQty <= 0) || !canUseCart}
+                          title={!canUseCart ? "เข้าสู่ระบบลูกค้าเพื่อใส่ตะกร้า" : undefined}
+                        >
                             <Plus className="mr-2 h-5 w-5" /> เพิ่มลงตะกร้า
                         </Button>
                     </div>

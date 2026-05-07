@@ -53,6 +53,7 @@ const getStatusStyles = (status: Job['status']) => {
 
 // Job Card for Grid/List views
 function JobCard({ job }: { job: Job }) {
+  const thumbUrl = job.photos?.find(Boolean);
   return (
     <Card className="flex flex-col overflow-hidden group hover:shadow-md transition-all">
       <div className="relative aspect-video w-full bg-muted">
@@ -67,11 +68,12 @@ function JobCard({ job }: { job: Job }) {
           {jobStatusLabel(job.status)}
         </Badge>
 
-        {job.photos && job.photos.length > 0 ? (
+        {thumbUrl ? (
             <Image
-                src={job.photos[0]}
+                src={thumbUrl}
                 alt={job.description || "Job image"}
                 fill
+                unoptimized
                 className="object-cover group-hover:scale-105 transition-transform"
             />
         ) : (
@@ -104,13 +106,14 @@ function JobCard({ job }: { job: Job }) {
 
 // Compact Job Card for Board View
 function CompactJobCard({ job }: { job: Job }) {
+    const thumbUrl = job.photos?.find(Boolean);
     return (
         <Card className="mb-2 hover:border-primary/50 transition-colors shadow-none border bg-card">
             <CardContent className="p-3">
                 <div className="flex gap-3">
-                    {job.photos && job.photos.length > 0 && (
+                    {thumbUrl && (
                         <div className="relative w-12 h-12 rounded-md bg-muted flex-shrink-0 overflow-hidden">
-                            <Image src={job.photos[0]} alt="Job" fill className="object-cover" />
+                            <Image src={thumbUrl} alt="Job" fill unoptimized className="object-cover" />
                         </div>
                     )}
                     <div className="flex-grow overflow-hidden">

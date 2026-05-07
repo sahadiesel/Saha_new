@@ -83,6 +83,13 @@ const formatCurrency = (value: number | null | undefined) => {
   });
 };
 
+const roundMoney2 = (n: number) => Math.round(n * 100) / 100;
+
+type ReceivablesPayablesSummary = {
+  paid: { net: number; vat: number; grand: number; lineCount: number };
+  outstanding: { net: number; vat: number; grand: number; count: number };
+};
+
 /** ดึงใบกำกับ APPROVED ทั้งชุดที่เกี่ยวกับการซ่อมลูกหนี้ — แบ่งหน้า + orderBy ไม่ให้พลาดใบที่ไม่อยู่ใน limit แรก */
 async function getApprovedTaxInvoiceSnapshotsPaged(db: Firestore): Promise<QueryDocumentSnapshot<DocumentData>[]> {
   const pageSize = 200;
@@ -309,7 +316,7 @@ function AddCreditorDialog({
     return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="expectedPaymentAccountId" render={({ field }) => (<FormItem><FormLabel>บัญชีที่คาดว่าจะจ่าย (ไม่บังคับ)</FormLabel><Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"}><FormControl><SelectTrigger><SelectValue placeholder="ไม่ระบุ"/></SelectTrigger></FormControl><SelectContent><SelectItem value="__none__">ไม่ระบุ</SelectItem>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select></FormItem>)}/><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
-function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (net: number, vat: number, grand: number, count: number) => void; isAdmin?: boolean }) {
+function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (s: ReceivablesPayablesSummary) => void; isAdmin?: boolean }) {
     const { db } = useFirebase();
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
@@ -631,21 +638,48 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
     }, [obligations, searchTerm, monthFilter, docDetails, type]);
 
     useEffect(() => {
-        const outstanding = filteredObligations.filter((ob) => ob.status !== "PAID");
-        const totals = outstanding.reduce(
-          (acc, ob) => {
+        let paidNet = 0;
+        let paidVat = 0;
+        let paidGrand = 0;
+        let outNet = 0;
+        let outVat = 0;
+        let outGrand = 0;
+        let outstandingCount = 0;
+        let paidLineCount = 0;
+
+        for (const ob of filteredObligations) {
             const det = docDetails[ob.sourceDocId || ""];
             const grand = Number(det?.grandTotal ?? ob.amountTotal ?? 0);
             const vat = Number(det?.vatAmount ?? 0);
             const net = Number(det?.netAmount ?? Math.max(0, grand - vat));
-            acc.net += net;
-            acc.vat += vat;
-            acc.grand += grand;
-            return acc;
-          },
-          { net: 0, vat: 0, grand: 0 }
-        );
-        onSummaryChange(totals.net, totals.vat, totals.grand, outstanding.length);
+            const denom = Math.max(Number(ob.amountTotal) || grand || 0, 0.00001);
+            const paid = Number(ob.amountPaid) || 0;
+            const bal = Number(ob.balance) || 0;
+
+            paidNet += (net * paid) / denom;
+            paidVat += (vat * paid) / denom;
+            outNet += (net * bal) / denom;
+            outVat += (vat * bal) / denom;
+            paidGrand += paid;
+            outGrand += bal;
+            if (bal > 0.009) outstandingCount += 1;
+            if (paid > 0.009) paidLineCount += 1;
+        }
+
+        onSummaryChange({
+            paid: {
+                net: roundMoney2(paidNet),
+                vat: roundMoney2(paidVat),
+                grand: roundMoney2(paidGrand),
+                lineCount: paidLineCount,
+            },
+            outstanding: {
+                net: roundMoney2(outNet),
+                vat: roundMoney2(outVat),
+                grand: roundMoney2(outGrand),
+                count: outstandingCount,
+            },
+        });
     }, [filteredObligations, docDetails, onSummaryChange]);
 
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
@@ -814,7 +848,10 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
     const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
     const [vendors, setVendors] = useState<WithId<Vendor>[]>([]);
     const [isAddingCreditor, setIsAddingCreditor] = useState(false);
-    const [summary, setSummary] = useState({ net: 0, vat: 0, grand: 0, count: 0 });
+    const [summary, setSummary] = useState<ReceivablesPayablesSummary>({
+        paid: { net: 0, vat: 0, grand: 0, lineCount: 0 },
+        outstanding: { net: 0, vat: 0, grand: 0, count: 0 },
+    });
     const { db } = useFirebase();
 
     useEffect(() => {
@@ -834,14 +871,30 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         return () => { unsubAccounts(); unsubVendors(); };
     }, [db]);
 
-    const handleSummaryChange = useCallback((net: number, vat: number, grand: number, count: number) => {
-        setSummary(prev => {
-            if (prev.net === net && prev.vat === vat && prev.grand === grand && prev.count === count) return prev;
-            return { net, vat, grand, count };
+    const handleSummaryChange = useCallback((s: ReceivablesPayablesSummary) => {
+        setSummary((prev) => {
+            if (
+                prev.paid.net === s.paid.net &&
+                prev.paid.vat === s.paid.vat &&
+                prev.paid.grand === s.paid.grand &&
+                prev.paid.lineCount === s.paid.lineCount &&
+                prev.outstanding.net === s.outstanding.net &&
+                prev.outstanding.vat === s.outstanding.vat &&
+                prev.outstanding.grand === s.outstanding.grand &&
+                prev.outstanding.count === s.outstanding.count
+            ) {
+                return prev;
+            }
+            return s;
         });
     }, []);
 
-    useEffect(() => { setSummary({ net: 0, vat: 0, grand: 0, count: 0 }); }, [activeTab]);
+    useEffect(() => {
+        setSummary({
+            paid: { net: 0, vat: 0, grand: 0, lineCount: 0 },
+            outstanding: { net: 0, vat: 0, grand: 0, count: 0 },
+        });
+    }, [activeTab]);
 
     const monthOptions = useMemo(() => {
         const options = [{ value: "ALL", label: "ทุกเดือน" }];
@@ -857,18 +910,43 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
     return (
         <>
         <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้">
-            <div className="flex justify-end gap-2">
-                <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
-                    <div className="text-[11px] text-muted-foreground">ยอดก่อนภาษี — ค้างชำระ ({summary.count} รายการ)</div>
-                    <div className="text-sm font-bold">{formatCurrency(summary.net)}</div>
+            <div className="flex flex-col items-end gap-2">
+                <div className="text-[10px] text-muted-foreground w-full text-right max-w-xl">
+                    สรุปตามรายการที่แสดง (กรองเดือน/ค้นหา)
                 </div>
-                <div className="rounded-md border bg-background px-4 py-2 min-w-[140px] text-right">
-                    <div className="text-[11px] text-muted-foreground">ภาษี</div>
-                    <div className="text-sm font-bold">{formatCurrency(summary.vat)}</div>
-                </div>
-                <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
-                    <div className="text-[11px] text-muted-foreground">ยอดรวม (ค้างชำระ)</div>
-                    <div className="text-sm font-bold">{formatCurrency(summary.grand)}</div>
+                <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                            <div className="text-[11px] text-muted-foreground">
+                                ยอดก่อนภาษี — ชำระแล้ว ({summary.paid.lineCount} รายการ)
+                            </div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.paid.net)}</div>
+                        </div>
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[140px] text-right">
+                            <div className="text-[11px] text-muted-foreground">ภาษี</div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.paid.vat)}</div>
+                        </div>
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                            <div className="text-[11px] text-muted-foreground">ยอดรวม — ชำระแล้ว</div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.paid.grand)}</div>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                            <div className="text-[11px] text-muted-foreground">
+                                ยอดก่อนภาษี — ค้างชำระ ({summary.outstanding.count} รายการ)
+                            </div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.outstanding.net)}</div>
+                        </div>
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[140px] text-right">
+                            <div className="text-[11px] text-muted-foreground">ภาษี</div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.outstanding.vat)}</div>
+                        </div>
+                        <div className="rounded-md border bg-background px-4 py-2 min-w-[180px] text-right">
+                            <div className="text-[11px] text-muted-foreground">ยอดรวม — ค้างชำระ</div>
+                            <div className="text-sm font-bold">{formatCurrency(summary.outstanding.grand)}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </PageHeader>

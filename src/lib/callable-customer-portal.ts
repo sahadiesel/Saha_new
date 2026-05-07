@@ -1,0 +1,75 @@
+"use client";
+
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { initializeFirebase } from "@/firebase/init";
+
+function isFirebaseLikeError(e: unknown): e is { code: string; message?: string } {
+  return typeof e === "object" && e !== null && "code" in e && typeof (e as { code: unknown }).code === "string";
+}
+
+/** แปลง error จาก httpsCallable เป็นข้อความที่ผู้ใช้เข้าใจ */
+export function formatCustomerPortalCallableError(error: unknown): string {
+  if (isFirebaseLikeError(error)) {
+    const code = error.code;
+    if (code === "functions/not-found") {
+      return "ยังไม่พบฟังก์ชันตรวจสอบเบอร์บนเซิร์ฟเวอร์ กรุณาให้ผู้ดูแลรัน deploy Cloud Functions (lookupCustomerForPortalSignup) ให้ตรงโปรเจกต์ Firebase";
+    }
+    if (code === "functions/unavailable" || code === "functions/deadline-exceeded") {
+      return "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จชั่วคราว กรุณาลองใหม่";
+    }
+    if (code === "functions/permission-denied") {
+      return "ไม่ได้รับอนุญาตให้เรียกระบบตรวจสอบเบอร์ แจ้งผู้ดูแลให้ตั้งค่า invoker ของฟังก์ชันเป็น public";
+    }
+    const msg = typeof error.message === "string" ? error.message : "";
+    if (msg && msg !== "internal" && msg !== "INTERNAL") {
+      return msg;
+    }
+    if (code === "functions/internal") {
+      return "ระบบขัดข้อง (internal) — มักเกิดจากยังไม่ deploy Functions หรือ Cloud Run ไม่อนุญาตให้เรียกแบบไม่ล็อกอิน แจ้งผู้ดูแลตรวจสอบ";
+    }
+    return msg || code;
+  }
+  if (error instanceof Error) return error.message;
+  return "เกิดข้อผิดพลาดไม่ทราบสาเหตุ";
+}
+
+export type PortalCustomerLookupResult =
+  | { found: false }
+  | {
+      found: true;
+      customerId: string;
+      name: string;
+      nationalId: string;
+      idCardAddress: string;
+      registration: "NONE" | "PENDING" | "ACTIVE";
+    };
+
+export async function callLookupCustomerForPortalSignup(phone: string): Promise<PortalCustomerLookupResult> {
+  const { firebaseApp } = initializeFirebase();
+  if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้ กรุณารีเฟรชหน้า");
+
+  const fn = httpsCallable<{ phone: string }, PortalCustomerLookupResult>(
+    getFunctions(firebaseApp, "us-central1"),
+    "lookupCustomerForPortalSignup"
+  );
+  try {
+    const res = await fn({ phone: phone.trim() });
+    return res.data;
+  } catch (e) {
+    throw new Error(formatCustomerPortalCallableError(e));
+  }
+}
+
+export async function callRejectPortalCustomerRegistration(
+  targetUid: string,
+  customerId: string
+): Promise<void> {
+  const { firebaseApp } = initializeFirebase();
+  if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้");
+
+  const fn = httpsCallable<{ targetUid: string; customerId: string }, { ok: boolean }>(
+    getFunctions(firebaseApp, "us-central1"),
+    "rejectPortalCustomerRegistration"
+  );
+  await fn({ targetUid, customerId });
+}

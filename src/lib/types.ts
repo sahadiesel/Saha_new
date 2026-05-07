@@ -82,6 +82,12 @@ export interface Customer {
   phone: string;
   /** เบอร์ทั้งหมดของผู้ติดต่อ — ถ้าไม่มีให้ถือว่ามีแค่ phone */
   phones?: string[];
+  /** เลขบัตรประชาชน (เตรียมออกใบกำกับภาษีในนามบุคคล) */
+  nationalId?: string;
+  /** ที่อยู่ตามบัตรประชาชน */
+  idCardAddress?: string;
+  /** Firebase Auth uid เมื่อลูกค้าลงทะเบียนพอร์ทัลแล้ว */
+  authUid?: string;
   detail: string;
   useTax: boolean;
   /** หลายชุดสำหรับออกใบกำกับ — ถ้าไม่มีให้อ่านจาก taxName/taxAddress/... แบบเดิม */
@@ -147,6 +153,8 @@ export interface Job {
   };
   department: JobDepartment;
   mainDepartment?: JobDepartment; // Added to track owner department
+  /** แผนกที่ส่งงานมาถึงแผนกปัจจุบัน (งานย่อยข้ามแผนก) — ใช้ปุ่มส่งกลับหนึ่งขั้น */
+  subTaskHandoffSource?: JobDepartment;
   status: JobStatus;
   description: string;
   officeNote?: string;

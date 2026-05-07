@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
-import { Loader2, User, Clock, Paperclip, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle } from "lucide-react";
+import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -88,6 +88,14 @@ const getStatusStyles = (status: Job['status']) => {
   }
 }
 
+/** หลังส่งงานข้ามแผนก — คงสายซ่อม/อะไหล่ ไม่รีเซ็ตเป็นรอรับงาน */
+function statusAfterSubDepartmentHandoff(current: JobStatus): JobStatus {
+  if (current === "IN_REPAIR_PROCESS" || current === "PENDING_PARTS") return current;
+  if (current === "IN_PROGRESS") return "IN_REPAIR_PROCESS";
+  if (current === "WAITING_QUOTATION" || current === "WAITING_APPROVE") return current;
+  return "RECEIVED";
+}
+
 const compressImageIfNeeded = async (file: File): Promise<File> => {
   if (file.size <= FILE_SIZE_THRESHOLD) return file;
 
@@ -149,8 +157,8 @@ function JobDetailsPageContent() {
   
   const quickCameraRef = useRef<HTMLInputElement>(null);
   const quickGalleryRef = useRef<HTMLInputElement>(null);
-  const activityCameraRef = useRef<HTMLInputElement>(null);
-  const activityGalleryRef = useRef<HTMLInputElement>(null);
+  const activityPhotoDialogCameraRef = useRef<HTMLInputElement>(null);
+  const activityPhotoDialogGalleryRef = useRef<HTMLInputElement>(null);
 
   const jobId = useMemo(() => {
     const id = params?.jobId;
@@ -162,9 +170,10 @@ function JobDetailsPageContent() {
   const [notFoundInPrimary, setNotFoundInPrimary] = useState(false);
   const [archiveYear, setArchiveYear] = useState<number | null>(null);
   
-  const [newNote, setNewNote] = useState("");
-  const [newPhotos, setNewPhotos] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  const [activityPhotoDialogOpen, setActivityPhotoDialogOpen] = useState(false);
+  const [activityPhotoFiles, setActivityPhotoFiles] = useState<File[]>([]);
+  const [activityPhotoPreviews, setActivityPhotoPreviews] = useState<string[]>([]);
+  const [activityPhotoCaption, setActivityPhotoCaption] = useState("");
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [isAddingPhotos, setIsAddingPhotos] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
@@ -208,9 +217,32 @@ function JobDetailsPageContent() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
-  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
+
+  /** แผนกที่ส่งงานย่อยได้: ไม่ออฟฟิศ / ไม่ซ้ำแผนกปัจจุบัน / ไม่ส่งกลับแผนกหลักโดยตรง (ใช้ปุ่มส่งกลับแผนกหลัก) */
+  const subTransferTargets = useMemo((): JobDepartment[] => {
+    if (!job) return [];
+    const main = job.mainDepartment;
+    return JOB_DEPARTMENTS.filter(
+      (d) => d !== "OFFICE" && d !== job.department && (!main || d !== main)
+    ) as JobDepartment[];
+  }, [job]);
+
+  /** ส่งต่อได้เฉพาะตอนอยู่ที่แผนกหลัก — พอส่งไปแผนกย่อยแล้วให้ใช้แต่ปุ่มส่งกลับ */
+  const canSubTransfer =
+    !!job &&
+    !isSubTask &&
+    subTransferTargets.length > 0 &&
+    ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS"].includes(job.status);
+
+  const showReturnToHandoff =
+    !!job &&
+    isSubTask &&
+    job.subTaskHandoffSource &&
+    job.subTaskHandoffSource !== job.mainDepartment &&
+    ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS"].includes(job.status);
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
@@ -438,76 +470,112 @@ function JobDetailsPageContent() {
     });
   };
 
-  const handleAddActivity = async () => {
-    const jobDocRef = getJobRef();
-    if (!newNote.trim() && newPhotos.length === 0) {
-        toast({ variant: "destructive", title: "กรุณากรอกข้อความ", description: "กรุณาพิมพ์บันทึกหรือแนบรูปภาพก่อนกดอัปเดตค่ะ" });
-        return;
+  const handleActivityPhotoDialogFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    if (activityPhotoFiles.length + files.length > DATA_LIMITS.MAX_ACTIVITY_PHOTOS) {
+      toast({
+        variant: "destructive",
+        title: `แนบรูปได้สูงสุด ${DATA_LIMITS.MAX_ACTIVITY_PHOTOS} รูปต่อครั้งค่ะ`,
+      });
+      return;
     }
-    if (!db || !profile || !job || !jobDocRef) return;
+    setIsCompressing(true);
+    try {
+      const newFiles: File[] = [];
+      const newPreviews: string[] = [];
+      for (const file of files) {
+        const processed = await compressImageIfNeeded(file);
+        newFiles.push(processed);
+        newPreviews.push(URL.createObjectURL(processed));
+      }
+      setActivityPhotoFiles((prev) => [...prev, ...newFiles]);
+      setActivityPhotoPreviews((prev) => [...prev, ...newPreviews]);
+    } catch {
+      toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const removeActivityPhotoAtIndex = (index: number) => {
+    const url = activityPhotoPreviews[index];
+    if (url) URL.revokeObjectURL(url);
+    setActivityPhotoFiles((prev) => prev.filter((_, i) => i !== index));
+    setActivityPhotoPreviews((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmitActivityPhotos = async () => {
+    const jobDocRef = getJobRef();
+    const caption = activityPhotoCaption.trim();
+    if (activityPhotoFiles.length === 0) {
+      toast({ variant: "destructive", title: "กรุณาแนบรูปภาพ", description: "เลือกหรือถ่ายรูปอย่างน้อย 1 รูปก่อนบันทึกค่ะ" });
+      return;
+    }
+    if (!caption) {
+      toast({
+        variant: "destructive",
+        title: "กรุณาอธิบายวัตถุประสงค์ของรูป",
+        description: "เขียนสั้นๆ ว่ารูปนี้แสดงอะไร เช่น น้ำมันมีสิ่งเจือปน",
+      });
+      return;
+    }
+    if (!db || !profile || !job || !jobDocRef || !storage) return;
 
     const activitiesCountSnap = await getCountFromServer(collection(jobDocRef, "activities"));
     if (activitiesCountSnap.data().count >= DATA_LIMITS.MAX_ACTIVITY_LOGS) {
-        toast({ variant: "destructive", title: "รายการกิจกรรมเต็ม", description: `ไม่สามารถบันทึกเพิ่มได้เนื่องจากเกิน ${DATA_LIMITS.MAX_ACTIVITY_LOGS} รายการ กรุณาสรุปงานในช่องสมุดบันทึกแทนค่ะ` });
-        return;
+      toast({
+        variant: "destructive",
+        title: "รายการกิจกรรมเต็ม",
+        description: `ไม่สามารถบันทึกเพิ่มได้เนื่องจากเกิน ${DATA_LIMITS.MAX_ACTIVITY_LOGS} รายการ`,
+      });
+      return;
     }
 
     setIsSubmittingNote(true);
     try {
-        const photoURLs: string[] = [];
-        if (newPhotos.length > 0) {
-            for (const photo of newPhotos) {
-                const photoRef = ref(storage!, `jobs/${jobId}/activity/${Date.now()}-${photo.name}`);
-                await uploadBytes(photoRef, photo);
-                photoURLs.push(await getDownloadURL(photoRef));
-            }
+      const photoURLs: string[] = [];
+      for (const photo of activityPhotoFiles) {
+        const photoRef = ref(storage, `jobs/${jobId}/activity/${Date.now()}-${photo.name}`);
+        await uploadBytes(photoRef, photo);
+        photoURLs.push(await getDownloadURL(photoRef));
+      }
+      const batch = writeBatch(db);
+      const updateData: Record<string, unknown> = { lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      if (job.status === "RECEIVED") {
+        updateData.status = "IN_PROGRESS";
+        if (!job.assigneeUid) {
+          updateData.assigneeUid = profile.uid;
+          updateData.assigneeName = profile.displayName;
         }
-        const batch = writeBatch(db);
-        const updateData: any = { lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() };
-        if (job.status === 'RECEIVED') {
-            updateData.status = 'IN_PROGRESS';
-            if (!job.assigneeUid) {
-                updateData.assigneeUid = profile.uid;
-                updateData.assigneeName = profile.displayName;
-            }
-        }
-        batch.set(doc(collection(jobDocRef, "activities")), { text: newNote.trim(), userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp(), photos: photoURLs });
-        batch.update(jobDocRef, updateData);
-        await batch.commit();
-        setNewNote(""); setNewPhotos([]); setPhotoPreviews([]);
-        toast({title: "อัปเดตกีจกรรมสำเร็จแล้วค่ะ"});
-    } catch (error: any) {
-        if (error.code === 'permission-denied') {
-            errorEmitter.emit('permission-error', new FirestorePermissionError({ path: jobDocRef.path, operation: 'write' }));
-        } else {
-            toast({variant: "destructive", title: "เกิดข้อผิดพลาด", description: error.message});
-        }
+      }
+      batch.set(doc(collection(jobDocRef, "activities")), {
+        text: `แนบรูปกิจกรรม: ${caption}`,
+        userName: profile.displayName,
+        userId: profile.uid,
+        createdAt: serverTimestamp(),
+        photos: photoURLs,
+      });
+      batch.update(jobDocRef, updateData);
+      await batch.commit();
+      setActivityPhotoPreviews((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+      setActivityPhotoFiles([]);
+      setActivityPhotoCaption("");
+      setActivityPhotoDialogOpen(false);
+      toast({ title: "บันทึกรูปกิจกรรมสำเร็จ" });
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
+      if (err.code === "permission-denied") {
+        errorEmitter.emit("permission-error", new FirestorePermissionError({ path: jobDocRef.path, operation: "write" }));
+      } else {
+        toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: err.message });
+      }
     } finally {
-        setIsSubmittingNote(false);
-    }
-  };
-
-  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const files = Array.from(e.target.files);
-      if (newPhotos.length + files.length > DATA_LIMITS.MAX_ACTIVITY_PHOTOS) {
-          toast({ variant: "destructive", title: `เลือกรูปกิจกรรมได้สูงสุด ${DATA_LIMITS.MAX_ACTIVITY_PHOTOS} รูปต่อครั้งค่ะ` });
-          e.target.value = '';
-          return;
-      }
-      setIsCompressing(true);
-      try {
-        for (const file of files) {
-          const processed = await compressImageIfNeeded(file);
-          setNewPhotos(prev => [...prev, processed]);
-          setPhotoPreviews(prev => [...prev, URL.createObjectURL(processed)]);
-        }
-      } catch (err) {
-        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
-      } finally {
-        setIsCompressing(false);
-        e.target.value = '';
-      }
+      setIsSubmittingNote(false);
     }
   };
 
@@ -533,7 +601,7 @@ function JobDetailsPageContent() {
             photoURLs.push(await getDownloadURL(photoRef));
         }
         const batch = writeBatch(db);
-        batch.set(doc(collection(jobDocRef, "activities")), { text: `อัปโหลดรูปประกอบงานเพิ่ม ${photoURLs.length} รูป`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp(), photos: photoURLs });
+        batch.set(doc(collection(jobDocRef, "activities")), { text: `เพิ่มรูปประกอบงาน (ตอนรับงาน) ${photoURLs.length} รูป`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp(), photos: photoURLs });
         const updateData: any = { photos: arrayUnion(...photoURLs), lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() };
         if (job.status === 'RECEIVED') {
             updateData.status = 'IN_PROGRESS';
@@ -601,7 +669,7 @@ function JobDetailsPageContent() {
     setIsTransferring(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
-    batch.update(jobDocRef, { department: transferDepartment, mainDepartment: transferDepartment, status: 'RECEIVED', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp() });
+    batch.update(jobDocRef, { department: transferDepartment, mainDepartment: transferDepartment, subTaskHandoffSource: deleteField(), status: 'RECEIVED', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp() });
     batch.set(doc(collection(jobDocRef, "activities")), { text: `มีการเปลี่ยนแปลงแผนกหลักเป็น ${deptCode(transferDepartment)}. หมายเหตุ: ${transferNote || 'ไม่มี'}`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => {
       toast({ title: 'โอนย้ายแผนกสำเร็จ' });
@@ -611,11 +679,30 @@ function JobDetailsPageContent() {
 
   const handleSubTransfer = async () => {
     if (!db || !profile || !job || !subTransferDept) return;
+    if (subTransferDept === job.department) {
+      toast({ variant: "destructive", title: "เลือกแผนกปลายทางต่างจากแผนกปัจจุบัน" });
+      return;
+    }
+    if (job.subTaskHandoffSource && subTransferDept === job.subTaskHandoffSource) {
+      toast({ variant: "destructive", title: "ต้องการส่งกลับแผนกเดิม — ใช้ปุ่ม \"ส่งงานกลับแผนกก่อนหน้า\"" });
+      return;
+    }
     setIsTransferring(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
-    batch.update(jobDocRef, { department: subTransferDept, mainDepartment: job.mainDepartment || job.department, status: 'RECEIVED', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `ส่งงานต่อให้แผนก: ${deptCode(subTransferDept)} เพื่อดำเนินการย่อย`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    const nextStatus = statusAfterSubDepartmentHandoff(job.status);
+    const mainDept = job.mainDepartment ?? job.department;
+    batch.update(jobDocRef, {
+      department: subTransferDept,
+      mainDepartment: mainDept,
+      subTaskHandoffSource: job.department,
+      status: nextStatus,
+      assigneeUid: null,
+      assigneeName: null,
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { text: `ส่งงานต่อให้แผนก: ${deptLabel(subTransferDept)} เพื่อดำเนินการย่อย (จาก ${deptLabel(job.department)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch
       .commit()
       .then(() => {
@@ -631,11 +718,48 @@ function JobDetailsPageContent() {
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
-    batch.update(jobDocRef, { department: job.mainDepartment, status: 'IN_PROGRESS', assigneeUid: null, assigneeName: null, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `แผนกย่อย (${deptCode(job.department)}) ดำเนินการเสร็จสิ้น ส่งงานกลับแผนกหลัก (${deptCode(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
+    batch.update(jobDocRef, {
+      department: job.mainDepartment,
+      status: "IN_REPAIR_PROCESS",
+      subTaskHandoffSource: deleteField(),
+      assigneeUid: null,
+      assigneeName: null,
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { text: `แผนกย่อย (${deptLabel(job.department)}) ส่งงานกลับแผนกหลัก (${deptLabel(job.mainDepartment)})`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
     batch.commit().then(() => toast({ title: "ส่งงานกลับแผนกหลักเรียบร้อยแล้วค่ะ" }))
     .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
     .finally(() => setIsSubmittingNote(false));
+  };
+
+  const handleReturnToHandoff = async () => {
+    if (!db || !profile || !job?.subTaskHandoffSource) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    const back = job.subTaskHandoffSource;
+    const from = job.department;
+    batch.update(jobDocRef, {
+      department: back,
+      subTaskHandoffSource: from,
+      status: "IN_REPAIR_PROCESS",
+      assigneeUid: null,
+      assigneeName: null,
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), {
+      text: `ส่งงานกลับแผนกก่อนหน้า: ${deptLabel(back)} (จาก ${deptLabel(from)})`,
+      userName: profile.displayName,
+      userId: profile.uid,
+      createdAt: serverTimestamp(),
+    });
+    batch
+      .commit()
+      .then(() => toast({ title: "ส่งงานกลับแผนกก่อนหน้าเรียบร้อย" }))
+      .catch((e) => toast({ variant: "destructive", title: "Error", description: e.message }))
+      .finally(() => setIsSubmittingNote(false));
   };
 
   const handleFinishJob = async () => {
@@ -819,6 +943,13 @@ function JobDetailsPageContent() {
         confirmText: "ยืนยันส่งกลับแผนกหลัก",
         onConfirm: handleReturnToMain,
       },
+      RETURN_TO_HANDOFF: {
+        title: "ยืนยันส่งงานกลับแผนกก่อนหน้า",
+        description:
+          "ยืนยันว่าต้องการส่งงานกลับให้แผนกที่ส่งงานต่อมาให้คุณ เพื่อดำเนินการต่อที่แผนกนั้นใช่ไหม? สถานะจะเป็นกำลังดำเนินการซ่อมเพื่อรองรับการเบิกอะไหล่เพิ่มตามใบเสนอราคา",
+        confirmText: "ยืนยันส่งกลับแผนกก่อนหน้า",
+        onConfirm: handleReturnToHandoff,
+      },
       APPROVE_JOB: {
         title: "ยืนยันอนุมัติเริ่มซ่อม",
         description: "ยืนยันว่าลูกค้าอนุมัติแล้ว และพร้อมเปลี่ยนสถานะไปจัดเตรียมอะไหล่ใช่ไหม?",
@@ -844,7 +975,7 @@ function JobDetailsPageContent() {
         onConfirm: handleRequestMoreParts,
       },
     } as const;
-  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToMain]);
+  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -986,68 +1117,166 @@ function JobDetailsPageContent() {
               <input type="file" ref={quickCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handleQuickPhotoUpload} />
               <input type="file" ref={quickGalleryRef} className="hidden" multiple accept="image/*" onChange={handleQuickPhotoUpload} />
             </CardHeader>
-            <CardContent>{job.photos && job.photos.length > 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{job.photos.map((url, i) => (
-                    <div key={i} className="relative group aspect-square">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full"><Image src={url} alt={`Job photo ${i+1}`} width={200} height={200} className="rounded-md border object-cover w-full h-full hover:opacity-80 transition-opacity" /></a>
+            <CardContent>{job.photos && job.photos.some(Boolean) ? (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{job.photos.filter(Boolean).map((url, i) => (
+                    <div key={`${url}-${i}`} className="relative group aspect-square">
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full"><Image src={url} alt={`Job photo ${i+1}`} width={200} height={200} unoptimized className="rounded-md border object-cover w-full h-full hover:opacity-80 transition-opacity" /></a>
                         {isUserAdmin && !isViewOnly && <Button type="button" variant="destructive" size="icon" className="absolute -top-2 -right-2 h-6 w-6 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" onClick={(e) => { e.preventDefault(); handleDeletePhoto(url); }} disabled={isAddingPhotos}><Trash2 className="h-3 w-3" /></Button>}
                     </div>
                 ))}</div>
             ) : <p className="text-muted-foreground text-sm">ยังไม่มีรูปตอนรับงาน</p>}</CardContent>
           </Card>
           
-          {(!isViewOnly) && (
+          {(!isViewOnly) && canUpdateActivity && (
             <Card>
-                <CardHeader><CardTitle>อัปเดทการทำงาน/รูปงาน</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <span className="block"><Textarea placeholder="พิมพ์บันทึกที่นี่..." value={newNote} onChange={e => setNewNote(e.target.value)} disabled={!canUpdateActivity || isViewOnly} /></span>
-                  {photoPreviews.length > 0 && (
-                    <div className="grid grid-cols-4 gap-2">{photoPreviews.map((src, i) => (
-                      <div key={i} className="relative"><Image src={src} alt="preview" width={100} height={100} className="rounded-md object-cover w-full aspect-square" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-5 w-5" onClick={() => { URL.revokeObjectURL(photoPreviews[i]); setNewPhotos(p=>p.filter((_,idx)=>idx!==i)); setPhotoPreviews(p=>p.filter((_,idx)=>idx!==i)); }}><X className="h-3 w-3" /></Button></div>
-                    ))}</div>
-                  )}
-                   <div className="flex flex-wrap gap-2">
-                      <Button onClick={handleAddActivity} disabled={isSubmittingNote || isAddingPhotos || isCompressing || (!newNote.trim() && newPhotos.length === 0) || !canUpdateActivity || isViewOnly}>{isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Paperclip className="mr-2 h-4 w-4" />} อัปเดท</Button>
-                      
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" disabled={!canUpdateActivity || isSubmittingNote || isAddingPhotos || isCompressing || isViewOnly}>
-                            {isCompressing ? (
-                              <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                กำลังลดขนาดรูป...
-                              </>
-                            ) : (
-                              <>
-                                <Camera className="mr-2 h-4 w-4" /> เพิ่มรูปกิจกรรม
-                              </>
-                            )}
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem onClick={() => activityCameraRef.current?.click()}>
-                            <Camera className="mr-2 h-4 w-4" /> ถ่ายรูปจากกล้อง
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => activityGalleryRef.current?.click()}>
-                            <ImageIcon className="mr-2 h-4 w-4" /> เลือกจากอัลบั้ม
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <input type="file" ref={activityCameraRef} className="hidden" accept="image/*" capture="environment" onChange={handlePhotoChange} />
-                      <input type="file" ref={activityGalleryRef} className="hidden" multiple accept="image/*" onChange={handlePhotoChange} />
-                  </div>
-                </CardContent>
-              </Card>
+              <CardHeader>
+                <CardTitle>แนบรูประหว่างดำเนินการ</CardTitle>
+                <CardDescription className="text-sm">
+                  ประวัติด้านล่างบันทึกโดยระบบจากแต่ละขั้นตอน (รับงาน เอกสาร สถานะ ฯลฯ) — ถ้าต้องการแนบรูประหว่างทาง
+                  ให้กดปุ่มแล้วถ่ายหรือเลือกรูป พร้อมเขียนคำอธิบายใต้รูปว่าแสดงอะไร
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-primary/40"
+                  disabled={isSubmittingNote || isAddingPhotos || isCompressing || job.isArchived}
+                  onClick={() => setActivityPhotoDialogOpen(true)}
+                >
+                  <Camera className="mr-2 h-4 w-4" />
+                  แนบรูปกิจกรรม (พร้อมคำอธิบาย)
+                </Button>
+              </CardContent>
+            </Card>
           )}
+
+          <Dialog
+            open={activityPhotoDialogOpen}
+            onOpenChange={(open) => {
+              setActivityPhotoDialogOpen(open);
+              if (!open) {
+                setActivityPhotoPreviews((prev) => {
+                  prev.forEach((u) => URL.revokeObjectURL(u));
+                  return [];
+                });
+                setActivityPhotoFiles([]);
+                setActivityPhotoCaption("");
+              }
+            }}
+          >
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>แนบรูปกิจกรรม</DialogTitle>
+                <DialogDescription>
+                  ถ่ายหรือเลือกรูป แล้วอธิบายสั้นๆ ว่ารูปนี้ใช้ยืนยันอะไร (บังคับก่อนบันทึก)
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-2">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
+                    onClick={() => activityPhotoDialogCameraRef.current?.click()}
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    ถ่ายรูป
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
+                    onClick={() => activityPhotoDialogGalleryRef.current?.click()}
+                  >
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                    เลือกจากอัลบั้ม
+                  </Button>
+                  {isCompressing && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-4 w-4 animate-spin" /> กำลังลดขนาดรูป...
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  ref={activityPhotoDialogCameraRef}
+                  className="hidden"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleActivityPhotoDialogFiles}
+                />
+                <input
+                  type="file"
+                  ref={activityPhotoDialogGalleryRef}
+                  className="hidden"
+                  multiple
+                  accept="image/*"
+                  onChange={handleActivityPhotoDialogFiles}
+                />
+                {activityPhotoPreviews.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {activityPhotoPreviews.map((src, i) => (
+                      <div key={src} className="relative aspect-square w-full overflow-hidden rounded-md border bg-muted">
+                        <Image src={src} alt="" fill unoptimized sizes="120px" className="object-cover" />
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6"
+                          onClick={() => removeActivityPhotoAtIndex(i)}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="grid gap-2">
+                  <Label htmlFor="activity-photo-caption">คำอธิบายรูป (วัตถุประสงค์)</Label>
+                  <Textarea
+                    id="activity-photo-caption"
+                    placeholder="เช่น ภายในถังน้ำมันมีตะกอน / หลังล้างแล้วพบสิ่งแปลกปลอม ฯลฯ"
+                    value={activityPhotoCaption}
+                    onChange={(e) => setActivityPhotoCaption(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setActivityPhotoPreviews((prev) => {
+                      prev.forEach((u) => URL.revokeObjectURL(u));
+                      return [];
+                    });
+                    setActivityPhotoFiles([]);
+                    setActivityPhotoCaption("");
+                    setActivityPhotoDialogOpen(false);
+                  }}
+                >
+                  ยกเลิก
+                </Button>
+                <Button type="button" onClick={handleSubmitActivityPhotos} disabled={isSubmittingNote || isCompressing}>
+                  {isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
+                  บันทึกรูปและคำอธิบาย
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Card>
             <CardHeader>
-              <CardTitle>Activity Log</CardTitle>
-              {job.isArchived && (
-                <CardDescription className="text-xs">
-                  ประวัติกิจกรรมจากงานที่ปิดแล้ว — แสดงข้อความและรูปที่บันทึกไว้ทุกรายการ
-                </CardDescription>
-              )}
+              <CardTitle>ประวัติการดำเนินการ</CardTitle>
+              <CardDescription className="text-xs">
+                {job.isArchived
+                  ? "งานที่ปิดแล้ว — แสดงข้อความและรูปที่บันทึกไว้"
+                  : "รายการส่วนใหญ่บันทึกโดยระบบอัตโนมัติจากการดำเนินการในแอป รายการที่ขึ้นต้นว่า «แนบรูปกิจกรรม» มาจากการแนบรูปพร้อมคำอธิบาย"}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">{activitiesLoading ? <div className="flex items-center justify-center h-24"><Loader2 className="h-66 w-6 animate-spin text-muted-foreground" /></div> : activities && activities.length > 0 ? (
                 activities.map((activity) => (
@@ -1057,15 +1286,15 @@ function JobDetailsPageContent() {
                           <p className="font-semibold text-sm">{activity.userName} <span className="text-[10px] font-normal text-muted-foreground ml-2">{safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}</span></p>
                           {activity.text ? (
                             <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>
-                          ) : activity.photos && activity.photos.length > 0 ? (
+                          ) : activity.photos?.some(Boolean) ? (
                             <p className="text-sm text-muted-foreground italic my-1">(แนบรูปภาพ — ไม่มีข้อความ)</p>
                           ) : null}
-                          {activity.photos && activity.photos.length > 0 && (
+                          {activity.photos?.some(Boolean) && (
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-                                  {activity.photos.map((url, i) => (
-                                      <div key={i} className="relative group aspect-square">
+                                  {activity.photos.filter(Boolean).map((url, i) => (
+                                      <div key={`${url}-${i}`} className="relative group aspect-square">
                                           <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
-                                              <Image src={url} alt="Activity" width={100} height={100} className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
+                                              <Image src={url} alt="Activity" width={100} height={100} unoptimized className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
                                           </a>
                                           {isUserAdmin && !job.isArchived && (
                                               <Button 
@@ -1192,7 +1421,8 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Finish / Return to Main */}
-                    {['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) && (
+                    {(['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) ||
+                      (isSubTask && job.status === 'RECEIVED')) && (
                         <Button 
                           onClick={() => setStatusConfirmAction(isSubTask ? 'RETURN_TO_MAIN' : 'FINISH_JOB')} 
                           disabled={isSubmittingNote} 
@@ -1201,6 +1431,18 @@ function JobDetailsPageContent() {
                             <CheckCircle className="mr-2 h-4 w-4" /> 
                             {isSubTask ? "ส่งงานกลับแผนกหลัก" : "งานเสร็จแจ้งทำบิล"}
                         </Button>
+                    )}
+
+                    {showReturnToHandoff && (
+                      <Button
+                        variant="outline"
+                        className="w-full border-violet-600 text-violet-700 hover:bg-violet-50 font-bold"
+                        onClick={() => setStatusConfirmAction('RETURN_TO_HANDOFF')}
+                        disabled={isSubmittingNote}
+                      >
+                        <Undo2 className="mr-2 h-4 w-4" />
+                        ส่งงานกลับแผนกก่อนหน้า ({deptLabel(job.subTaskHandoffSource!)})
+                      </Button>
                     )}
 
                     {/* Withdraw Parts - Logic Split */}
@@ -1230,9 +1472,16 @@ function JobDetailsPageContent() {
                         </Button>
                     )}
 
-                    {/* Sub-Transfer */}
-                    {!isSubTask && (
-                        <Button variant="outline" className="w-full border-amber-500 text-amber-600 hover:bg-amber-50 font-bold" onClick={() => setIsSubTransferDialogOpen(true)}>
+                    {/* Sub-Transfer (งานหลักหรืองานย่อยส่งต่อแผนกถัดไปได้) */}
+                    {canSubTransfer && (
+                        <Button
+                          variant="outline"
+                          className="w-full border-amber-500 text-amber-600 hover:bg-amber-50 font-bold"
+                          onClick={() => {
+                            setSubTransferDept('');
+                            setIsSubTransferDialogOpen(true);
+                          }}
+                        >
                             <Forward className="mr-2 h-4 w-4" /> ส่งงานต่อ
                         </Button>
                     )}
@@ -1270,7 +1519,51 @@ function JobDetailsPageContent() {
       </Dialog>
 
       <Dialog open={isSubTransferDialogOpen} onOpenChange={setIsSubTransferDialogOpen}>
-          <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><Forward className="h-5 w-5 text-primary" /> ส่งงานต่อ (เปิดงานย่อย)</DialogTitle></DialogHeader><div className="grid gap-4 py-4"><div className="grid gap-2"><Label>แผนกปลายทาง</Label><Select value={subTransferDept} onValueChange={(v) => setSubTransferDept(v as JobDepartment)}><SelectTrigger><SelectValue placeholder="เลือกแผนก..." /></SelectTrigger><SelectContent><SelectItem value="COMMONRAIL">แผนกคอมมอนเรล</SelectItem><SelectItem value="MECHANIC">แผนกแมคคานิค</SelectItem><SelectItem value="OUTSOURCE">ส่งงานนอก (Outsource)</SelectItem></SelectContent></Select></div><div className="p-3 bg-muted/50 rounded-md text-xs text-muted-foreground flex gap-2"><History className="h-4 w-4 shrink-0" /><p>เมื่อแผนกปลายทางดำเนินการเสร็จ จะมีปุ่มให้ "ส่งงานกลับ" เพื่อมาจบงานที่แผนกหลัก ({deptCode(job.mainDepartment || job.department)}) ค่ะ</p></div></div><DialogFooter><Button variant="outline" onClick={() => setIsSubTransferDialogOpen(false)}>ยกเลิก</Button><Button onClick={handleSubTransfer} disabled={isTransferring || !subTransferDept}>ยืนยันการส่งต่อ</Button></DialogFooter></DialogContent>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Forward className="h-5 w-5 text-primary" /> ส่งงานต่อ (เปิดงานย่อย)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>แผนกปลายทาง</Label>
+              <Select value={subTransferDept || undefined} onValueChange={(v) => setSubTransferDept(v as JobDepartment)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="เลือกแผนก..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {subTransferTargets.length > 0 ? (
+                    subTransferTargets.map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {deptLabel(d)}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-sm text-muted-foreground">ไม่มีแผนกให้ส่งต่อในขณะนี้</div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="p-3 bg-muted/50 rounded-md text-xs text-muted-foreground flex gap-2">
+              <History className="h-4 w-4 shrink-0" />
+              <p>
+                เมื่อแผนกปลายทางต้องการส่งกลับ ใช้ปุ่ม &quot;ส่งงานกลับแผนกก่อนหน้า&quot; หรือ &quot;ส่งงานกลับแผนกหลัก&quot; ตามลำดับการส่งงาน
+                {job.mainDepartment && job.mainDepartment !== job.department
+                  ? ` — แผนกหลัก: ${deptLabel(job.mainDepartment)}`
+                  : ` — แผนกหลัก: ${deptLabel(job.mainDepartment || job.department)}`}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSubTransferDialogOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button onClick={handleSubTransfer} disabled={isTransferring || !subTransferDept || subTransferTargets.length === 0}>
+              ยืนยันการส่งต่อ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
       
       <Dialog open={isEditDescriptionDialogOpen} onOpenChange={setIsEditDescriptionDialogOpen}><DialogContent><DialogHeader><DialogTitle>แก้ไขรายการแจ้งซ่อม</DialogTitle></DialogHeader><div className="py-4"><Textarea value={descriptionToEdit} onChange={(e) => setDescriptionToEdit(e.target.value)} rows={8} /></div><DialogFooter><Button variant="outline" onClick={() => setIsEditDescriptionDialogOpen(false)} disabled={isUpdatingDescription}>ยกเลิก</Button><Button onClick={handleUpdateDescription} disabled={isUpdatingDescription}>บันทึก</Button></DialogFooter></DialogContent></Dialog>

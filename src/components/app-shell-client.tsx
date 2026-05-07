@@ -22,59 +22,122 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
 
-  const isPublicRoute =
+  const isMarketingPublic =
     pathname === "/" ||
-    pathname === "/login" ||
-    pathname === "/pending" ||
-    pathname === "/signup" ||
-    pathname === "/healthz" ||
     pathname === "/products" ||
-    pathname === "/services" || // เพิ่ม /services เข้าในรายการหน้าสาธารณะ
+    pathname === "/services" ||
     pathname === "/contact";
+
+  const isStaffAuth = pathname === "/login" || pathname === "/signup";
+  const isCustomerAuth = pathname === "/login/customer" || pathname === "/signup/customer";
+
+  const isPublicRoute =
+    isMarketingPublic ||
+    isStaffAuth ||
+    isCustomerAuth ||
+    pathname === "/pending" ||
+    pathname === "/healthz";
+
+  const isCustomerPortal = pathname === "/customer" || pathname.startsWith("/customer/");
 
   useEffect(() => {
     if (loading) return;
 
     if (!user) {
-      if (!isPublicRoute) {
+      if (isCustomerPortal) {
+        router.replace("/login/customer");
+      } else if (!isPublicRoute) {
         router.replace("/login");
       }
       return;
     }
 
-    // Auto-redirect to Home (not app) from auth pages if already logged in
-    const isAuthPage = pathname === "/login" || pathname === "/signup";
-    
-    if (isAuthPage) {
-        if (profile?.status === "ACTIVE") {
-            router.replace("/"); // Redirect to Home
-        } else if (profile) {
-            router.replace("/pending");
-        }
+    if (isStaffAuth) {
+      if (!profile) return;
+      if (profile.status !== "ACTIVE") {
+        router.replace("/pending");
         return;
+      }
+      if (profile.role === "CUSTOMER") {
+        router.replace("/customer");
+        return;
+      }
+      router.replace("/");
+      return;
     }
 
-    if (!isPublicRoute) {
-        if (!profile || (profile.status && profile.status !== "ACTIVE")) {
-            if (pathname !== "/pending") {
-                router.replace("/pending");
-            }
-        }
+    if (isCustomerAuth) {
+      if (!profile) return;
+      if (profile.status !== "ACTIVE") {
+        router.replace("/pending");
+        return;
+      }
+      if (profile.role === "CUSTOMER") {
+        router.replace("/customer");
+        return;
+      }
+      router.replace("/");
+      return;
     }
-  }, [loading, user, profile, router, pathname, isPublicRoute]);
+
+    if (profile?.role === "CUSTOMER" && profile.status === "ACTIVE" && isCustomerPortal) {
+      return;
+    }
+
+    if (profile?.role === "CUSTOMER" && profile.status === "ACTIVE" && pathname.startsWith("/app")) {
+      router.replace("/customer");
+      return;
+    }
+
+    if (profile && profile.role !== "CUSTOMER" && isCustomerPortal) {
+      router.replace("/app");
+      return;
+    }
+
+    if (isCustomerPortal && user && profile && profile.role === "CUSTOMER" && profile.status !== "ACTIVE") {
+      router.replace("/pending");
+      return;
+    }
+
+    if (!isPublicRoute && !isCustomerPortal) {
+      if (!profile || (profile.status && profile.status !== "ACTIVE")) {
+        if (pathname !== "/pending") {
+          router.replace("/pending");
+        }
+      }
+    }
+  }, [loading, user, profile, router, pathname, isPublicRoute, isCustomerPortal, isStaffAuth, isCustomerAuth]);
 
   if (isPublicRoute) {
     return <>{children}</>;
   }
-  
+
+  if (isCustomerPortal) {
+    if (loading || !user) {
+      return <FullscreenSpinner />;
+    }
+    if (!profile) {
+      return <FullscreenSpinner />;
+    }
+    if (profile.role !== "CUSTOMER" || profile.status !== "ACTIVE") {
+      return <FullscreenSpinner />;
+    }
+    return (
+      <>
+        <FixStuckUI />
+        {children}
+      </>
+    );
+  }
+
   if (loading || !user || (!profile && pathname !== "/pending")) {
     return <FullscreenSpinner />;
   }
-  
+
   if (!profile && pathname === "/pending") {
-      return <div className="p-4">{children}</div>;
+    return <div className="p-4">{children}</div>;
   }
-  
+
   const isPrintMode = searchParams.get("print") === "1";
   if (isPrintMode) {
     return (

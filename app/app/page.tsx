@@ -24,6 +24,11 @@ export default function AppHomePage() {
       return;
     }
 
+    if (profile.role === 'CUSTOMER') {
+      router.replace('/customer');
+      return;
+    }
+
     const role = profile.role;
     const department = profile.department;
 

@@ -64,6 +64,31 @@ service cloud.firestore {
         dept() == "OUTSOURCE"
       );
     }
+
+    /** ลูกค้าสร้าง/ผูกเอกสาร customers/{เบอร์} หลังสมัคร (users เขียนก่อนแล้ว role เป็น CUSTOMER) */
+    function customerSelfCreate(customerId) {
+      return signedIn() && userExists() && !isViewer()
+        && role() == "CUSTOMER"
+        && getProfile().phone == customerId
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.phone == customerId
+        && request.resource.data.name.size() < 200;
+    }
+
+    function customerSelfServiceUpdate(customerId) {
+      return signedIn() && userExists() && !isViewer()
+        && role() == "CUSTOMER"
+        && getProfile().phone == customerId
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.phone == customerId
+        && request.resource.data.name.size() < 200
+        && (
+          resource.data.authUid == request.auth.uid
+          || !('authUid' in resource.data)
+          || resource.data.authUid == null
+          || resource.data.authUid == ''
+        );
+    }
     
     function isOfficeOrMgmt() {
       return (isMgmt() || (signedIn() && (dept() == "OFFICE" || role() == "ADMIN" || role() == "MANAGER" || role() == "OFFICER"))) && !isViewer();
@@ -85,6 +110,24 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/settings/hr).data;
     }
 
+    /** ลูกค้าห้ามเปลี่ยน phone / role / status / email เอง — อนุมัติผ่าน Admin */
+    function customerSelfUserUpdateOk() {
+      return role() != 'CUSTOMER' || (
+        resource.data.phone == request.resource.data.phone &&
+        resource.data.role == request.resource.data.role &&
+        resource.data.status == request.resource.data.status &&
+        resource.data.email == request.resource.data.email
+      );
+    }
+
+    /** อนุมัติพอร์ทัลลูกค้า (PENDING → ACTIVE) เฉพาะ Admin เท่านั้น — HR/Manager ทำไม่ได้ */
+    function customerPortalApprovalAllowed() {
+      return !(resource.data.role == 'CUSTOMER'
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'ACTIVE')
+        || isAdmin();
+    }
+
     // ===================================
     // Default Security Rules
     // ===================================
@@ -100,7 +143,11 @@ service cloud.firestore {
     // User Profiles
     match /users/{uid} {
       allow read: if signedIn();
-      allow create, update: if (isHRAllowed() || (signedIn() && request.auth.uid == uid)) && !isViewer();
+      allow create: if !isViewer() && (isHRAllowed() || (signedIn() && request.auth.uid == uid));
+      allow update: if !isViewer() && customerPortalApprovalAllowed() && (
+        isHRAllowed() ||
+        (signedIn() && request.auth.uid == uid && customerSelfUserUpdateOk())
+      );
       allow delete: if isAdmin();
     }
 
@@ -126,7 +173,10 @@ service cloud.firestore {
     // Customers & Vendors
     match /customers/{id} {
       allow read: if signedIn();
-      allow create, update: if canEditJobs() && request.resource.data.name.size() < 200;
+      allow create: if (canEditJobs() && request.resource.data.name.size() < 200)
+        || customerSelfCreate(id);
+      allow update: if (canEditJobs() && request.resource.data.name.size() < 200)
+        || customerSelfServiceUpdate(id);
       allow delete: if isAdmin();
     }
     match /vendors/{id} {
@@ -137,7 +187,7 @@ service cloud.firestore {
 
     // Jobs & Main Documents
     match /jobs/{jobId} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (role() != 'CUSTOMER' || resource.data.customerId == getProfile().phone);
       // เปิดงานใหม่ต้องใช้รหัสเอกสารแบบ auto-id ของ Firestore (20 ตัว) เท่านั้น
       // กันสร้าง jobs/SJ2026-0001 ซ้ำแล้วไปดึงเอกสารเก่าที่ผูก jobId เดิม — ยกเว้นแอดมิน (เช่น กู้คืนจากประวัติ)
       allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4
@@ -150,7 +200,10 @@ service cloud.firestore {
       );
       allow delete: if isMgmt();
       match /activities/{activityId} {
-        allow read: if signedIn();
+        allow read: if signedIn() && (
+          role() != 'CUSTOMER' ||
+          get(/databases/$(database)/documents/jobs/$(jobId)).data.customerId == getProfile().phone
+        );
         allow create: if signedIn() && !isViewer() && request.resource.data.text.size() < 5000 && (!('photos' in request.resource.data) || request.resource.data.photos.size() <= 10);
         allow update, delete: if canEditJobs();
       }
@@ -158,10 +211,15 @@ service cloud.firestore {
     
     // Archive Collections
     match /{collectionName}/{jobId} {
-        allow read: if signedIn() && collectionName.startsWith('jobsArchive_');
+        allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
+          && (role() != 'CUSTOMER' || resource.data.customerId == getProfile().phone);
         allow create, update, delete: if isMgmt() && collectionName.startsWith('jobsArchive_');
         match /activities/{activityId} {
-            allow read: if signedIn() && collectionName.startsWith('jobsArchive_');
+            allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
+              && (
+                role() != 'CUSTOMER' ||
+                get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId == getProfile().phone
+              );
             allow write: if isMgmt() && collectionName.startsWith('jobsArchive_');
         }
     }

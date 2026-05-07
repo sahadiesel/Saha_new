@@ -73,6 +73,15 @@ export default function LoginPage() {
       }
 
       const profileData = profileSnap.data();
+      if (profileData.role === "CUSTOMER") {
+        await signOut();
+        toast({
+          variant: "destructive",
+          title: "บัญชีลูกค้า",
+          description: "กรุณาเข้าสู่ระบบที่หน้า /login/customer",
+        });
+        return;
+      }
       if (profileData.status !== 'ACTIVE') {
         await signOut();
         toast({

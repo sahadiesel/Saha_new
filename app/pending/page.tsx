@@ -26,7 +26,11 @@ export default function PendingPage() {
     }
     
     if (profile?.status === "ACTIVE") {
-      router.replace("/app");
+      if (profile.role === "CUSTOMER") {
+        router.replace("/customer");
+      } else {
+        router.replace("/app");
+      }
     }
   }, [user, profile, loading, router]);
 
@@ -67,19 +71,25 @@ export default function PendingPage() {
   }
 
   if (profile.status === 'PENDING') {
+    const isCustomer = profile.role === 'CUSTOMER';
     return (
       <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
         <Card className="w-full max-w-md text-center">
           <CardHeader>
-            <CardTitle className="text-2xl font-headline">Account Pending</CardTitle>
+            <CardTitle className="text-2xl font-headline">
+              {isCustomer ? 'รอการอนุมัติบัญชีลูกค้า' : 'Account Pending'}
+            </CardTitle>
             <CardDescription>
-              บัญชีของคุณอยู่ระหว่างรอการอนุมัติ
+              {isCustomer
+                ? 'ศูนย์กำลังตรวจสอบการสมัครพอร์ทัลของคุณ'
+                : 'บัญชีของคุณอยู่ระหว่างรอการอนุมัติ'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="mb-6 text-sm text-muted-foreground">
-              กรุณาติดต่อผู้ดูแลระบบเพื่อเปิดใช้งานบัญชี 
-              คุณจะสามารถเข้าใช้งานระบบได้ทันทีเมื่อบัญชีได้รับการอนุมัติเรียบร้อยแล้วค่ะ
+              {isCustomer
+                ? 'เมื่อผู้ดูแลระบบ (Admin) อนุมัติที่เมนูการจัดการ user ลูกค้าแล้ว คุณจะเข้าดูสถานะงานซ่อมและสั่งซื้ออะไหล่ได้ หากรอนานเกินไปกรุณาติดต่อสหดีเซล'
+                : 'กรุณาติดต่อผู้ดูแลระบบเพื่อเปิดใช้งานบัญชี คุณจะสามารถเข้าใช้งานระบบได้ทันทีเมื่อบัญชีได้รับการอนุมัติเรียบร้อยแล้วค่ะ'}
             </p>
             <Button variant="outline" onClick={signOut}>
               ออกจากระบบ (Logout)

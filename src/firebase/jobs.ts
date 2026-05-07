@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import type { Job, UserProfile } from '@/lib/types';
 import { sanitizeForFirestore } from '@/lib/utils';
+import { deptLabel } from '@/lib/ui-labels';
 import { normalizeYear } from '@/firebase/documents';
 import { archiveCollectionNameByYear } from '@/lib/archive-utils';
 
@@ -114,8 +115,9 @@ export async function createJob(
     transaction.set(newJobRef, jobData);
 
     const activityRef = doc(collection(newJobRef, 'activities'));
+    const nPhotos = data.photos?.length || 0;
     transaction.set(activityRef, {
-      text: `เปิดงานใหม่ เลขที่ ${assignedJobNo}`,
+      text: `รับงาน (เปิดใบงาน) โดย ${userProfile.displayName} · เลขที่ ${assignedJobNo} · แผนก ${deptLabel(data.department)} · แนบรูปตอนรับงาน ${nPhotos} รูป`,
       userName: userProfile.displayName,
       userId: userProfile.uid,
       createdAt: serverTimestamp(),

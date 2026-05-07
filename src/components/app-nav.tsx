@@ -245,6 +245,7 @@ const AdminSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
                 </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="py-1 pl-4 space-y-1">
+                <SubNavLink href="/app/admin/customer-users" label="การจัดการ user ลูกค้า" onClick={onLinkClick} />
                 <SubNavLink href="/app/admin/users" label="จัดการผู้ใช้ / Maintenance" onClick={onLinkClick} />
                 <SubNavLink href="/app/admin/stock-log" label="ประวัติสต๊อก (Activity Log)" onClick={onLinkClick} />
             </CollapsibleContent>
