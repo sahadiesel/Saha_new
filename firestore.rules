@@ -40,14 +40,6 @@ service cloud.firestore {
     function isMgmt() {
       return isSystemAdmin() || (signedIn() && (dept() == "MANAGEMENT" || role() == "ADMIN" || role() == "MANAGER"));
     }
-    
-    function isOffice() {
-      return signedIn() && (dept() == "OFFICE" || dept() == "MANAGEMENT") && !isViewer();
-    }
-
-    function isService() {
-      return signedIn() && (dept() == "CAR_SERVICE" || dept() == "COMMONRAIL" || dept() == "MECHANIC" || dept() == "OUTSOURCE") && !isViewer();
-    }
 
     function canEditJobs() {
       return signedIn() && role() != "VIEWER" && (
@@ -152,9 +144,10 @@ service cloud.firestore {
     function isPurchasingAllowed() {
       return isMgmt() || (signedIn() && (dept() == "PURCHASING" || dept() == "OFFICE" || role() == "PURCHASE"));
     }
-    
-    function hrSettings() {
-      return get(/databases/$(database)/documents/settings/hr).data;
+
+    /** ชื่อคอลเลกชัน archive ปีละไฟล์ — ใช้ matches() (มี startsWith() ในกฎไม่รองรับ → linter เตือน) */
+    function isJobsArchiveCollection(name) {
+      return name.matches('^jobsArchive_.*');
     }
 
     /** ลูกค้าห้ามเปลี่ยน phone / role / status / email เอง — อนุมัติผ่าน Admin */
@@ -196,6 +189,13 @@ service cloud.firestore {
         (signedIn() && request.auth.uid == uid && customerSelfUserUpdateOk())
       );
       allow delete: if isAdmin();
+
+      /** เวลาอ่านแชตลูกค้าต่อ job (ต่อผู้ใช้) — map reads.{jobId} = timestamp */
+      match /jobCustomerChatReads/{readDocId} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid && canEditJobs() && !isViewer() && readDocId == 'summary';
+        allow delete: if false;
+      }
     }
 
     // Settings
@@ -274,7 +274,9 @@ service cloud.firestore {
               && jobCustomerIdStrByJobId(jobId) == profilePhoneStr()
             )
           );
-        allow update, delete: if canEditJobs();
+        allow update: if canEditJobs();
+        /** ลบทั้งเอกสารกิจกรรม — เฉพาะ ADMIN (ลบรูปทีละรูปยังใช้ update ตามเดิม) */
+        allow delete: if isAdmin();
       }
       match /customerChat/{msgId} {
         allow read: if signedIn() && (
@@ -300,7 +302,7 @@ service cloud.firestore {
     
     // Archive Collections
     match /{collectionName}/{jobId} {
-        allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
+        allow read: if signedIn() && isJobsArchiveCollection(collectionName)
           && (
             role() != 'CUSTOMER'
             || (
@@ -310,16 +312,16 @@ service cloud.firestore {
               && string(resource.data.customerId) == profilePhoneStr()
             )
           );
-        allow create, update, delete: if isMgmt() && collectionName.startsWith('jobsArchive_');
+        allow create, update, delete: if isMgmt() && isJobsArchiveCollection(collectionName);
         match /activities/{activityId} {
-            allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
+            allow read: if signedIn() && isJobsArchiveCollection(collectionName)
               && (
                 role() != 'CUSTOMER' ||
                 profilePhoneStr().size() > 0
                 && get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId != null
                 && string(get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId) == profilePhoneStr()
               );
-            allow write: if isMgmt() && collectionName.startsWith('jobsArchive_');
+            allow write: if isMgmt() && isJobsArchiveCollection(collectionName);
         }
     }
 
