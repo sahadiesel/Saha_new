@@ -64,12 +64,16 @@ exports.postJobCustomerChatMessage = (0, https_1.onCall)({ region: "us-central1"
         : typeof em === "string" && em.trim()
             ? em.trim().slice(0, 200)
             : "ผู้ใช้";
-    await jobRef.collection("customerChat").add({
+    const msgRef = jobRef.collection("customerChat").doc();
+    const batch = db().batch();
+    batch.set(msgRef, {
         text,
         authorRole: "CUSTOMER",
         userName,
         userId: uid,
         createdAt: firestore_1.FieldValue.serverTimestamp(),
     });
+    batch.set(jobRef, { customerChatLastCustomerMessageAt: firestore_1.FieldValue.serverTimestamp() }, { merge: true });
+    await batch.commit();
     return { ok: true };
 });

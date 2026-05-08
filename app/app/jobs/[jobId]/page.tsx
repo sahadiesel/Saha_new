@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from 'next/link';
-import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer, type Query } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, deleteDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer, type Query } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -160,6 +160,9 @@ function JobDetailsPageContent() {
   const quickGalleryRef = useRef<HTMLInputElement>(null);
   const activityPhotoDialogCameraRef = useRef<HTMLInputElement>(null);
   const activityPhotoDialogGalleryRef = useRef<HTMLInputElement>(null);
+  /** กันบันทึกซ้ำระหว่างอัปโหลด (ก่อน state isSubmittingNote ทัน) */
+  const activityPhotoSubmitLockRef = useRef(false);
+  const quickJobPhotoUploadLockRef = useRef(false);
 
   const jobId = useMemo(() => {
     const id = params?.jobId;
@@ -178,6 +181,7 @@ function JobDetailsPageContent() {
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [isAddingPhotos, setIsAddingPhotos] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [deletingActivityId, setDeletingActivityId] = useState<string | null>(null);
 
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
   const [transferDepartment, setTransferDepartment] = useState<JobDepartment | ''>('');
@@ -263,7 +267,13 @@ function JobDetailsPageContent() {
 
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
-  
+  /** ตรงกับ isMgmt() ใน Firestore — ลบทั้งรายการกิจกรรม / ลบรูปในบล็อกกิจกรรม */
+  const canDeleteEntireActivity =
+    profile?.uid === "oh3jF10Am4PPGelNzFhjWX6GE5E2" ||
+    profile?.role === "ADMIN" ||
+    profile?.role === "MANAGER" ||
+    profile?.department === "MANAGEMENT";
+
   const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const canIssueBill = isMgmtOrOffice && isStaff;
   const canManageWork = isMgmtOrOffice || profile?.role === 'OFFICER';
@@ -315,6 +325,16 @@ function JobDetailsPageContent() {
       return doc(db, archiveCollectionNameByYear(year), jobId);
     }
     return doc(db, "jobs", jobId);
+  };
+
+  const getActivityDocRef = (activityId: string) => {
+    if (!db || !job || !activityId) return null;
+    if (job.isArchived || archiveYear != null) {
+      const year =
+        archiveYear != null ? archiveYear : getGregorianArchiveYearFromDateString(job.closedDate || "");
+      return doc(db, archiveCollectionNameByYear(year), jobId, "activities", activityId);
+    }
+    return doc(db, "jobs", jobId, "activities", activityId);
   };
 
   useEffect(() => {
@@ -539,6 +559,8 @@ function JobDetailsPageContent() {
       return;
     }
 
+    if (activityPhotoSubmitLockRef.current) return;
+    activityPhotoSubmitLockRef.current = true;
     setIsSubmittingNote(true);
     try {
       const photoURLs: string[] = [];
@@ -581,6 +603,7 @@ function JobDetailsPageContent() {
         toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: err.message });
       }
     } finally {
+      activityPhotoSubmitLockRef.current = false;
       setIsSubmittingNote(false);
     }
   };
@@ -588,6 +611,10 @@ function JobDetailsPageContent() {
   const handleQuickPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const jobDocRef = getJobRef();
     if (!e.target.files || !jobId || !db || !profile || !jobDocRef || !job) { e.target.value = ''; return; }
+    if (quickJobPhotoUploadLockRef.current) {
+      e.target.value = "";
+      return;
+    }
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
     const currentPhotoCount = job?.photos?.length || 0;
@@ -596,6 +623,7 @@ function JobDetailsPageContent() {
       e.target.value = ''; return;
     }
     
+    quickJobPhotoUploadLockRef.current = true;
     setIsAddingPhotos(true);
     setIsCompressing(true);
     try {
@@ -623,6 +651,7 @@ function JobDetailsPageContent() {
             toast({variant: "destructive", title: "อัปโหลดล้มเหลว", description: error.message});
         }
     } finally { 
+      quickJobPhotoUploadLockRef.current = false;
       setIsAddingPhotos(false); 
       setIsCompressing(false);
       e.target.value = ''; 
@@ -644,8 +673,37 @@ function JobDetailsPageContent() {
     } catch (error: any) { toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: error.message }); } finally { setIsAddingPhotos(false); }
   };
 
+  const handleDeleteEntireActivity = async (activity: JobActivity) => {
+    if (!db || !storage || !profile || !canDeleteEntireActivity || !activity.id) return;
+    const preview =
+      activity.text?.slice(0, 120) || (activity.photos?.length ? `แนบรูป ${activity.photos.filter(Boolean).length} รูป` : "รายการนี้");
+    if (
+      !confirm(
+        `ลบรายการกิจกรรมนี้ทั้งหมดจากระบบถาวร?\n\n${preview}${activity.text && activity.text.length > 120 ? "…" : ""}\n\nรูปใน Storage จะถูกลบด้วย (ถ้ามี)`
+      )
+    ) {
+      return;
+    }
+    const activityRef = getActivityDocRef(activity.id);
+    if (!activityRef) return;
+
+    setDeletingActivityId(activity.id);
+    try {
+      const urls = (activity.photos || []).filter(Boolean) as string[];
+      await Promise.all(urls.map((url) => deleteObject(ref(storage, url)).catch((err) => console.warn("activity storage delete", err))));
+      await deleteDoc(activityRef);
+      toast({ title: "ลบรายการกิจกรรมแล้ว" });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: msg });
+    } finally {
+      setDeletingActivityId(null);
+    }
+  };
+
   const handleDeleteActivityPhoto = async (activityId: string, url: string) => {
-    if (!db || !storage || !profile || !isUserAdmin) return;
+    if (!db || !storage || !profile || !canDeleteEntireActivity) return;
+    if (deletingActivityId) return;
     if (job?.isArchived) {
         toast({ variant: "destructive", title: "ไม่สามารถลบรูปในประวัติได้" });
         return;
@@ -1188,7 +1246,7 @@ function JobDetailsPageContent() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
+                    disabled={isSubmittingNote || isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
                     onClick={() => activityPhotoDialogCameraRef.current?.click()}
                   >
                     <Camera className="mr-2 h-4 w-4" />
@@ -1198,7 +1256,7 @@ function JobDetailsPageContent() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
+                    disabled={isSubmittingNote || isCompressing || activityPhotoFiles.length >= DATA_LIMITS.MAX_ACTIVITY_PHOTOS}
                     onClick={() => activityPhotoDialogGalleryRef.current?.click()}
                   >
                     <ImageIcon className="mr-2 h-4 w-4" />
@@ -1237,6 +1295,7 @@ function JobDetailsPageContent() {
                           size="icon"
                           className="absolute top-1 right-1 h-6 w-6"
                           onClick={() => removeActivityPhotoAtIndex(i)}
+                          disabled={isSubmittingNote}
                         >
                           <X className="h-3 w-3" />
                         </Button>
@@ -1252,6 +1311,7 @@ function JobDetailsPageContent() {
                     value={activityPhotoCaption}
                     onChange={(e) => setActivityPhotoCaption(e.target.value)}
                     rows={4}
+                    disabled={isSubmittingNote}
                   />
                 </div>
               </div>
@@ -1259,6 +1319,7 @@ function JobDetailsPageContent() {
                 <Button
                   type="button"
                   variant="outline"
+                  disabled={isSubmittingNote}
                   onClick={() => {
                     setActivityPhotoPreviews((prev) => {
                       prev.forEach((u) => URL.revokeObjectURL(u));
@@ -1271,9 +1332,13 @@ function JobDetailsPageContent() {
                 >
                   ยกเลิก
                 </Button>
-                <Button type="button" onClick={handleSubmitActivityPhotos} disabled={isSubmittingNote || isCompressing}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSubmitActivityPhotos()}
+                  disabled={isSubmittingNote || isCompressing}
+                >
                   {isSubmittingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
-                  บันทึกรูปและคำอธิบาย
+                  {isSubmittingNote ? "กำลังอัปโหลด…" : "บันทึกรูปและคำอธิบาย"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1292,8 +1357,32 @@ function JobDetailsPageContent() {
                 activities.map((activity) => (
                   <div key={activity.id} className="flex gap-4">
                       <User className="h-5 w-5 mt-1 text-muted-foreground flex-shrink-0" />
-                      <div className="flex-1">
-                          <p className="font-semibold text-sm">{activity.userName} <span className="text-[10px] font-normal text-muted-foreground ml-2">{safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}</span></p>
+                      <div className="flex-1 min-w-0">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+                            <p className="font-semibold text-sm min-w-0">
+                              {activity.userName}{" "}
+                              <span className="text-[10px] font-normal text-muted-foreground ml-2">
+                                {safeFormat(activity.createdAt, APP_DATE_TIME_FORMAT)}
+                              </span>
+                            </p>
+                            {canDeleteEntireActivity && activity.id ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive border-destructive/40 hover:bg-destructive/10 h-8 text-xs w-full sm:w-auto shrink-0"
+                                disabled={!!deletingActivityId || !!isSubmittingNote}
+                                onClick={() => void handleDeleteEntireActivity(activity)}
+                              >
+                                {deletingActivityId === activity.id ? (
+                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="mr-1 h-3 w-3" />
+                                )}
+                                ลบรายการทั้งหมด
+                              </Button>
+                            ) : null}
+                          </div>
                           {activity.text ? (
                             <p className="whitespace-pre-wrap text-sm my-1">{activity.text}</p>
                           ) : activity.photos?.some(Boolean) ? (
@@ -1306,12 +1395,13 @@ function JobDetailsPageContent() {
                                           <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
                                               <Image src={url} alt="Activity" width={100} height={100} unoptimized className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
                                           </a>
-                                          {isUserAdmin && !job.isArchived && (
+                                          {canDeleteEntireActivity && !job.isArchived && (
                                               <Button 
                                                   type="button" 
                                                   variant="destructive" 
                                                   size="icon" 
                                                   className="absolute -top-1 -right-1 h-5 w-5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" 
+                                                  disabled={deletingActivityId === activity.id || !!isSubmittingNote}
                                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteActivityPhoto(activity.id!, url); }}
                                               >
                                                   <Trash2 className="h-3 w-3" />

@@ -53,6 +53,7 @@ function ByDepartmentContent() {
   const router = useRouter();
   const pathname = usePathname();
   const [searchTerm, setSearchTerm] = useState("");
+  const [customerChatUnreadJobs, setCustomerChatUnreadJobs] = useState(0);
 
   const deptQuery = searchParams.get("dept");
   const activeTab = useMemo(() => normalizeDeptTab(deptQuery), [deptQuery]);
@@ -65,7 +66,13 @@ function ByDepartmentContent() {
 
   return (
     <>
-      <PageHeader title="จัดการงานซ่อม - ตามแผนก" description="แสดงงานทั้งหมดที่ยังไม่ปิด แยกตามแผนกที่รับผิดชอบ" />
+      <PageHeader title="จัดการงานซ่อม - ตามแผนก" description="แสดงงานทั้งหมดที่ยังไม่ปิด แยกตามแผนกที่รับผิดชอบ">
+        {customerChatUnreadJobs > 0 ? (
+          <p className="animate-blink text-right text-base font-semibold text-red-600 md:max-w-md">
+            มีข้อความจากลูกค้า จำนวน {customerChatUnreadJobs} ราย
+          </p>
+        ) : null}
+      </PageHeader>
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
           <TabsList>
@@ -97,6 +104,8 @@ function ByDepartmentContent() {
                     emptyDescription={TAB_EMPTY[activeTab].description}
                     sortByOldestInSystem
                     showSystemAgeBadge
+                    trackCustomerChatUnread
+                    onCustomerChatUnreadJobCount={setCustomerChatUnreadJobs}
                   />
                 </div>
             </CardContent>

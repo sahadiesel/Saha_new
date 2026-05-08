@@ -13,8 +13,6 @@ import {
   getDocs,
   query,
   where,
-  writeBatch,
-  serverTimestamp,
 } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -50,6 +48,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import {
+  callCustomerPortalQuotationDecision,
+  formatCustomerPortalQuotationDecisionError,
+} from "@/lib/callable-customer-quotation-decision";
 type ResolvedJob = {
   jobRef: ReturnType<typeof doc>;
   job: Job;
@@ -115,7 +117,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
   const { jobId } = use(params);
   const searchParams = useSearchParams();
   const archiveYear = searchParams.get("archiveYear");
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
   const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
@@ -206,29 +208,17 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
   }
 
   async function executeQuotationApprove() {
-    if (!db || !profile || !resolved || !resolved.isLiveJob) return;
+    if (!db || !app || !profile || !resolved || !resolved.isLiveJob) return;
     const job = resolved.job;
     if (job.status !== "WAITING_APPROVE") return;
 
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const batch = writeBatch(db);
-      const label = job.customerSnapshot?.name?.trim() || profile.displayName || profile.email || "ลูกค้า";
-      const msg = `อนุมัติใบเสนอราคาแล้ว โดย ${label} (ผ่านพอร์ทัลลูกค้า)`;
-
-      batch.update(liveRef, {
-        status: "PENDING_PARTS",
-        lastActivityAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await callCustomerPortalQuotationDecision(app, {
+        jobId: job.id,
+        decision: "APPROVE",
+        messageVariant: "jobPage",
       });
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
       toast({ title: "อนุมัติแล้ว", description: "ศูนย์ได้รับข้อมูลในระบบแล้ว" });
       setQuotationDialog(null);
       await reloadLiveJobAndActivities();
@@ -236,7 +226,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description: formatCustomerPortalQuotationDecisionError(e),
       });
     } finally {
       setQuotationBusy(false);
@@ -244,29 +234,17 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
   }
 
   async function executeQuotationRejectNoRepair() {
-    if (!db || !profile || !resolved || !resolved.isLiveJob) return;
+    if (!db || !app || !profile || !resolved || !resolved.isLiveJob) return;
     const job = resolved.job;
     if (job.status !== "WAITING_APPROVE") return;
 
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const batch = writeBatch(db);
-      const label = job.customerSnapshot?.name?.trim() || profile.displayName || profile.email || "ลูกค้า";
-      const msg = `ลูกค้าแจ้งประสงค์ไม่ซ่อม ขอนำกลับ — โดย ${label} (ผ่านพอร์ทัลลูกค้า)`;
-
-      batch.update(liveRef, {
-        status: "DONE",
-        lastActivityAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await callCustomerPortalQuotationDecision(app, {
+        jobId: job.id,
+        decision: "NO_REPAIR",
+        messageVariant: "jobPage",
       });
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
       toast({ title: "บันทึกแล้ว", description: "ศูนย์ได้รับข้อมูลในระบบแล้ว" });
       setRejectOptionsOpen(false);
       await reloadLiveJobAndActivities();
@@ -274,7 +252,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description: formatCustomerPortalQuotationDecisionError(e),
       });
     } finally {
       setQuotationBusy(false);
@@ -282,24 +260,17 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
   }
 
   async function executeQuotationRequestChanges() {
-    if (!db || !profile || !resolved || !resolved.isLiveJob) return;
+    if (!db || !app || !profile || !resolved || !resolved.isLiveJob) return;
     const job = resolved.job;
     if (job.status !== "WAITING_APPROVE") return;
 
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const label = job.customerSnapshot?.name?.trim() || profile.displayName || profile.email || "ลูกค้า";
-      const msg = `ขอแก้ไขรายการในใบเสนอราคา — โดย ${label} — สถานะงานยังอยู่ที่รอลูกค้าอนุมัติ — กรุณาติดต่อสหดีเซลตามเบอร์โทรของศูนย์ หรือส่งข้อความทางช่อง "Chat with สหดีเซล" ในพอร์ทัล`;
-
-      const batch = writeBatch(db);
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
+      await callCustomerPortalQuotationDecision(app, {
+        jobId: job.id,
+        decision: "REQUEST_CHANGES",
+        messageVariant: "jobPage",
       });
-      await batch.commit();
       toast({
         title: "บันทึกคำขอแก้ไขแล้ว",
         description: "ศูนย์จะเห็นในประวัติงาน — ติดต่อสหดีเซลทางโทรศัพท์หรือแชตในพอร์ทัล",
@@ -310,7 +281,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description: formatCustomerPortalQuotationDecisionError(e),
       });
     } finally {
       setQuotationBusy(false);
@@ -450,12 +421,20 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
                   <div className="rounded-lg border border-orange-500/40 bg-orange-950/20 p-4 space-y-3">
                     <p className="text-sm font-bold text-orange-200 flex items-center gap-2">
                       <FileText className="h-4 w-4" />
-                      ใบเสนอราคารอการยืนยันจากคุณ
+                      {job.quotationAwaitingOfficeResubmit
+                        ? "รอศูนย์ปรับใบเสนอราคาและส่งให้คุณพิจารณาอีกครั้ง"
+                        : "ใบเสนอราคารอการยืนยันจากคุณ"}
                     </p>
+                    {job.quotationAwaitingOfficeResubmit ? (
+                      <p className="text-xs text-orange-100/90 leading-relaxed">
+                        คุณได้ส่งคำขอแก้ไขแล้ว — ปุ่มด้านล่างจะเปิดให้ใช้อีกครั้งเมื่อเจ้าหน้าที่ส่งใบเสนอราคาฉบับปรับให้พิจารณาในระบบ
+                      </p>
+                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         className="bg-green-600 hover:bg-green-700 font-bold"
+                        disabled={!!job.quotationAwaitingOfficeResubmit || quotationBusy}
                         onClick={() => setQuotationDialog("approve")}
                       >
                         <Check className="mr-2 h-4 w-4" />
@@ -465,6 +444,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
                         size="sm"
                         variant="outline"
                         className="border-red-400 text-red-200 hover:bg-red-950/50"
+                        disabled={!!job.quotationAwaitingOfficeResubmit || quotationBusy}
                         onClick={() => setRejectOptionsOpen(true)}
                       >
                         <Ban className="mr-2 h-4 w-4" />

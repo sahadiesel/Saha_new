@@ -7,6 +7,7 @@ import {
   provisionCustomerPortalProfile,
 } from "./customerPortalSignup";
 import { postJobCustomerChatMessage } from "./jobCustomerChat";
+import { customerPortalQuotationDecision } from "./customerPortalQuotationDecision";
 
 initializeApp();
 
@@ -15,6 +16,7 @@ export {
   rejectPortalCustomerRegistration,
   provisionCustomerPortalProfile,
   postJobCustomerChatMessage,
+  customerPortalQuotationDecision,
 };
 const db = getFirestore();
 

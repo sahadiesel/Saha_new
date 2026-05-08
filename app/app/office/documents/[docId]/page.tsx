@@ -513,6 +513,7 @@ function DocumentPageContent() {
     const [accountName, setAccountName] = useState<string>("");
     const [isProcessing, setIsProcessing] = useState(false);
     const [informConfirmOpen, setInformConfirmOpen] = useState(false);
+    const [resubmitQuotationOpen, setResubmitQuotationOpen] = useState(false);
 
     const docRef = useMemo((): DocumentReference<Document> | null => {
       if (!db || typeof docId !== "string") return null;
@@ -651,6 +652,7 @@ function DocumentPageContent() {
             const jRef = doc(db, 'jobs', document.jobId);
             await updateDoc(jRef, {
                 status: 'WAITING_APPROVE',
+                quotationAwaitingOfficeResubmit: false,
                 lastActivityAt: serverTimestamp(),
                 updatedAt: serverTimestamp()
             });
@@ -675,6 +677,41 @@ function DocumentPageContent() {
     const showMultiCopy = ['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document.docType);
     const showInformButton = document.docType === 'QUOTATION' && linkedJob?.status === 'PENDING_CUSTOMER_INFORM';
 
+    const showResubmitQuotationButton =
+        document.docType === 'QUOTATION' &&
+        linkedJob?.status === 'WAITING_APPROVE' &&
+        linkedJob?.quotationAwaitingOfficeResubmit === true &&
+        linkedJob?.salesDocId === document.id;
+
+    const handleResubmitQuotationToCustomer = async () => {
+        if (!db || !document?.jobId || !profile) return;
+        setIsProcessing(true);
+        try {
+            const jRef = doc(db, 'jobs', document.jobId);
+            await updateDoc(jRef, {
+                quotationAwaitingOfficeResubmit: false,
+                lastActivityAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+            });
+            await addDoc(collection(jRef, 'activities'), {
+                text: `ส่งใบเสนอราคาให้ลูกค้าพิจารณาอีกครั้งแล้ว (โดย ${profile.displayName}) — ลูกค้าสามารถกดอนุมัติหรือไม่อนุมัติใน portal ได้`,
+                userName: profile.displayName,
+                userId: profile.uid,
+                createdAt: serverTimestamp(),
+            });
+            toast({
+                title: 'อัปเดตแล้ว',
+                description: 'ลูกค้าจะเห็นปุ่มอนุมัติ/ไม่อนุมัติใน portal อีกครั้งหลังปรับใบเสนอราคาแล้ว',
+            });
+            setResubmitQuotationOpen(false);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            toast({ variant: 'destructive', title: 'ไม่สำเร็จ', description: msg });
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-muted/20 py-8 print:p-0 print:bg-white overflow-x-hidden print:overflow-visible">
             <div className="max-w-[210mm] mx-auto space-y-6 print:space-y-0 print:m-0 print:max-w-none">
@@ -689,6 +726,17 @@ function DocumentPageContent() {
                             >
                                 <CheckCircle2 className="mr-2 h-4 w-4"/>
                                 ส่งเอกสาร/ยืนยันแจ้งลูกค้า
+                            </Button>
+                        )}
+                        {showResubmitQuotationButton && (
+                            <Button
+                                type="button"
+                                onClick={() => setResubmitQuotationOpen(true)}
+                                disabled={isProcessing}
+                                className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                            >
+                                <CheckCircle2 className="mr-2 h-4 w-4" />
+                                ส่งให้ลูกค้าพิจารณาใบเสนอราคาอีกครั้ง
                             </Button>
                         )}
                         <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
@@ -719,6 +767,34 @@ function DocumentPageContent() {
                     </div>
                 </div>
             </div>
+
+            <AlertDialog open={resubmitQuotationOpen} onOpenChange={(open) => !isProcessing && setResubmitQuotationOpen(open)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>ส่งให้ลูกค้าพิจารณาใบเสนอราคาอีกครั้ง?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-sm space-y-2 pt-1">
+                            <p>
+                                ใช้เมื่อลูกค้าขอแก้ไขแล้ว และศูนย์ได้ปรับใบเสนอราคาในระบบเรียบร้อยแล้ว — ระบบจะเปิดปุ่ม &quot;อนุมัติ / ไม่อนุมัติ&quot; บนพอร์ทัลลูกค้าอีกครั้ง
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                                โปรดตรวจสอบว่าได้แก้ไขรายการในใบเสนอราคานี้แล้วก่อนยืนยัน
+                            </p>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isProcessing}>ยกเลิก</AlertDialogCancel>
+                        <Button
+                            type="button"
+                            className="bg-amber-600 hover:bg-amber-700"
+                            disabled={isProcessing}
+                            onClick={() => void handleResubmitQuotationToCustomer()}
+                        >
+                            {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            ยืนยัน
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog open={informConfirmOpen} onOpenChange={(open) => !isProcessing && setInformConfirmOpen(open)}>
                 <AlertDialogContent>

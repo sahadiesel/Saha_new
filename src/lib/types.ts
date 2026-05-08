@@ -186,9 +186,13 @@ export interface Job {
   };
   customerType: 'NEW' | 'EXISTING';
   customerAcquisitionSource: AcquisitionSource | 'EXISTING';
+  /** true เมื่อลูกค้ากดขอแก้ไขใบเสนอราคา — ปิดปุ่มอนุมัติบนพอร์ทัลจนกว่าออฟฟิศจะส่งให้พิจารณาอีกครั้ง */
+  quotationAwaitingOfficeResubmit?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
   lastActivityAt: Timestamp;
+  /** อัปเดตเมื่อลูกค้าส่งข้อความใน customerChat (ใช้เทียบกับเวลาอ่านของพนักงาน) */
+  customerChatLastCustomerMessageAt?: Timestamp;
   // Archive fields
   isArchived?: boolean;
   archivedAt?: Timestamp;

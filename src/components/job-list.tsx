@@ -89,6 +89,10 @@ import { JOB_STATUSES } from "@/lib/constants";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 import type { Job, JobStatus, JobDepartment, Document as DocumentType, AccountingAccount, UserProfile } from "@/lib/types";
+import {
+  isJobCustomerChatUnreadForStaff,
+  subscribeJobCustomerChatReadsMap,
+} from "@/lib/job-customer-chat-reads";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -151,6 +155,9 @@ interface JobListProps {
   actionPreset?: string;
   sortByOldestInSystem?: boolean;
   showSystemAgeBadge?: boolean;
+  /** แจ้งเตือนแชตลูกค้ายังไม่อ่าน (เฉพาะ ADMIN / แผนก OFFICE) — ใช้ในหน้าจัดการตามแผนก */
+  trackCustomerChatUnread?: boolean;
+  onCustomerChatUnreadJobCount?: (count: number) => void;
 }
 
 export function JobList({ 
@@ -163,6 +170,8 @@ export function JobList({
   searchTerm = "",
   sortByOldestInSystem = false,
   showSystemAgeBadge = false,
+  trackCustomerChatUnread = false,
+  onCustomerChatUnreadJobCount,
 }: JobListProps) {
   type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
@@ -193,6 +202,38 @@ export function JobList({
   const [submitBillingRequired, setSubmitBillingRequired] = useState(false);
   const [submitDueDate, setSubmitDueDate] = useState('');
   const [statusConfirmAction, setStatusConfirmAction] = useState<{ type: QuickStatusAction; job: Job } | null>(null);
+  const [officeCustomerChatReads, setOfficeCustomerChatReads] = useState<Record<string, unknown>>({});
+
+  const showOfficeCustomerChatUnread =
+    trackCustomerChatUnread &&
+    !!user &&
+    !!db &&
+    (profile?.role === "ADMIN" || profile?.department === "OFFICE");
+
+  useEffect(() => {
+    if (!showOfficeCustomerChatUnread || !user) return;
+    return subscribeJobCustomerChatReadsMap(db!, user.uid, setOfficeCustomerChatReads);
+  }, [showOfficeCustomerChatUnread, user, db]);
+
+  const officeChatUnreadByJobId = useMemo(() => {
+    if (!showOfficeCustomerChatUnread) return new Map<string, boolean>();
+    const m = new Map<string, boolean>();
+    for (const job of jobs) {
+      m.set(job.id, isJobCustomerChatUnreadForStaff(job, officeCustomerChatReads));
+    }
+    return m;
+  }, [jobs, officeCustomerChatReads, showOfficeCustomerChatUnread]);
+
+  const officeChatUnreadJobCount = useMemo(() => {
+    let n = 0;
+    for (const v of officeChatUnreadByJobId.values()) if (v) n++;
+    return n;
+  }, [officeChatUnreadByJobId]);
+
+  useEffect(() => {
+    if (!trackCustomerChatUnread) return;
+    onCustomerChatUnreadJobCount?.(officeChatUnreadJobCount);
+  }, [trackCustomerChatUnread, officeChatUnreadJobCount, onCustomerChatUnreadJobCount]);
 
   const statusConfig = useMemo(() => {
     const statusArray = status ? (Array.isArray(status) ? status : [status]) : [];
@@ -563,7 +604,14 @@ export function JobList({
                 ) : (
                   <div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>
                 )}
-                <Badge className={cn("absolute top-2 right-2 shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
+                <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+                  {showOfficeCustomerChatUnread && officeChatUnreadByJobId.get(job.id) && (
+                    <span className="animate-blink rounded border-2 border-black bg-yellow-300 px-1.5 py-0.5 text-[10px] font-black leading-none text-red-600 shadow-sm">
+                      CHAT
+                    </span>
+                  )}
+                  <Badge className={cn("shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
+                </div>
                 {showSystemAgeBadge && ageDays > 0 && (
                   <Badge className={cn("absolute top-2 left-2 shadow-sm border border-black/80 font-bold", getStaleAgeBadgeClass(ageDays))}>
                     ค้าง {ageDays} วัน

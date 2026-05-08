@@ -18,6 +18,7 @@ import {
   callPostJobCustomerChatMessage,
   formatJobCustomerChatCallableError,
 } from "@/lib/callable-job-customer-chat";
+import { markJobCustomerChatRead } from "@/lib/job-customer-chat-reads";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +61,11 @@ export function JobCustomerChatPanel({ jobId, variant, disabled, readOnly }: Job
     if (!db || !jobId) return null;
     return query(collection(db, "jobs", jobId, "customerChat"), orderBy("createdAt", "asc"));
   }, [db, jobId]);
+
+  useEffect(() => {
+    if (variant !== "staff" || disabled || !db || !user?.uid) return;
+    void markJobCustomerChatRead(db, user.uid, jobId);
+  }, [variant, disabled, db, user?.uid, jobId]);
 
   useEffect(() => {
     if (!chatQuery || disabled) {

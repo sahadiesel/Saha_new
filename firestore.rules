@@ -275,8 +275,8 @@ service cloud.firestore {
             )
           );
         allow update: if canEditJobs();
-        /** ลบทั้งเอกสารกิจกรรม — เฉพาะ ADMIN (ลบรูปทีละรูปยังใช้ update ตามเดิม) */
-        allow delete: if isAdmin();
+        /** ลบทั้งเอกสารกิจกรรม — ฝ่ายบริหาร/แมเนเจอร์/แอดมิน (ลบรูปทีละรูปยังใช้ update ตามเดิม) */
+        allow delete: if isMgmt();
       }
       match /customerChat/{msgId} {
         allow read: if signedIn() && (

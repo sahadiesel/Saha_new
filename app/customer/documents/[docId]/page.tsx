@@ -19,6 +19,10 @@ import { resolveCustomerDocumentViewerAccess } from "@/lib/customer-document-acc
 import { CustomerDocumentPrintView } from "@/components/customer-portal/customer-document-print-view";
 import { useToast } from "@/hooks/use-toast";
 import {
+  callCustomerPortalQuotationDecision,
+  formatCustomerPortalQuotationDecisionError,
+} from "@/lib/callable-customer-quotation-decision";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -38,7 +42,7 @@ function quotationActorLabel(viewerMode: ViewerMode, profile: UserProfile, job: 
 
 export default function CustomerDocumentPage({ params }: { params: Promise<{ docId: string }> }) {
   const { docId } = use(params);
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
   const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [document, setDocument] = useState<Document | null>(null);
@@ -130,30 +134,42 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
     if (!db || !profile || !document?.jobId || !job || !viewerMode) return;
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const batch = writeBatch(db);
-      const label = quotationActorLabel(viewerMode, profile, job);
-      const msg = `อนุมัติใบเสนอราคาแล้ว โดย ${label}${viewerMode === "office" ? " (ยืนยันจากระบบสหดีเซล — ดูเอกสาร)" : " (ผ่านพอร์ทัลลูกค้า — ดูเอกสาร)"}`;
+      if (viewerMode === "customer") {
+        if (!app) throw new Error("ไม่พร้อมเชื่อมต่อระบบ");
+        await callCustomerPortalQuotationDecision(app, {
+          jobId: job.id,
+          decision: "APPROVE",
+          messageVariant: "documentPage",
+        });
+      } else {
+        const liveRef = doc(db, "jobs", job.id);
+        const batch = writeBatch(db);
+        const label = quotationActorLabel(viewerMode, profile, job);
+        const msg = `อนุมัติใบเสนอราคาแล้ว โดย ${label}${viewerMode === "office" ? " (ยืนยันจากระบบสหดีเซล — ดูเอกสาร)" : " (ผ่านพอร์ทัลลูกค้า — ดูเอกสาร)"}`;
 
-      batch.update(liveRef, {
-        status: "PENDING_PARTS",
-        lastActivityAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
+        batch.update(liveRef, {
+          status: "PENDING_PARTS",
+          lastActivityAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(collection(liveRef, "activities")), {
+          text: msg,
+          userName: profile.displayName || profile.email || label,
+          userId: profile.uid,
+          createdAt: serverTimestamp(),
+        });
+        await batch.commit();
+      }
       toast({ title: "อนุมัติแล้ว", description: "งานเข้าขั้นตอนรอจัดอะไหล่ตามระบบ" });
       await refreshJob();
     } catch (e: unknown) {
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description:
+          viewerMode === "customer"
+            ? formatCustomerPortalQuotationDecisionError(e)
+            : (e as Error).message || "เกิดข้อผิดพลาด",
       });
     } finally {
       setQuotationBusy(false);
@@ -164,26 +180,35 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
     if (!db || !profile || !document?.jobId || !job || !viewerMode) return;
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const batch = writeBatch(db);
-      const label = quotationActorLabel(viewerMode, profile, job);
-      const msg =
-        viewerMode === "office"
-          ? `บันทึกประสงค์ไม่ซ่อม/ขอนำกลับ (ใบเสนอราคา) โดย ${label} (ศูนย์) — สถานะไปตามระบบ`
-          : `ลูกค้าแจ้งประสงค์ไม่ซ่อม ขอนำกลับ — โดย ${label} (ผ่านพอร์ทัล — ดูเอกสาร)`;
+      if (viewerMode === "customer") {
+        if (!app) throw new Error("ไม่พร้อมเชื่อมต่อระบบ");
+        await callCustomerPortalQuotationDecision(app, {
+          jobId: job.id,
+          decision: "NO_REPAIR",
+          messageVariant: "documentPage",
+        });
+      } else {
+        const liveRef = doc(db, "jobs", job.id);
+        const batch = writeBatch(db);
+        const label = quotationActorLabel(viewerMode, profile, job);
+        const msg =
+          viewerMode === "office"
+            ? `บันทึกประสงค์ไม่ซ่อม/ขอนำกลับ (ใบเสนอราคา) โดย ${label} (ศูนย์) — สถานะไปตามระบบ`
+            : `ลูกค้าแจ้งประสงค์ไม่ซ่อม ขอนำกลับ — โดย ${label} (ผ่านพอร์ทัล — ดูเอกสาร)`;
 
-      batch.update(liveRef, {
-        status: "DONE",
-        lastActivityAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
+        batch.update(liveRef, {
+          status: "DONE",
+          lastActivityAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(collection(liveRef, "activities")), {
+          text: msg,
+          userName: profile.displayName || profile.email || label,
+          userId: profile.uid,
+          createdAt: serverTimestamp(),
+        });
+        await batch.commit();
+      }
       toast({ title: "บันทึกแล้ว", description: "ระบบอัปเดตสถานะงานตามขั้นตอนเดิม" });
       setRejectDialogOpen(false);
       await refreshJob();
@@ -191,7 +216,10 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description:
+          viewerMode === "customer"
+            ? formatCustomerPortalQuotationDecisionError(e)
+            : (e as Error).message || "เกิดข้อผิดพลาด",
       });
     } finally {
       setQuotationBusy(false);
@@ -202,21 +230,30 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
     if (!db || !profile || !document?.jobId || !job || !viewerMode) return;
     setQuotationBusy(true);
     try {
-      const liveRef = doc(db, "jobs", job.id);
-      const label = quotationActorLabel(viewerMode, profile, job);
-      const msg =
-        viewerMode === "office"
-          ? `ขอแก้ไขรายการในใบเสนอราคา — แจ้งโดย ${label} (ศูนย์) — สถานะงานยังอยู่ที่รอลูกค้าอนุมัติ`
-          : `ขอแก้ไขรายการในใบเสนอราคา — โดย ${label} — สถานะงานยังอยู่ที่รอลูกค้าอนุมัติ — กรุณาติดต่อสหดีเซลตามเบอร์โทรของศูนย์ หรือส่งข้อความทางช่อง "Chat with สหดีเซล" ในพอร์ทัล`;
+      if (viewerMode === "customer") {
+        if (!app) throw new Error("ไม่พร้อมเชื่อมต่อระบบ");
+        await callCustomerPortalQuotationDecision(app, {
+          jobId: job.id,
+          decision: "REQUEST_CHANGES",
+          messageVariant: "documentPage",
+        });
+      } else {
+        const liveRef = doc(db, "jobs", job.id);
+        const label = quotationActorLabel(viewerMode, profile, job);
+        const msg =
+          viewerMode === "office"
+            ? `ขอแก้ไขรายการในใบเสนอราคา — แจ้งโดย ${label} (ศูนย์) — สถานะงานยังอยู่ที่รอลูกค้าอนุมัติ`
+            : `ขอแก้ไขรายการในใบเสนอราคา — โดย ${label} — สถานะงานยังอยู่ที่รอลูกค้าอนุมัติ — กรุณาติดต่อสหดีเซลตามเบอร์โทรของศูนย์ หรือส่งข้อความทางช่อง "Chat with สหดีเซล" ในพอร์ทัล`;
 
-      const batch = writeBatch(db);
-      batch.set(doc(collection(liveRef, "activities")), {
-        text: msg,
-        userName: profile.displayName || profile.email || label,
-        userId: profile.uid,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
+        const batch = writeBatch(db);
+        batch.set(doc(collection(liveRef, "activities")), {
+          text: msg,
+          userName: profile.displayName || profile.email || label,
+          userId: profile.uid,
+          createdAt: serverTimestamp(),
+        });
+        await batch.commit();
+      }
 
       toast({
         title: "บันทึกคำขอแก้ไขแล้ว",
@@ -229,7 +266,10 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
       toast({
         variant: "destructive",
         title: "ไม่สำเร็จ",
-        description: (e as Error).message || "เกิดข้อผิดพลาด",
+        description:
+          viewerMode === "customer"
+            ? formatCustomerPortalQuotationDecisionError(e)
+            : (e as Error).message || "เกิดข้อผิดพลาด",
       });
     } finally {
       setQuotationBusy(false);
@@ -286,12 +326,24 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
 
         {showQuotationDecision && viewerMode && profile ? (
           <div className="rounded-lg border border-white/15 bg-slate-900/80 p-4 space-y-3 print:hidden">
-            <p className="text-sm font-medium text-slate-200">การอนุมัติใบเสนอราคา (งานอยู่ในสถานะรอลูกค้าอนุมัติ)</p>
+            <p className="text-sm font-medium text-slate-200">
+              {viewerMode === "customer" && job?.quotationAwaitingOfficeResubmit
+                ? "รอศูนย์ส่งใบเสนอราคาให้พิจารณาอีกครั้ง"
+                : "การอนุมัติใบเสนอราคา (งานอยู่ในสถานะรอลูกค้าอนุมัติ)"}
+            </p>
+            {viewerMode === "customer" && job?.quotationAwaitingOfficeResubmit ? (
+              <p className="text-xs text-slate-400 leading-relaxed">
+                คุณได้ส่งคำขอแก้ไขแล้ว — ปุ่มด้านล่างจะเปิดอีกครั้งเมื่อเจ้าหน้าที่กด &quot;ส่งให้ลูกค้าพิจารณาใบเสนอราคาอีกครั้ง&quot; ในระบบสำนักงาน
+              </p>
+            ) : null}
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <Button
                 type="button"
                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                disabled={quotationBusy}
+                disabled={
+                  quotationBusy ||
+                  (viewerMode === "customer" && !!job?.quotationAwaitingOfficeResubmit)
+                }
                 onClick={() => void handleApprove()}
               >
                 {quotationBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
@@ -300,7 +352,10 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
               <Button
                 type="button"
                 variant="destructive"
-                disabled={quotationBusy}
+                disabled={
+                  quotationBusy ||
+                  (viewerMode === "customer" && !!job?.quotationAwaitingOfficeResubmit)
+                }
                 onClick={() => setRejectDialogOpen(true)}
               >
                 <Ban className="mr-2 h-4 w-4" />
