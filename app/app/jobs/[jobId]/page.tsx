@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { JobVehicleDetails } from "@/components/job-details/job-vehicle-details";
+import { JobCustomerChatPanel } from "@/components/customer-portal/job-customer-chat-panel";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
@@ -266,10 +267,15 @@ function JobDetailsPageContent() {
   const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const canIssueBill = isMgmtOrOffice && isStaff;
   const canManageWork = isMgmtOrOffice || profile?.role === 'OFFICER';
+  /** อนุมัติ/ไม่อนุมัติใบเสนอราคา (รอลูกค้า) — ตามระบบเดิม: ฝ่ายบริหาร/ออฟฟิศ + เจ้าหน้าที่ (OFFICER) */
+  const canConfirmWaitingQuotation = canManageWork;
   
   const allowEditing = searchParams.get('edit') === 'true' && isUserAdmin;
   
   const isTechnicalDept = ['CAR_SERVICE', 'COMMONRAIL', 'MECHANIC', 'OUTSOURCE'].includes(profile?.department || '');
+  /** แชตกับลูกค้า (พอร์ทัล) — แสดงเฉพาะฝ่ายออฟฟิศ; แอดมินเห็นได้ทุกงาน */
+  const showStaffCustomerPortalChat =
+    profile?.role === "ADMIN" || profile?.department === "OFFICE";
   const isJobInFinishedState = job?.status === 'DONE' || job?.status === 'WAITING_CUSTOMER_PICKUP' || job?.status === 'CLOSED';
 
   const isViewOnly = job?.isArchived || 
@@ -1085,6 +1091,10 @@ function JobDetailsPageContent() {
             <CardContent><div className="min-h-[100px] p-4 bg-muted/30 rounded-md border border-dashed"><p className="whitespace-pre-wrap text-sm">{job.technicalReport || job.officeNote || 'ยังไม่มีบันทึก'}</p></div></CardContent>
           </Card>
 
+          {showStaffCustomerPortalChat && (
+            <JobCustomerChatPanel jobId={job.id} variant="staff" readOnly={isViewOnly} />
+          )}
+
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>รูปประกอบงาน (ตอนรับงาน)</CardTitle>
@@ -1505,8 +1515,8 @@ function JobDetailsPageContent() {
                       </Button>
                     )}
 
-                    {!isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
-                        <p className="text-[10px] text-muted-foreground text-center italic">ส่วนนี้สำหรับฝ่ายออฟฟิศ/บริหารจัดการเท่านั้น</p>
+                    {!canConfirmWaitingQuotation && job.status === 'WAITING_APPROVE' && (
+                        <p className="text-[10px] text-muted-foreground text-center italic">ส่วนนี้สำหรับฝ่ายออฟฟิศ/บริหารหรือเจ้าหน้าที่ที่ได้รับมอบหมายจัดการเท่านั้น</p>
                     )}
                 </CardContent>
             </Card>

@@ -4,11 +4,16 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import {
   lookupCustomerForPortalSignup,
   rejectPortalCustomerRegistration,
+  provisionCustomerPortalProfile,
 } from "./customerPortalSignup";
 
 initializeApp();
 
-export { lookupCustomerForPortalSignup, rejectPortalCustomerRegistration };
+export {
+  lookupCustomerForPortalSignup,
+  rejectPortalCustomerRegistration,
+  provisionCustomerPortalProfile,
+};
 const db = getFirestore();
 
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---

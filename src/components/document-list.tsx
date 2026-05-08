@@ -218,20 +218,50 @@ export function DocumentList({
     if (monthFilter !== "ALL") filtered = filtered.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
     if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
     if (searchTerm) {
-      const q = searchTerm.toLowerCase();
-      const qDigits = q.replace(/\s|-/g, "");
+      const q = searchTerm.toLowerCase().trim();
+      const qCompact = q.replace(/\s|-/g, "");
       filtered = filtered.filter((doc) => {
         const snap = doc.customerSnapshot;
         const name = (snap?.name || "").toLowerCase();
         const taxName = (snap?.taxName || "").toLowerCase();
         const phone = (snap?.phone || "").replace(/\s|-/g, "");
-        return (
+        if (
           doc.docNo.toLowerCase().includes(q) ||
           name.includes(q) ||
           taxName.includes(q) ||
           (snap?.phone || "").toLowerCase().includes(q) ||
-          (qDigits.length > 0 && phone.includes(qDigits))
-        );
+          (qCompact.length > 0 && phone.includes(qCompact))
+        ) {
+          return true;
+        }
+
+        const car = doc.carSnapshot;
+        if (car) {
+          const carHaystack = [
+            car.licensePlate,
+            car.registrationNumber,
+            car.partNumber,
+            car.brand,
+            car.model,
+            car.details,
+          ]
+            .filter(Boolean)
+            .map((s) => String(s).toLowerCase())
+            .join(" ");
+          if (carHaystack.includes(q)) return true;
+          const carCompact = carHaystack.replace(/\s|-/g, "");
+          if (qCompact.length >= 2 && carCompact.includes(qCompact)) return true;
+        }
+
+        for (const line of doc.items || []) {
+          const desc = (line.description || "").toLowerCase();
+          const code = (line.code || "").toLowerCase();
+          if (desc.includes(q) || code.includes(q)) return true;
+          const codeCompact = code.replace(/\s|-/g, "");
+          if (qCompact.length >= 2 && codeCompact.includes(qCompact)) return true;
+        }
+
+        return false;
       });
     }
     return filtered;
@@ -483,7 +513,18 @@ export function DocumentList({
                 </Select>
               </div>
             )}
-            <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input placeholder={docType === "TAX_INVOICE" ? "ค้นหาเลขบิล, ชื่อผู้ติดต่อ, ชื่อบนใบกำกับ, เบอร์โทร..." : "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล..."} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 bg-background" /></div>
+            <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input
+              placeholder={
+                docType === "TAX_INVOICE"
+                  ? "ค้นหาเลขบิล, ชื่อผู้ติดต่อ, ชื่อบนใบกำกับ, เบอร์โทร, เลขทะเบียน, อะไหล่..."
+                  : docType === "QUOTATION"
+                    ? "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล, เลขทะเบียน, รหัส/รายการอะไหล่..."
+                    : "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล, เลขทะเบียน, อะไหล่..."
+              }
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 bg-background"
+            /></div>
             <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
           {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {

@@ -15,6 +15,15 @@ import type { LandingPageContent } from "@/app/page";
 
 export const dynamic = 'force-dynamic';
 
+/** สหดีเซลกลการ — หาดใหญ่ (ตรงกับ Google Maps) */
+const SAHADIESEL_LAT = 6.998969;
+const SAHADIESEL_LNG = 100.4305978;
+const SAHADIESEL_MAP_ZOOM = 14;
+/** ลิงก์เปิดแอป/เว็บ Google Maps ที่หมุดร้าน */
+const SAHADIESEL_GOOGLE_MAPS_URL = `https://www.google.com/maps/place/%E0%B8%AA%E0%B8%AB%E0%B8%94%E0%B8%B5%E0%B9%80%E0%B8%8B%E0%B8%A5%E0%B8%81%E0%B8%A5%E0%B8%81%E0%B8%B2%E0%B8%A3/@${SAHADIESEL_LAT},${SAHADIESEL_LNG},${SAHADIESEL_MAP_ZOOM}z/`;
+/** iframe แผนที่ฝัง (ไม่ต้องใช้ API key) */
+const SAHADIESEL_MAP_EMBED_SRC = `https://www.google.com/maps?q=${SAHADIESEL_LAT}%2C${SAHADIESEL_LNG}&z=${SAHADIESEL_MAP_ZOOM}&hl=th&output=embed`;
+
 export default function ContactPage() {
   const { db } = useFirebase();
   const [content, setContent] = useState<LandingPageContent>({
@@ -33,8 +42,9 @@ export default function ContactPage() {
     footerAboutTitle: "เกี่ยวกับเรา",
     footerAboutDesc: "",
     footerContactTitle: "ติดต่อเรา",
-    footerPhone: "02-XXX-XXXX",
-    footerAddress: "เขตภาษีเจริญ กรุงเทพมหานคร",
+    footerPhone: "086-489-3501",
+    footerAddress:
+      "302 หมู่ 2 ถนนสนามบิน-ลพบุรีราเมศวร์ ตำบลควนลัง อำเภอหาดใหญ่ จังหวัดสงขลา 90110",
     footerWebsite: "www.sahadiesel.com",
     footerFacebookUrl: "https://facebook.com/sahadiesel",
   });
@@ -55,6 +65,14 @@ export default function ContactPage() {
   }, [db]);
 
   const bgImage = PlaceHolderImages.find(img => img.id === "login-bg") || PlaceHolderImages[0];
+
+  const phoneDigits = content.footerPhone.replace(/\D/g, "");
+  const phoneTelHref =
+    phoneDigits.length >= 9 && phoneDigits.startsWith("0")
+      ? `tel:+66${phoneDigits.slice(1)}`
+      : phoneDigits
+        ? `tel:${phoneDigits}`
+        : undefined;
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-900 text-white">
@@ -104,14 +122,20 @@ export default function ContactPage() {
                       <div className="bg-primary/20 p-3 rounded-full text-primary shadow-lg shadow-primary/10"><Phone className="h-6 w-6" /></div>
                       <div>
                         <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">เบอร์โทรศัพท์</p>
-                        <p className="text-xl font-bold text-white hover:text-primary transition-colors cursor-pointer">{content.footerPhone}</p>
+                        {phoneTelHref ? (
+                          <a href={phoneTelHref} className="text-xl font-bold text-white hover:text-primary transition-colors">
+                            {content.footerPhone}
+                          </a>
+                        ) : (
+                          <p className="text-xl font-bold text-white">{content.footerPhone}</p>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   <div className="pt-6">
                     <Button asChild variant="outline" className="w-full h-12 border-primary text-primary hover:bg-primary hover:text-white font-bold transition-all shadow-lg shadow-primary/5">
-                      <a href="https://maps.app.goo.gl/QFChLC8GrSGxQs5q9" target="_blank" rel="noopener noreferrer">
+                      <a href={SAHADIESEL_GOOGLE_MAPS_URL} target="_blank" rel="noopener noreferrer">
                         <ExternalLink className="mr-2 h-4 w-4" /> เปิดใน Google Maps
                       </a>
                     </Button>
@@ -120,18 +144,29 @@ export default function ContactPage() {
               </Card>
             </div>
 
-            <div className="rounded-2xl overflow-hidden h-[450px] border border-white/10 shadow-2xl relative animate-in fade-in slide-in-from-right-4 duration-700">
-              {/* Embed Google Maps */}
-              <iframe 
-                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3875.981424312141!2d100.4441413758451!3d13.71959409734141!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x30e2970de6666667%3A0x6666666666666666!2z4Liq4Lir4LiU4Li14LmA4LiL4Lil4LiB4Lil4LiB4Liy4Lij!5e0!3m2!1sth!2sth!4v1740922941000!5m2!1sth!2sth" 
-                width="100%" 
-                height="100%" 
-                style={{ border: 0 }} 
-                allowFullScreen 
-                loading="lazy" 
+            <div className="rounded-2xl overflow-hidden h-[450px] border border-white/10 shadow-2xl relative animate-in fade-in slide-in-from-right-4 duration-700 group">
+              <iframe
+                src={SAHADIESEL_MAP_EMBED_SRC}
+                width="100%"
+                height="100%"
+                style={{ border: 0 }}
+                allowFullScreen
+                loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                className="opacity-90 grayscale invert-[0.1] contrast-[1.1]"
-              ></iframe>
+                title="แผนที่ สหดีเซลกลการ หาดใหญ่"
+                className="absolute inset-0 h-full w-full pointer-events-none"
+              />
+              <a
+                href={SAHADIESEL_GOOGLE_MAPS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute inset-0 z-10 flex items-center justify-center bg-black/0 hover:bg-black/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset rounded-2xl"
+                aria-label="เปิดตำแหน่งร้านใน Google Maps"
+              >
+                <span className="pointer-events-none rounded-full bg-background/90 px-4 py-2 text-sm font-bold text-foreground shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                  เปิดใน Google Maps
+                </span>
+              </a>
             </div>
           </div>
         </section>

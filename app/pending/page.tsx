@@ -21,7 +21,8 @@ export default function PendingPage() {
     if (loading) return; 
 
     if (!user) {
-      router.replace("/login");
+      /* ลูกค้าที่ออกจากระบบจากหน้ารออนุมัติ — ไม่ส่งไป /login (พนักงาน/อีเมล) ให้กลับหน้าแรกแบบโปรโมชัน */
+      router.replace("/");
       return;
     }
     

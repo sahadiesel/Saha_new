@@ -4,6 +4,7 @@ import React, { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/context/auth-context";
+import { isOfficePortalQuotationActor } from "@/lib/customer-document-access";
 import { FixStuckUI } from "@/components/fix-stuck-ui";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppHeader } from "@/components/app-header";
@@ -39,6 +40,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     pathname === "/healthz";
 
   const isCustomerPortal = pathname === "/customer" || pathname.startsWith("/customer/");
+  /** เปิดใบเอกสารจากลิงก์พอร์ทัล — อนุญาตเจ้าหน้าที่ออฟฟิศ/บริหารเข้ายืนยันแทนลูกค้าได้ */
+  const isSharedCustomerDocumentRoute = pathname.startsWith("/customer/documents/");
 
   useEffect(() => {
     if (loading) return;
@@ -89,7 +92,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (profile && profile.role !== "CUSTOMER" && isCustomerPortal) {
+    if (profile && profile.role !== "CUSTOMER" && isCustomerPortal && !isSharedCustomerDocumentRoute) {
+      router.replace("/app");
+      return;
+    }
+
+    if (
+      profile &&
+      profile.role !== "CUSTOMER" &&
+      isSharedCustomerDocumentRoute &&
+      profile.status === "ACTIVE" &&
+      !isOfficePortalQuotationActor(profile)
+    ) {
       router.replace("/app");
       return;
     }
@@ -118,6 +132,24 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     }
     if (!profile) {
       return <FullscreenSpinner />;
+    }
+    if (isSharedCustomerDocumentRoute && profile.status === "ACTIVE") {
+      if (profile.role === "CUSTOMER") {
+        return (
+          <>
+            <FixStuckUI />
+            {children}
+          </>
+        );
+      }
+      if (isOfficePortalQuotationActor(profile)) {
+        return (
+          <>
+            <FixStuckUI />
+            {children}
+          </>
+        );
+      }
     }
     if (profile.role !== "CUSTOMER" || profile.status !== "ACTIVE") {
       return <FullscreenSpinner />;

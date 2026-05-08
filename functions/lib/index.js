@@ -1,12 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.chatWithJimmy = exports.migrateClosedJobsToArchive2026 = exports.closeJobAfterAccounting = exports.rejectPortalCustomerRegistration = exports.lookupCustomerForPortalSignup = void 0;
+exports.chatWithJimmy = exports.migrateClosedJobsToArchive2026 = exports.closeJobAfterAccounting = exports.provisionCustomerPortalProfile = exports.rejectPortalCustomerRegistration = exports.lookupCustomerForPortalSignup = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const customerPortalSignup_1 = require("./customerPortalSignup");
 Object.defineProperty(exports, "lookupCustomerForPortalSignup", { enumerable: true, get: function () { return customerPortalSignup_1.lookupCustomerForPortalSignup; } });
 Object.defineProperty(exports, "rejectPortalCustomerRegistration", { enumerable: true, get: function () { return customerPortalSignup_1.rejectPortalCustomerRegistration; } });
+Object.defineProperty(exports, "provisionCustomerPortalProfile", { enumerable: true, get: function () { return customerPortalSignup_1.provisionCustomerPortalProfile; } });
 (0, app_1.initializeApp)();
 const db = (0, firestore_1.getFirestore)();
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---

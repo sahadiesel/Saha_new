@@ -11,7 +11,13 @@
     "build": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy:rules": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore:rules --non-interactive",
+    "deploy:indexes": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore:indexes --non-interactive",
+    "deploy:firestore": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore --non-interactive",
+    "deploy:functions": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only functions --non-interactive",
+    "deploy:backend": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore,functions --non-interactive",
+    "deploy:all": "npm run deploy:backend"
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.20.0",
@@ -66,6 +72,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "genkit-cli": "^1.20.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1"

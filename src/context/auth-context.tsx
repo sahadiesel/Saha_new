@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged, User, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
@@ -27,6 +27,7 @@ const AuthContext = createContext<AuthContextType>({
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { auth, db } = useFirebase();
+  const profileUnsubRef = useRef<(() => void) | undefined>(undefined);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,32 +57,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [auth, db]);
 
   useEffect(() => {
-    if (!db || !user) {
-        if (!user && !loading) setLoading(false);
-        return;
-    };
-    
+    if (!db || !user || !auth) {
+      if (!user && !loading) setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    profileUnsubRef.current?.();
+    profileUnsubRef.current = undefined;
+
     setLoading(true);
-    const profileDocRef = doc(db, "users", user.uid);
-    const unsubscribeProfile = onSnapshot(profileDocRef, 
+
+    void (async () => {
+      try {
+        if (typeof auth.authStateReady === "function") {
+          await auth.authStateReady();
+        }
+        await user.getIdToken();
+      } catch {
+        /* ignore */
+      }
+      if (cancelled) return;
+
+      const profileDocRef = doc(db, "users", user.uid);
+      const unsub = onSnapshot(
+        profileDocRef,
         (docSnap) => {
-            if (docSnap.exists()) {
-                setProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
-            } else {
-                setProfile(null);
-            }
-            setLoading(false);
+          if (docSnap.exists()) {
+            setProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfile);
+          } else {
+            setProfile(null);
+          }
+          setLoading(false);
         },
         (error) => {
-            console.error("Error fetching user profile:", error);
-            setProfile(null);
-            setLoading(false);
+          console.error("Error fetching user profile:", error);
+          setProfile(null);
+          setLoading(false);
         }
-    );
+      );
+      if (cancelled) {
+        unsub();
+        return;
+      }
+      profileUnsubRef.current = unsub;
+    })();
 
-    return () => unsubscribeProfile();
-
-  }, [user, db]);
+    return () => {
+      cancelled = true;
+      profileUnsubRef.current?.();
+      profileUnsubRef.current = undefined;
+    };
+  }, [user, db, auth]);
 
 
   const signIn = (email: string, pass: string) => {

@@ -17,10 +17,13 @@ export function formatCustomerPortalCallableError(error: unknown): string {
     if (code === "functions/unavailable" || code === "functions/deadline-exceeded") {
       return "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จชั่วคราว กรุณาลองใหม่";
     }
-    if (code === "functions/permission-denied") {
-      return "ไม่ได้รับอนุญาตให้เรียกระบบตรวจสอบเบอร์ แจ้งผู้ดูแลให้ตั้งค่า invoker ของฟังก์ชันเป็น public";
+    if (code === "functions/permission-denied" || code === "permission-denied") {
+      return "ไม่ได้รับอนุญาตให้เรียกระบบบันทึกข้อมูล — แจ้งผู้ดูแลให้ deploy Functions แล้วตั้ง invoker เป็น public สำหรับ lookupCustomerForPortalSignup และ provisionCustomerPortalProfile";
     }
     const msg = typeof error.message === "string" ? error.message : "";
+    if (/missing or insufficient permissions/i.test(msg)) {
+      return "ไม่มีสิทธิ์เขียนข้อมูล — มักเกิดจากยังไม่ deploy provisionCustomerPortalProfile หรือ Cloud Run บล็อกการเรียกฟังก์ชัน (ต้องตั้ง invoker public) หรือ token เข้า Firestore ยังไม่พร้อมหลังสมัคร กรุณารีเฟรชแล้วลองใหม่";
+    }
     if (msg && msg !== "internal" && msg !== "INTERNAL") {
       return msg;
     }
@@ -55,6 +58,32 @@ export async function callLookupCustomerForPortalSignup(phone: string): Promise<
   try {
     const res = await fn({ phone: phone.trim() });
     return res.data;
+  } catch (e) {
+    throw new Error(formatCustomerPortalCallableError(e));
+  }
+}
+
+/** หลังสร้าง Firebase Auth แล้ว — บันทึก users + customers บนเซิร์ฟเวอร์ (Admin SDK) */
+export async function callProvisionCustomerPortalProfile(params: {
+  phoneRaw: string;
+  displayName: string;
+  nationalId: string;
+  idCardAddress: string;
+}): Promise<void> {
+  const { firebaseApp } = initializeFirebase();
+  if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้ กรุณารีเฟรชหน้า");
+
+  const fn = httpsCallable<
+    { phoneRaw: string; displayName: string; nationalId: string; idCardAddress: string },
+    { ok: boolean }
+  >(getFunctions(firebaseApp, "us-central1"), "provisionCustomerPortalProfile");
+  try {
+    await fn({
+      phoneRaw: params.phoneRaw.trim(),
+      displayName: params.displayName.trim(),
+      nationalId: params.nationalId.trim(),
+      idCardAddress: params.idCardAddress.trim(),
+    });
   } catch (e) {
     throw new Error(formatCustomerPortalCallableError(e));
   }

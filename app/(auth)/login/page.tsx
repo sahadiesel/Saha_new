@@ -173,6 +173,16 @@ export default function LoginPage() {
             </Button>
             
             <div className="flex flex-col items-center gap-3 text-sm w-full">
+              <p className="text-xs text-center text-muted-foreground leading-relaxed">
+                ลูกค้าเข้าด้วยเบอร์โทร —{" "}
+                <Link href="/login/customer" className="text-primary font-semibold underline">
+                  เข้าสู่ระบบลูกค้า
+                </Link>
+                {" · "}
+                <Link href="/" className="underline font-medium text-foreground">
+                  หน้าแรก
+                </Link>
+              </p>
               <div className="text-muted-foreground">
                 ยังไม่มีบัญชีผู้ใช้?{" "}
                 <Link href="/signup" className="underline text-primary font-bold">

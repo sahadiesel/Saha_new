@@ -1,12 +1,13 @@
 "use client";
 
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { initializeFirebase } from "@/firebase/init";
 import { createUserProfile } from "./user";
 import { customerAuthEmailFromDocId } from "@/lib/customer-auth-phone";
-import { callLookupCustomerForPortalSignup } from "@/lib/callable-customer-portal";
-import { dedupePhoneList } from "@/lib/customer-utils";
+import {
+  callLookupCustomerForPortalSignup,
+  callProvisionCustomerPortalProfile,
+} from "@/lib/callable-customer-portal";
 import {
   isLegalFullName,
   isSubstantialIdCardAddress,
@@ -35,7 +36,7 @@ export async function signUp(email: string, password: string, displayName: strin
 }
 
 /**
- * สมัครลูกค้า: ต้องมีเบอร์ใน customers แล้ว → สร้างบัญชีด้วยอีเมลสังเคราะห์ → รอ Admin อนุมัติ (status PENDING)
+ * สมัครลูกค้า: ต้องมีเบอร์ใน customers → Auth (อีเมลสังเคราะห์) → Cloud Function เขียน users/customers (Admin SDK)
  */
 export async function signUpCustomerWithPhone(
   phoneRaw: string,
@@ -44,8 +45,8 @@ export async function signUpCustomerWithPhone(
   nationalId: string,
   idCardAddress: string
 ) {
-  const { auth, firestore } = initializeFirebase();
-  if (!auth || !firestore) throw new Error("Auth not initialized");
+  const { auth } = initializeFirebase();
+  if (!auth) throw new Error("Auth not initialized");
 
   const dn = displayName.trim();
   if (!isLegalFullName(dn)) {
@@ -76,46 +77,21 @@ export async function signUpCustomerWithPhone(
   const canonicalId = lookup.customerId;
   const email = customerAuthEmailFromDocId(canonicalId);
 
-  const existingSnap = await getDoc(doc(firestore, "customers", canonicalId));
-  const prev = existingSnap.exists() ? existingSnap.data() : {};
-
-  const mergedPhones = dedupePhoneList([
-    ...(Array.isArray(prev.phones) ? (prev.phones as string[]) : []),
-    ...(prev.phone ? [String(prev.phone)] : []),
-    canonicalId,
-    phoneRaw,
-  ]);
-
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  const uid = cred.user.uid;
 
   await updateProfile(cred.user, { displayName: displayName.trim() });
 
   try {
-    await setDoc(doc(firestore, "users", uid), {
-      displayName: displayName.trim(),
-      email,
-      phone: canonicalId,
-      role: "CUSTOMER",
-      status: "PENDING",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    if (typeof auth.authStateReady === "function") {
+      await auth.authStateReady();
+    }
+    await cred.user.getIdToken(true);
+    await callProvisionCustomerPortalProfile({
+      phoneRaw,
+      displayName,
+      nationalId,
+      idCardAddress,
     });
-
-    await setDoc(
-      doc(firestore, "customers", canonicalId),
-      {
-        name: displayName.trim(),
-        phone: canonicalId,
-        phones: mergedPhones.length > 0 ? mergedPhones : [canonicalId],
-        nationalId: nid,
-        idCardAddress: addr,
-        authUid: uid,
-        updatedAt: serverTimestamp(),
-        ...(existingSnap.exists() ? {} : { createdAt: serverTimestamp() }),
-      },
-      { merge: true }
-    );
   } catch (e) {
     try {
       await cred.user.delete();

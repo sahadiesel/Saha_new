@@ -65,29 +65,76 @@ service cloud.firestore {
       );
     }
 
-    /** ลูกค้าสร้าง/ผูกเอกสาร customers/{เบอร์} หลังสมัคร (users เขียนก่อนแล้ว role เป็น CUSTOMER) */
+    /** ฟิลด์ขั้นต่ำหลังสมัครพอร์ทัล — ใช้ is string กันบางเอกสารเก่าทำให้ rule ล้มแบบ PERMISSION_DENIED */
+    function customerPortalCustomerPayloadOk(customerId) {
+      return request.resource.data.keys().hasAll(['name', 'phone', 'authUid'])
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() < 200
+        && request.resource.data.phone is string && request.resource.data.phone == customerId
+        && request.resource.data.authUid is string && request.resource.data.authUid == request.auth.uid;
+    }
+
+    /** ลูกค้าสร้าง/ผูกเอกสาร customers/{เบอร์} หลังสมัคร — ใช้ร่วมกับ batch เขียนคู่กับ users */
     function customerSelfCreate(customerId) {
       return signedIn() && userExists() && !isViewer()
         && role() == "CUSTOMER"
         && getProfile().phone == customerId
-        && request.resource.data.authUid == request.auth.uid
-        && request.resource.data.phone == customerId
-        && request.resource.data.name.size() < 200;
+        && customerPortalCustomerPayloadOk(customerId);
     }
 
     function customerSelfServiceUpdate(customerId) {
       return signedIn() && userExists() && !isViewer()
         && role() == "CUSTOMER"
         && getProfile().phone == customerId
-        && request.resource.data.authUid == request.auth.uid
-        && request.resource.data.phone == customerId
-        && request.resource.data.name.size() < 200
+        && customerPortalCustomerPayloadOk(customerId)
         && (
           resource.data.authUid == request.auth.uid
           || !('authUid' in resource.data)
           || resource.data.authUid == null
           || resource.data.authUid == ''
         );
+    }
+
+    /** เบอร์/รหัสลูกค้าในโปรไฟล์ — coerce เป็น string กันงานเก็บ customerId เป็นเลขหรือโปรไฟล์เก็บ phone คนละชนิด */
+    function profilePhoneStr() {
+      return userExists() && 'phone' in getProfile() && getProfile().phone != null
+        ? string(getProfile().phone)
+        : '';
+    }
+
+    /** customerId บนเอกสารงาน (path jobs/{jobId}) */
+    function jobCustomerIdStrByJobId(jobId) {
+      let d = get(/databases/$(database)/documents/jobs/$(jobId)).data;
+      return 'customerId' in d && d.customerId != null ? string(d.customerId) : '';
+    }
+
+    /** ลูกค้าเป็นเจ้าของงาน (เทียบเบอร์ในเอกสารงาน) */
+    function customerOwnsJobDoc() {
+      return signedIn() && userExists() && role() == "CUSTOMER"
+        && profilePhoneStr().size() > 0
+        && 'customerId' in resource.data && resource.data.customerId != null
+        && string(resource.data.customerId) == profilePhoneStr();
+    }
+
+    /** ลูกค้าอนุมัติ/ไม่อนุมัติใบเสนอราคา — เปลี่ยนได้เฉพาะสถานะ WAITING_APPROVE */
+    function customerJobQuotationDecisionUpdate() {
+      return customerOwnsJobDoc()
+        && resource.data.status == 'WAITING_APPROVE'
+        && 'customerId' in request.resource.data
+        && request.resource.data.customerId != null
+        && string(request.resource.data.customerId) == string(resource.data.customerId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'lastActivityAt', 'updatedAt'])
+        && (
+          request.resource.data.status == 'PENDING_PARTS'
+          || request.resource.data.status == 'DONE'
+        );
+    }
+
+    function customerOwnsJobById(jobId) {
+      return signedIn() && userExists() && role() == "CUSTOMER"
+        && exists(/databases/$(database)/documents/jobs/$(jobId))
+        && profilePhoneStr().size() > 0
+        && jobCustomerIdStrByJobId(jobId).size() > 0
+        && jobCustomerIdStrByJobId(jobId) == profilePhoneStr();
     }
     
     function isOfficeOrMgmt() {
@@ -187,38 +234,90 @@ service cloud.firestore {
 
     // Jobs & Main Documents
     match /jobs/{jobId} {
-      allow read: if signedIn() && (role() != 'CUSTOMER' || resource.data.customerId == getProfile().phone);
+      allow read: if signedIn() && (
+        role() != 'CUSTOMER'
+        || (profilePhoneStr().size() > 0
+          && 'customerId' in resource.data
+          && resource.data.customerId != null
+          && string(resource.data.customerId) == profilePhoneStr())
+      );
       // เปิดงานใหม่ต้องใช้รหัสเอกสารแบบ auto-id ของ Firestore (20 ตัว) เท่านั้น
       // กันสร้าง jobs/SJ2026-0001 ซ้ำแล้วไปดึงเอกสารเก่าที่ผูก jobId เดิม — ยกเว้นแอดมิน (เช่น กู้คืนจากประวัติ)
       allow create: if signedIn() && !isViewer() && request.resource.data.photos.size() <= 4
         && (jobId.size() == 20 || isAdmin());
       // ฝ่ายบริหาร/แอดมินอัปเดตงานได้แม้รูปเกิน 4 (เครื่องมือแก้สถานะจะไม่ถูกบล็อก)
-      allow update: if canEditJobs() && (
+      allow update: if (canEditJobs() && (
         isMgmt() ||
         !('photos' in request.resource.data) ||
         (request.resource.data.photos is list && request.resource.data.photos.size() <= 4)
-      );
+      )) || customerJobQuotationDecisionUpdate();
       allow delete: if isMgmt();
       match /activities/{activityId} {
         allow read: if signedIn() && (
-          role() != 'CUSTOMER' ||
-          get(/databases/$(database)/documents/jobs/$(jobId)).data.customerId == getProfile().phone
+          role() != 'CUSTOMER'
+          || (
+            profilePhoneStr().size() > 0
+            && jobCustomerIdStrByJobId(jobId).size() > 0
+            && jobCustomerIdStrByJobId(jobId) == profilePhoneStr()
+          )
         );
-        allow create: if signedIn() && !isViewer() && request.resource.data.text.size() < 5000 && (!('photos' in request.resource.data) || request.resource.data.photos.size() <= 10);
+        allow create: if signedIn() && !isViewer()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() < 5000
+          && (!('photos' in request.resource.data) || request.resource.data.photos.size() <= 10)
+          && (
+            role() != 'CUSTOMER'
+            || (
+              profilePhoneStr().size() > 0
+              && jobCustomerIdStrByJobId(jobId).size() > 0
+              && jobCustomerIdStrByJobId(jobId) == profilePhoneStr()
+            )
+          );
         allow update, delete: if canEditJobs();
+      }
+      match /customerChat/{msgId} {
+        allow read: if signedIn() && (
+          role() != 'CUSTOMER'
+          || customerOwnsJobById(jobId)
+        );
+        allow create: if signedIn() && !isViewer()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() < 4000
+          && (request.resource.data.authorRole == 'CUSTOMER' || request.resource.data.authorRole == 'STAFF')
+          && request.resource.data.userName is string
+          && request.resource.data.userId == request.auth.uid
+          && (
+            (role() == 'CUSTOMER'
+              && request.resource.data.authorRole == 'CUSTOMER'
+              && customerOwnsJobById(jobId))
+            || (canEditJobs() && request.resource.data.authorRole == 'STAFF')
+          );
+        allow update, delete: if false;
       }
     }
     
     // Archive Collections
     match /{collectionName}/{jobId} {
         allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
-          && (role() != 'CUSTOMER' || resource.data.customerId == getProfile().phone);
+          && (
+            role() != 'CUSTOMER'
+            || (
+              profilePhoneStr().size() > 0
+              && 'customerId' in resource.data
+              && resource.data.customerId != null
+              && string(resource.data.customerId) == profilePhoneStr()
+            )
+          );
         allow create, update, delete: if isMgmt() && collectionName.startsWith('jobsArchive_');
         match /activities/{activityId} {
             allow read: if signedIn() && collectionName.startsWith('jobsArchive_')
               && (
                 role() != 'CUSTOMER' ||
-                get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId == getProfile().phone
+                profilePhoneStr().size() > 0
+                && get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId != null
+                && string(get(/databases/$(database)/documents/$(collectionName)/$(jobId)).data.customerId) == profilePhoneStr()
               );
             allow write: if isMgmt() && collectionName.startsWith('jobsArchive_');
         }

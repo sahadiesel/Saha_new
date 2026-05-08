@@ -1,7 +1,25 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
-import { phoneSearchTokens } from "./phone-utils";
+import {
+  phoneSearchTokens,
+  customerAuthEmailFromDocId,
+  dedupePhoneList,
+  normalizePhoneDigits,
+} from "./phone-utils";
+
+function isLegalFullName(displayName: string): boolean {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean);
+  return parts.length >= 2 && parts.every((p) => p.length >= 2);
+}
+
+function isValidThaiNationalId13(digits: string): boolean {
+  return /^[0-9]{13}$/.test(digits);
+}
+
+function isSubstantialIdCardAddress(addr: string): boolean {
+  return addr.trim().length >= 15;
+}
 
 type CustomerDoc = FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>;
 
@@ -104,6 +122,139 @@ export const lookupCustomerForPortalSignup = onCall(
         "ระบบตรวจสอบเบอร์ขัดข้องชั่วคราว กรุณาลองใหม่ หรือแจ้งผู้ดูแลให้ตรวจสอบว่า deploy Cloud Functions แล้ว"
       );
     }
+  }
+);
+
+/**
+ * หลัง createUserWithEmailAndPassword สำเร็จแล้ว — เขียน users + customers ด้วย Admin SDK
+ * (หลีกเลี่ยง PERMISSION_DENIED จาก Firestore rules บน client)
+ */
+export const provisionCustomerPortalProfile = onCall(
+  {
+    region: "us-central1",
+    cors: true,
+    /** Cloud Run ต้องเปิด invoker — ภายในยังตรวจ request.auth อยู่ */
+    invoker: "public",
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "ต้องเข้าสู่ระบบหลังสมัครก่อนบันทึกโปรไฟล์");
+    }
+    const uid = request.auth.uid;
+    const payload = (request.data || {}) as {
+      phoneRaw?: string;
+      displayName?: string;
+      nationalId?: string;
+      idCardAddress?: string;
+    };
+
+    const phoneRaw = String(payload.phoneRaw || "").trim();
+    const displayName = String(payload.displayName || "").trim();
+    const nid = normalizePhoneDigits(String(payload.nationalId || ""));
+    const addr = String(payload.idCardAddress || "").trim();
+
+    if (!isLegalFullName(displayName)) {
+      throw new HttpsError("invalid-argument", "กรุณากรอกชื่อและนามสกุลจริงให้ครบ");
+    }
+    if (!isValidThaiNationalId13(nid)) {
+      throw new HttpsError("invalid-argument", "เลขบัตรประชาชนไม่ถูกต้อง");
+    }
+    if (!isSubstantialIdCardAddress(addr)) {
+      throw new HttpsError("invalid-argument", "กรุณากรอกที่อยู่ตามบัตรให้ครบถ้วน");
+    }
+    if (!phoneRaw || phoneRaw.length < 9) {
+      throw new HttpsError("invalid-argument", "เบอร์โทรไม่ถูกต้อง");
+    }
+
+    const db = getFirestore();
+
+    let customer: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      const c = await findCustomerDocByPhoneRaw(phoneRaw);
+      if (!c?.exists) {
+        throw new HttpsError("failed-precondition", "ไม่พบเบอร์นี้ในรายชื่อลูกค้า");
+      }
+      customer = c;
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      console.error("provisionCustomerPortalProfile lookup", e);
+      throw new HttpsError("failed-precondition", "ค้นหาข้อมูลลูกค้าไม่สำเร็จ");
+    }
+
+    const registration = await registrationStateForCustomer(customer);
+    if (registration === "ACTIVE") {
+      throw new HttpsError("failed-precondition", "เบอร์นี้ลงทะเบียนแล้ว");
+    }
+    if (registration === "PENDING") {
+      throw new HttpsError("failed-precondition", "เบอร์นี้อยู่ระหว่างรอการอนุมัติ");
+    }
+
+    const canonicalId = customer.id;
+    const expectedEmail = customerAuthEmailFromDocId(canonicalId);
+
+    let authUser;
+    try {
+      authUser = await getAuth().getUser(uid);
+    } catch (e: unknown) {
+      console.error("provisionCustomerPortalProfile getUser", e);
+      throw new HttpsError("failed-precondition", "ไม่พบบัญชีผู้ใช้ กรุณาลองสมัครใหม่");
+    }
+
+    const authEmail = (authUser.email || "").toLowerCase();
+    if (authEmail !== expectedEmail.toLowerCase()) {
+      throw new HttpsError(
+        "failed-precondition",
+        "ข้อมูลบัญชีไม่ตรงกับรายชื่อลูกค้าในระบบ กรุณาติดต่อศูนย์"
+      );
+    }
+
+    const prev = customer.data() || {};
+    const existingAuthUid = prev.authUid as string | undefined;
+    if (existingAuthUid && existingAuthUid !== uid) {
+      throw new HttpsError("failed-precondition", "เบอร์นี้ผูกบัญชีอื่นในระบบแล้ว กรุณาติดต่อศูนย์");
+    }
+
+    const mergedPhones = dedupePhoneList([
+      ...(Array.isArray(prev.phones) ? (prev.phones as string[]) : []),
+      ...(prev.phone ? [String(prev.phone)] : []),
+      canonicalId,
+      phoneRaw,
+    ]);
+
+    const custRef = db.collection("customers").doc(canonicalId);
+    const custSnap = await custRef.get();
+
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          displayName: displayName.trim(),
+          email: expectedEmail,
+          phone: canonicalId,
+          role: "CUSTOMER",
+          status: "PENDING",
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+    await custRef.set(
+      {
+        name: displayName.trim(),
+        phone: canonicalId,
+        phones: mergedPhones.length > 0 ? mergedPhones : [canonicalId],
+        nationalId: nid,
+        idCardAddress: addr,
+        authUid: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(custSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+      },
+      { merge: true }
+    );
+
+    return { ok: true, customerId: canonicalId };
   }
 );
 

@@ -207,6 +207,16 @@ export interface JobActivity {
   photos?: string[];
 }
 
+/** แชตระหว่างลูกค้ากับศูนย์ต่อ job — `jobs/{jobId}/customerChat/{msgId}` */
+export interface JobCustomerChatMessage {
+  id?: string;
+  text: string;
+  authorRole: "CUSTOMER" | "STAFF";
+  userName: string;
+  userId: string;
+  createdAt: Timestamp;
+}
+
 export interface Attendance {
   id: string;
   userId: string;

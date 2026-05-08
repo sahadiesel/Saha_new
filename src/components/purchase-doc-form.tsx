@@ -38,7 +38,70 @@ import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, isValid } from "date-fns";
+
+/** กันค่าวันที่ผิดรูปแบบ / null / Timestamp ทำให้ format() และ Calendar ได้ RangeError: Invalid time value */
+function dateFromYyyyMmDdField(value: unknown): Date | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const d = new Date(value);
+    return isValid(d) ? d : undefined;
+  }
+  if (value instanceof Date) {
+    return isValid(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return undefined;
+    const ymd = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+    if (ymd) {
+      const y = Number(ymd[1]);
+      const mo = Number(ymd[2]);
+      const day = Number(ymd[3]);
+      const d = new Date(y, mo - 1, day);
+      if (
+        !isValid(d) ||
+        d.getFullYear() !== y ||
+        d.getMonth() !== mo - 1 ||
+        d.getDate() !== day
+      ) {
+        return undefined;
+      }
+      return d;
+    }
+    const d = parseISO(s);
+    return isValid(d) ? d : undefined;
+  }
+  if (typeof value === "object" && value !== null && "toDate" in value && typeof (value as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const d = (value as { toDate: () => Date }).toDate();
+      return d instanceof Date && isValid(d) ? d : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function formatDdMmYyyySafe(value: unknown): string | null {
+  try {
+    const d = dateFromYyyyMmDdField(value);
+    if (!d) return null;
+    return format(d, "dd/MM/yyyy");
+  } catch {
+    return null;
+  }
+}
+
+function toYyyyMmDdOrNull(value: unknown): string | null {
+  try {
+    const d = dateFromYyyyMmDdField(value);
+    if (!d) return null;
+    return format(d, "yyyy-MM-dd");
+  } catch {
+    return null;
+  }
+}
 
 import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
@@ -59,7 +122,7 @@ const compressImageIfNeeded = async (file: File): Promise<File> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.createElement("canvas").getContext("2d");
+        const ctx = canvas.getContext("2d");
         if (!ctx) {
           resolve(file);
           return;
@@ -175,6 +238,7 @@ export function PurchaseDocForm() {
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       withTax: true,
       paymentMode: "CASH",
+      dueDate: null,
       subtotal: 0,
       discountAmount: 0,
       net: 0,
@@ -256,7 +320,7 @@ export function PurchaseDocForm() {
     if (docToEdit) {
       form.reset({
         vendorId: docToEdit.vendorId || "",
-        docDate: docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
+        docDate: toYyyyMmDdOrNull(docToEdit.docDate) || format(new Date(), "yyyy-MM-dd"),
         invoiceNo: docToEdit.invoiceNo || "",
         items: docToEdit.items?.map(i => ({ ...i })) || [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
         subtotal: docToEdit.subtotal || 0,
@@ -266,7 +330,7 @@ export function PurchaseDocForm() {
         vatAmount: docToEdit.vatAmount || 0,
         grandTotal: docToEdit.grandTotal || 0,
         paymentMode: docToEdit.paymentMode || "CASH",
-        dueDate: docToEdit.dueDate || null,
+        dueDate: toYyyyMmDdOrNull(docToEdit.dueDate) ?? null,
         expectedPaymentAccountId: docToEdit.expectedPaymentAccountId || "",
         note: docToEdit.note || "",
         suggestedAccountId: docToEdit.suggestedAccountId || '',
@@ -583,8 +647,8 @@ export function PurchaseDocForm() {
                             <FormItem className="flex flex-col">
                               <FormLabel>วันที่ในบิล</FormLabel>
                               <Popover>
-                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
+                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !dateFromYyyyMmDdField(field.value) && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{formatDdMmYyyySafe(field.value) ?? <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateFromYyyyMmDdField(field.value)} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
                               </Popover>
                               <FormMessage />
                             </FormItem>
@@ -612,8 +676,8 @@ export function PurchaseDocForm() {
                               <FormItem className="flex flex-col">
                                 <FormLabel>วันครบกำหนด (ไม่บังคับ)</FormLabel>
                                 <Popover>
-                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
-                                  <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
+                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !dateFromYyyyMmDdField(field.value) && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{formatDdMmYyyySafe(field.value) ?? <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                  <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateFromYyyyMmDdField(field.value)} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
                                 </Popover>
                                 <FormMessage />
                               </FormItem>

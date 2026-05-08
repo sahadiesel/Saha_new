@@ -512,6 +512,7 @@ function DocumentPageContent() {
     >("ORIGINAL_PLUS_1_COPY");
     const [accountName, setAccountName] = useState<string>("");
     const [isProcessing, setIsProcessing] = useState(false);
+    const [informConfirmOpen, setInformConfirmOpen] = useState(false);
 
     const docRef = useMemo((): DocumentReference<Document> | null => {
       if (!db || typeof docId !== "string") return null;
@@ -523,7 +524,7 @@ function DocumentPageContent() {
       if (!db || !document?.customerId) return null;
       return doc(db, "customers", document.customerId) as DocumentReference<Customer>;
     }, [db, document?.customerId]);
-    const { data: liveCustomer } = useDoc<Customer>(customerRef);
+    const { data: liveCustomer, isLoading: liveCustomerLoading } = useDoc<Customer>(customerRef);
 
     const jobRef = useMemo((): DocumentReference<Job> | null => {
       if (!db || !document?.jobId) return null;
@@ -559,6 +560,12 @@ function DocumentPageContent() {
         }
         return liveCustomer ?? null;
     }, [document, liveCustomer]);
+
+    /** มีบัญชีพอร์ทัลผูกกับรายชื่อลูกค้า (customers.authUid) — ใช้บอกว่าเอกสารจะไปโผล่ใน portal ได้ */
+    const customerHasPortalAccount = useMemo(() => {
+        const uid = liveCustomer?.authUid;
+        return typeof uid === "string" && uid.trim().length > 0;
+    }, [liveCustomer?.authUid]);
 
     // Set browser tab title to document number for filename auto-suggestion
     useEffect(() => {
@@ -647,14 +654,14 @@ function DocumentPageContent() {
                 lastActivityAt: serverTimestamp(),
                 updatedAt: serverTimestamp()
             });
-            // Log activity
             await addDoc(collection(jRef, 'activities'), {
-                text: `แจ้งราคาลูกค้าแล้ว (โดย ${profile.displayName}) - สถานะเปลี่ยนเป็นรออนุมัติ`,
+                text: `ส่งเอกสาร/แจ้งลูกค้าแล้ว (โดย ${profile.displayName}) — สถานะเป็นรอลูกค้าอนุมัติ`,
                 userName: profile.displayName,
                 userId: profile.uid,
                 createdAt: serverTimestamp()
             });
             toast({ title: "อัปเดตสถานะสำเร็จ", description: "งานซ่อมเปลี่ยนเป็นสถานะ 'รอลูกค้าอนุมัติ' แล้วค่ะ" });
+            setInformConfirmOpen(false);
         } catch (e: any) {
             toast({ variant: 'destructive', title: "Error", description: e.message });
         } finally {
@@ -676,12 +683,12 @@ function DocumentPageContent() {
                     <div className="flex flex-wrap gap-2">
                         {showInformButton && (
                             <Button 
-                                onClick={handleInformCustomer} 
+                                onClick={() => setInformConfirmOpen(true)} 
                                 disabled={isProcessing}
                                 className="bg-pink-600 hover:bg-pink-700 text-white font-bold"
                             >
-                                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4"/>}
-                                แจ้งราคาลูกค้าแล้ว
+                                <CheckCircle2 className="mr-2 h-4 w-4"/>
+                                ส่งเอกสาร/ยืนยันแจ้งลูกค้า
                             </Button>
                         )}
                         <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
@@ -712,6 +719,45 @@ function DocumentPageContent() {
                     </div>
                 </div>
             </div>
+
+            <AlertDialog open={informConfirmOpen} onOpenChange={(open) => !isProcessing && setInformConfirmOpen(open)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>ยืนยันการส่งเอกสาร / แจ้งลูกค้า</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-3 text-sm text-muted-foreground pt-1">
+                                {liveCustomerLoading ? (
+                                    <p className="flex items-center gap-2">
+                                        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                                        กำลังตรวจสอบสถานะพอร์ทัลลูกค้า…
+                                    </p>
+                                ) : customerHasPortalAccount ? (
+                                    <p>
+                                        ลูกค้ารายนี้ลงทะเบียนพอร์ทัลแล้ว — เอกสารฉบับนี้จะปรากฏใน portal ของลูกค้าเมื่อบันทึกขั้นตอนนี้
+                                    </p>
+                                ) : (
+                                    <p>
+                                        ลูกค้ารายนี้ยังไม่ได้ลงทะเบียนพอร์ทัล — โปรดยืนยันว่าคุณได้โทรแจ้งลูกค้า หรือพิมพ์เอกสารส่งให้ลูกค้าทางช่องทางอื่นเรียบร้อยแล้ว
+                                    </p>
+                                )}
+                                <p className="text-xs">เมื่อกดยืนยัน ระบบจะเปลี่ยนสถานะงานเป็น &quot;รอลูกค้าอนุมัติ&quot;</p>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isProcessing}>ยกเลิก</AlertDialogCancel>
+                        <Button
+                            type="button"
+                            className="bg-pink-600 hover:bg-pink-700"
+                            disabled={isProcessing || liveCustomerLoading}
+                            onClick={() => void handleInformCustomer()}
+                        >
+                            {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            ยืนยัน
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog open={isPrintOptionsOpen} onOpenChange={setIsPrintOptionsOpen}>
                 <AlertDialogContent>

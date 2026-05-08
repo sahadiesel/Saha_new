@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { 
   collection, 
   query, 
@@ -170,6 +170,7 @@ export function JobList({
   const { profile, user } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
+  const pathname = usePathname();
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -212,6 +213,10 @@ export function JobList({
   const canAssignWork = isMgmtOrOffice || profile?.role === 'OFFICER';
   const isWorker = profile?.role === 'WORKER';
   const canDoBilling = isMgmtOrOffice;
+  /** อนุมัติใบเสนอราคาในการ์ดรายการ — แผนกจัดการงานออฟฟิศ: ฝ่ายบริหาร/ออฟฟิศ + เจ้าหน้าที่ (OFFICER); หน้าอื่นเฉพาะ isMgmtOrOffice */
+  const isOfficeJobsManagementRoute = pathname.startsWith("/app/office/jobs/management");
+  const canConfirmWaitingQuotationInList =
+    isMgmtOrOffice || (isOfficeJobsManagementRoute && canAssignWork);
 
   const canSeeAccounts = useMemo(() => {
     if (!profile) return false;
@@ -586,7 +591,7 @@ export function JobList({
                     </Button>
                   )}
 
-                  {isMgmtOrOffice && job.status === 'WAITING_APPROVE' && (
+                  {canConfirmWaitingQuotationInList && job.status === 'WAITING_APPROVE' && (
                     <div className="grid grid-cols-2 gap-2">
                       <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => setStatusConfirmAction({ type: 'APPROVE_JOB', job })} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button>
                       <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => setStatusConfirmAction({ type: 'REJECT_JOB', job })} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button>
