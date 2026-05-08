@@ -14,15 +14,10 @@ import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import type { JobCustomerChatMessage, UserProfile } from "@/lib/types";
-
-/** กันค่า displayName/email ในฐานข้อมูลไม่ใช่ string (ข้อมูลเก่า) — ถ้าส่งประเภทอื่นไป Firestore rules จะบังคับ userName is string แล้วได้ PERMISSION_DENIED */
-function portalChatSenderLabel(profile: UserProfile): string {
-  const n = profile.displayName as unknown;
-  const em = profile.email as unknown;
-  if (typeof n === "string" && n.trim()) return n.trim().slice(0, 200);
-  if (typeof em === "string" && em.trim()) return em.trim().slice(0, 200);
-  return "ผู้ใช้";
-}
+import {
+  callPostJobCustomerChatMessage,
+  formatJobCustomerChatCallableError,
+} from "@/lib/callable-job-customer-chat";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +26,15 @@ import { Loader2, Send, MessageCircle } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale/th";
 import { cn } from "@/lib/utils";
+
+/** กันค่า displayName/email ในฐานข้อมูลไม่ใช่ string (ข้อมูลเก่า) — ใช้ตอนส่งแชตฝั่งพนักงาน (addDoc) */
+function portalChatSenderLabel(profile: UserProfile): string {
+  const n = profile.displayName as unknown;
+  const em = profile.email as unknown;
+  if (typeof n === "string" && n.trim()) return n.trim().slice(0, 200);
+  if (typeof em === "string" && em.trim()) return em.trim().slice(0, 200);
+  return "ผู้ใช้";
+}
 
 interface JobCustomerChatPanelProps {
   jobId: string;
@@ -42,7 +46,7 @@ interface JobCustomerChatPanelProps {
 }
 
 export function JobCustomerChatPanel({ jobId, variant, disabled, readOnly }: JobCustomerChatPanelProps) {
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
   const { profile, user } = useAuth();
   const { toast } = useToast();
   const [messages, setMessages] = useState<JobCustomerChatMessage[]>([]);
@@ -91,16 +95,26 @@ export function JobCustomerChatPanel({ jobId, variant, disabled, readOnly }: Job
     if (!trimmed) return;
     setSending(true);
     try {
-      await addDoc(collection(db, "jobs", jobId, "customerChat"), {
-        text: trimmed,
-        authorRole,
-        userName: portalChatSenderLabel(profile),
-        userId: user.uid,
-        createdAt: serverTimestamp(),
-      });
+      if (authorRole === "CUSTOMER") {
+        if (!app) throw new Error("ไม่พร้อมเชื่อมต่อระบบ");
+        await callPostJobCustomerChatMessage(app, jobId, trimmed);
+      } else {
+        await addDoc(collection(db, "jobs", jobId, "customerChat"), {
+          text: trimmed,
+          authorRole,
+          userName: portalChatSenderLabel(profile),
+          userId: user.uid,
+          createdAt: serverTimestamp(),
+        });
+      }
       setText("");
     } catch (er: unknown) {
-      const msg = er instanceof Error ? er.message : "ส่งข้อความไม่สำเร็จ";
+      const msg =
+        authorRole === "CUSTOMER"
+          ? formatJobCustomerChatCallableError(er)
+          : er instanceof Error
+            ? er.message
+            : "ส่งข้อความไม่สำเร็จ";
       toast({ variant: "destructive", title: "ส่งไม่สำเร็จ", description: msg });
     } finally {
       setSending(false);
