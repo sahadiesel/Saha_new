@@ -38,6 +38,9 @@ import {
   normalizeNationalIdDigits,
 } from "@/lib/customer-portal-registration-validators";
 import { CustomerPortalChrome } from "@/components/customer-portal-chrome";
+import { compressImageToJpegUnderBytes } from "@/lib/compress-image-jpeg";
+
+const ID_CARD_MAX_BYTES = 500 * 1024;
 
 const verifySchema = z.object({
   phone: z.string().min(9, "กรุณากรอกเบอร์โทรให้ถูกต้อง"),
@@ -81,6 +84,7 @@ export default function CustomerSignupPage() {
   const [phoneLocked, setPhoneLocked] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [idCardFile, setIdCardFile] = useState<File | null>(null);
 
   const verifyForm = useForm<z.infer<typeof verifySchema>>({
     resolver: zodResolver(verifySchema),
@@ -152,14 +156,25 @@ export default function CustomerSignupPage() {
 
   async function onRegister(values: z.infer<typeof registerSchema>) {
     if (!lookup) return;
+    if (!idCardFile || !idCardFile.type.startsWith("image/")) {
+      toast({
+        variant: "destructive",
+        title: "กรุณาแนบรูปบัตรประชาชน",
+        description: "เลือกไฟล์รูปภาพ (ระบบจะบีบอัดให้ไม่เกิน 500KB ก่อนบันทึก)",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
+      const jpegBlob = await compressImageToJpegUnderBytes(idCardFile, ID_CARD_MAX_BYTES);
       await signUpCustomerWithPhone(
         phoneLocked,
         values.password,
         values.displayName,
         values.nationalId,
-        values.idCardAddress
+        values.idCardAddress,
+        jpegBlob,
+        idCardFile.name
       );
       toast({
         title: "ส่งคำขอสมัครแล้ว",
@@ -187,8 +202,8 @@ export default function CustomerSignupPage() {
             <CardTitle className="text-2xl font-headline">สมัครสมาชิกลูกค้า</CardTitle>
           </div>
           <CardDescription>
-            ใช้เบอร์โทรที่มีในระบบรายชื่อลูกค้าของศูนย์เท่านั้น ต้องกรอกชื่อ-นามสกุลจริง เลขบัตรประชาชน และที่อยู่ตามบัตร —
-            หลังสมัครรอผู้ดูแลระบบ (Admin) อนุมัติจึงจะใช้งานได้
+            ใช้เบอร์โทรที่มีในระบบรายชื่อลูกค้าของศูนย์เท่านั้น ต้องกรอกชื่อ-นามสกุลจริง เลขบัตรประชาชน ที่อยู่ตามบัตร และแนบรูปถ่ายบัตรประชาชน
+            (ระบบจะบีบอัดให้เหลือไม่เกิน 500KB ก่อนบันทึก) — หลังสมัครรอผู้ดูแลระบบ (Admin) อนุมัติจึงจะใช้งานได้
           </CardDescription>
         </CardHeader>
 
@@ -282,6 +297,25 @@ export default function CustomerSignupPage() {
                     </FormItem>
                   )}
                 />
+                <FormItem>
+                  <FormLabel>รูปถ่ายบัตรประชาชน (บังคับ)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      className="cursor-pointer"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        setIdCardFile(f ?? null);
+                      }}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    {idCardFile
+                      ? `เลือกแล้ว: ${idCardFile.name} — จะถูกบีบอัดเป็น JPEG ไม่เกิน 500KB ก่อนอัปโหลด`
+                      : "รองรับ JPG / PNG / WebP — ขนาดไฟล์ที่เก็บจะไม่เกิน 500KB"}
+                  </p>
+                </FormItem>
                 <FormField
                   control={registerForm.control}
                   name="password"

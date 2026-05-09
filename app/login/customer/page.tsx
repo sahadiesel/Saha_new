@@ -34,6 +34,23 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { customerAuthEmailFromDocId } from "@/lib/customer-auth-phone";
 import { callLookupCustomerForPortalSignup } from "@/lib/callable-customer-portal";
 import { CustomerPortalChrome } from "@/components/customer-portal-chrome";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  callSubmitCustomerPasswordResetRequest,
+  formatSubmitPasswordResetError,
+} from "@/lib/callable-customer-password-reset";
+import {
+  isValidThaiNationalId13,
+  normalizeNationalIdDigits,
+} from "@/lib/customer-portal-registration-validators";
 
 const schema = z.object({
   phone: z.string().min(9, "กรุณากรอกเบอร์โทรให้ถูกต้อง"),
@@ -42,10 +59,14 @@ const schema = z.object({
 
 export default function CustomerLoginPage() {
   const { signIn, signOut, loading, authError } = useAuth();
-  const { db } = useFirebase();
+  const { db, app } = useFirebase();
   const { toast } = useToast();
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotNationalId, setForgotNationalId] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotDoneMessage, setForgotDoneMessage] = useState<string | null>(null);
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
@@ -120,6 +141,15 @@ export default function CustomerLoginPage() {
         return;
       }
 
+      if (profileData.mustChangePassword === true) {
+        toast({
+          title: "เข้าสู่ระบบแล้ว",
+          description: "กรุณาตั้งรหัสผ่านใหม่เพื่อความปลอดภัย",
+        });
+        router.push("/customer/change-password");
+        return;
+      }
+
       toast({ title: "เข้าสู่ระบบสำเร็จ" });
       router.push("/customer");
     } catch (error: unknown) {
@@ -189,6 +219,19 @@ export default function CustomerLoginPage() {
                 {isSubmitting || loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 เข้าสู่ระบบ
               </Button>
+              <Button
+                type="button"
+                variant="link"
+                className="w-full text-sm text-muted-foreground"
+                disabled={isSubmitting || loading}
+                onClick={() => {
+                  setForgotDoneMessage(null);
+                  setForgotNationalId("");
+                  setForgotOpen(true);
+                }}
+              >
+                ลืมรหัสผ่าน?
+              </Button>
               <p className="text-sm text-muted-foreground text-center w-full">
                 ยังไม่มีบัญชี?{" "}
                 <Link href="/signup/customer" className="text-primary font-bold underline">
@@ -205,6 +248,98 @@ export default function CustomerLoginPage() {
           </form>
         </Form>
       </Card>
+
+      <Dialog open={forgotOpen} onOpenChange={(o) => !forgotBusy && setForgotOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>ลืมรหัสผ่าน</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  กรอกเลขบัตรประชาชน 13 หลักให้ตรงกับที่ใช้สมัครพอร์ทัล — ใช้คู่กับ{" "}
+                  <strong className="text-foreground">เบอร์โทรในช่องด้านบนของฟอร์มเข้าสู่ระบบ</strong>
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          {forgotDoneMessage ? (
+            <>
+              <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">{forgotDoneMessage}</p>
+              <DialogFooter>
+                <Button type="button" onClick={() => setForgotOpen(false)}>
+                  ปิด
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="grid gap-2 py-2">
+                <Label htmlFor="forgot-national-id">เลขบัตรประชาชน (13 หลัก)</Label>
+                <Input
+                  id="forgot-national-id"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="เช่น 1234567890123"
+                  value={forgotNationalId}
+                  onChange={(e) => setForgotNationalId(e.target.value)}
+                  disabled={forgotBusy}
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button type="button" variant="outline" disabled={forgotBusy} onClick={() => setForgotOpen(false)}>
+                  ยกเลิก
+                </Button>
+                <Button
+                  type="button"
+                  disabled={forgotBusy}
+                  onClick={async () => {
+                    const phone = form.getValues("phone").trim();
+                    if (!phone || phone.length < 9) {
+                      toast({
+                        variant: "destructive",
+                        title: "กรุณากรอกเบอร์โทร",
+                        description: "กรอกเบอร์โทรในฟอร์มเข้าสู่ระบบด้านบนก่อนยืนยันคำขอลืมรหัสผ่าน",
+                      });
+                      return;
+                    }
+                    const nid = normalizeNationalIdDigits(forgotNationalId);
+                    if (!isValidThaiNationalId13(nid)) {
+                      toast({
+                        variant: "destructive",
+                        title: "เลขบัตรไม่ถูกต้อง",
+                        description: "กรุณากรอกเลขบัตรประชาชน 13 หลัก",
+                      });
+                      return;
+                    }
+                    if (!app) {
+                      toast({ variant: "destructive", title: "ระบบไม่พร้อม", description: "ลองรีเฟรชหน้าแล้วใหม่" });
+                      return;
+                    }
+                    setForgotBusy(true);
+                    try {
+                      await callSubmitCustomerPasswordResetRequest(app, { phone, nationalId: nid });
+                      setForgotDoneMessage(
+                        "กรุณารอการติดต่อกลับจากทางศูนย์บริการภายใน 5 วันทำการ"
+                      );
+                    } catch (e: unknown) {
+                      toast({
+                        variant: "destructive",
+                        title: "ไม่สามารถส่งคำขอได้",
+                        description: formatSubmitPasswordResetError(e),
+                      });
+                    } finally {
+                      setForgotBusy(false);
+                    }
+                  }}
+                >
+                  {forgotBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  ยืนยัน
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </CustomerPortalChrome>
   );
 }

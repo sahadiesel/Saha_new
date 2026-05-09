@@ -70,6 +70,64 @@ export function normalizeCustomerTaxProfiles(c: Customer): CustomerTaxProfile[] 
   return [];
 }
 
+/** ข้อมูลจากการลงทะเบียนพอร์ทัล — ใช้เติมฟิลด์ใบกำกับภาษี (ชื่อ / เลขผู้เสียภาษี = เลขบัตรประชาชน / ที่อยู่ตามบัตร) */
+export function getPortalRegistrationTaxDefaults(c: Customer): {
+  taxName: string;
+  taxId: string;
+  taxAddress: string;
+} | null {
+  if (!String(c.authUid || "").trim()) return null;
+  const taxName = String(c.name || "").trim();
+  const taxId = String(c.nationalId || "").replace(/\D/g, "");
+  const taxAddress = String(c.idCardAddress || "").trim();
+  if (!taxName || !taxId || !taxAddress) return null;
+  return { taxName, taxId, taxAddress };
+}
+
+/** เติมชุดภาษีชุดแรกจากข้อมูลลงทะเบียน เฉพาะช่องที่ว่าง — ถ้ายังไม่มีชุดใดเลยจะสร้างแถวใหม่ */
+export function mergePortalTaxDefaultsIntoProfiles(
+  profiles: CustomerTaxProfile[],
+  portal: { taxName: string; taxId: string; taxAddress: string },
+  primaryPhone: string
+): CustomerTaxProfile[] {
+  const pid =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `tp_${Date.now()}`;
+  const phoneTrim = String(primaryPhone || "").trim();
+
+  if (profiles.length === 0) {
+    return [
+      {
+        id: pid,
+        label: "",
+        taxName: portal.taxName,
+        taxAddress: portal.taxAddress,
+        taxId: portal.taxId,
+        ...(phoneTrim ? { taxPhone: phoneTrim } : {}),
+        taxBranchType: "HEAD_OFFICE",
+        taxBranchNo: "00000",
+      },
+    ];
+  }
+
+  const first = profiles[0];
+  const mergedFirst: CustomerTaxProfile = {
+    ...first,
+    id: first.id || pid,
+    label: first.label ?? "",
+    taxName: first.taxName?.trim() || portal.taxName,
+    taxAddress: first.taxAddress?.trim() || portal.taxAddress,
+    taxId: first.taxId?.trim() || portal.taxId,
+    taxBranchType: first.taxBranchType || "HEAD_OFFICE",
+    taxBranchNo: first.taxBranchNo || "00000",
+  };
+  if (!mergedFirst.taxPhone?.trim() && phoneTrim) {
+    mergedFirst.taxPhone = phoneTrim;
+  }
+  return [mergedFirst, ...profiles.slice(1)];
+}
+
 export function isTaxProfileComplete(p: CustomerTaxProfile): boolean {
   const branchOk =
     p.taxBranchType !== "BRANCH" ||

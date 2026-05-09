@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { getStorage } from "firebase-admin/storage";
 import {
   phoneSearchTokens,
   customerAuthEmailFromDocId,
@@ -66,7 +67,7 @@ export async function findCustomerDocByPhoneRaw(raw: string): Promise<CustomerDo
   return candidates[0] ?? null;
 }
 
-async function registrationStateForCustomer(
+export async function registrationStateForCustomer(
   customer: CustomerDoc
 ): Promise<"NONE" | "PENDING" | "ACTIVE"> {
   const db = getFirestore();
@@ -146,12 +147,15 @@ export const provisionCustomerPortalProfile = onCall(
       displayName?: string;
       nationalId?: string;
       idCardAddress?: string;
+      idCardStoragePath?: string;
+      idCardImageOriginalName?: string;
     };
 
     const phoneRaw = String(payload.phoneRaw || "").trim();
     const displayName = String(payload.displayName || "").trim();
     const nid = normalizePhoneDigits(String(payload.nationalId || ""));
     const addr = String(payload.idCardAddress || "").trim();
+    const idCardImageOriginalName = String(payload.idCardImageOriginalName || "").trim();
 
     if (!isLegalFullName(displayName)) {
       throw new HttpsError("invalid-argument", "กรุณากรอกชื่อและนามสกุลจริงให้ครบ");
@@ -164,6 +168,9 @@ export const provisionCustomerPortalProfile = onCall(
     }
     if (!phoneRaw || phoneRaw.length < 9) {
       throw new HttpsError("invalid-argument", "เบอร์โทรไม่ถูกต้อง");
+    }
+    if (!idCardImageOriginalName || idCardImageOriginalName.length > 200) {
+      throw new HttpsError("invalid-argument", "ชื่อไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
     }
 
     const db = getFirestore();
@@ -208,6 +215,28 @@ export const provisionCustomerPortalProfile = onCall(
       );
     }
 
+    const expectedStoragePath = `customerPortalIdCards/${canonicalId}/${uid}/id-card.jpg`;
+    const providedPath = String(payload.idCardStoragePath || "").trim();
+    if (providedPath !== expectedStoragePath) {
+      throw new HttpsError("invalid-argument", "พาธไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
+    }
+    try {
+      const file = getStorage().bucket().file(expectedStoragePath);
+      const [exists] = await file.exists();
+      if (!exists) {
+        throw new HttpsError("failed-precondition", "ยังไม่พบไฟล์รูปบัตรประชาชน กรุณาอัปโหลดใหม่");
+      }
+      const [meta] = await file.getMetadata();
+      const sz = Number(meta.size ?? 0);
+      if (sz > 512000) {
+        throw new HttpsError("failed-precondition", "ไฟล์รูปบัตรประชาชนใหญ่เกินกำหนด");
+      }
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      console.error("provisionCustomerPortalProfile id card verify", e);
+      throw new HttpsError("failed-precondition", "ตรวจสอบไฟล์รูปบัตรประชาชนไม่สำเร็จ");
+    }
+
     const prev = customer.data() || {};
     const existingAuthUid = prev.authUid as string | undefined;
     if (existingAuthUid && existingAuthUid !== uid) {
@@ -248,6 +277,8 @@ export const provisionCustomerPortalProfile = onCall(
         nationalId: nid,
         idCardAddress: addr,
         authUid: uid,
+        idCardStoragePath: expectedStoragePath,
+        idCardImageOriginalName,
         updatedAt: FieldValue.serverTimestamp(),
         ...(custSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
       },
@@ -265,6 +296,61 @@ async function assertAdmin(uid: string): Promise<void> {
   if (role !== "ADMIN") {
     throw new HttpsError("permission-denied", "เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น");
   }
+}
+
+async function deleteCustomerIdCardFromStorage(objectPath: unknown): Promise<void> {
+  const p = String(objectPath || "").trim();
+  if (!p.startsWith("customerPortalIdCards/")) return;
+  try {
+    await getStorage().bucket().file(p).delete();
+  } catch (e: unknown) {
+    const code =
+      typeof e === "object" && e !== null && "code" in e
+        ? Number((e as { code?: unknown }).code)
+        : NaN;
+    if (code === 404) return;
+    console.error("deleteCustomerIdCardFromStorage", e);
+  }
+}
+
+/** ลบ Auth / users / ไฟล์บัตร / ฟิลด์พอร์ทัลบน customers — คงชื่อและเบอร์ */
+async function purgePortalRegistrationForCustomerId(customerId: string): Promise<void> {
+  const db = getFirestore();
+  const custRef = db.collection("customers").doc(customerId);
+  const custSnap = await custRef.get();
+  if (!custSnap.exists) {
+    throw new HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+  }
+  const data = custSnap.data() || {};
+  const authUid = data.authUid as string | undefined;
+  const idPath = data.idCardStoragePath as string | undefined;
+
+  await deleteCustomerIdCardFromStorage(idPath);
+
+  if (authUid) {
+    try {
+      await getAuth().deleteUser(authUid);
+    } catch (e: unknown) {
+      console.error("purgePortalRegistration deleteUser", e);
+    }
+    try {
+      await db.collection("users").doc(authUid).delete();
+    } catch (e: unknown) {
+      console.error("purgePortalRegistration delete users doc", e);
+    }
+  }
+
+  await custRef.set(
+    {
+      authUid: FieldValue.delete(),
+      nationalId: FieldValue.delete(),
+      idCardAddress: FieldValue.delete(),
+      idCardStoragePath: FieldValue.delete(),
+      idCardImageOriginalName: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 /** ปฏิเสธการสมัครลูกค้า: ลบ Firebase Auth + ลบ users + เอา authUid ออกจาก customers */
@@ -304,20 +390,91 @@ export const rejectPortalCustomerRegistration = onCall(
     }
 
     try {
-      await getAuth().deleteUser(targetUid);
+      await purgePortalRegistrationForCustomerId(customerId);
     } catch (e: unknown) {
-      console.error("deleteUser", e);
-      throw new HttpsError("internal", "ลบบัญชีผู้ใช้ไม่สำเร็จ (อาจถูกลบไปแล้ว)");
+      if (e instanceof HttpsError) throw e;
+      console.error("rejectPortalCustomerRegistration purge", e);
+      throw new HttpsError("internal", "ลบข้อมูลการสมัครไม่สำเร็จ");
     }
 
-    await db.collection("users").doc(targetUid).delete();
-    await custRef.set(
-      {
-        authUid: FieldValue.delete(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    return { ok: true };
+  }
+);
+
+/** Admin — URL ชั่วคราวดูรูปบัตรประชาชน */
+export const adminGetCustomerPortalIdCardDownloadUrl = onCall(
+  { region: "us-central1", cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
+    }
+    await assertAdmin(request.auth.uid);
+
+    const customerId = String((request.data as { customerId?: string })?.customerId || "").trim();
+    if (!customerId) {
+      throw new HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
+    }
+
+    const db = getFirestore();
+    const cust = await db.collection("customers").doc(customerId).get();
+    if (!cust.exists) {
+      throw new HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+    }
+    const path = cust.data()?.idCardStoragePath as string | undefined;
+    if (!path || !path.startsWith("customerPortalIdCards/")) {
+      throw new HttpsError("failed-precondition", "ไม่มีไฟล์บัตรประชาชนในระบบ");
+    }
+
+    try {
+      const file = getStorage().bucket().file(path);
+      const [exists] = await file.exists();
+      if (!exists) {
+        throw new HttpsError("not-found", "ไม่พบไฟล์ใน Storage");
+      }
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 15 * 60 * 1000,
+      });
+      return { url };
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      console.error("adminGetCustomerPortalIdCardDownloadUrl", e);
+      throw new HttpsError("internal", "สร้างลิงก์ดูรูปไม่สำเร็จ");
+    }
+  }
+);
+
+/** Admin — ลบการลงทะเบียนพอร์ทัลทั้งหมด (รองรับทั้งรออนุมัติและใช้งานแล้ว) */
+export const adminRevokeCustomerPortalRegistration = onCall(
+  { region: "us-central1", cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
+    }
+    await assertAdmin(request.auth.uid);
+
+    const customerId = String((request.data as { customerId?: string })?.customerId || "").trim();
+    if (!customerId) {
+      throw new HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
+    }
+
+    const db = getFirestore();
+    const custSnap = await db.collection("customers").doc(customerId).get();
+    if (!custSnap.exists) {
+      throw new HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+    }
+    const authUid = custSnap.data()?.authUid as string | undefined;
+    if (!authUid) {
+      throw new HttpsError("failed-precondition", "ลูกค้ารายนี้ไม่ได้ลงทะเบียนพอร์ทัล");
+    }
+
+    try {
+      await purgePortalRegistrationForCustomerId(customerId);
+    } catch (e: unknown) {
+      if (e instanceof HttpsError) throw e;
+      console.error("adminRevokeCustomerPortalRegistration", e);
+      throw new HttpsError("internal", "ลบการลงทะเบียนไม่สำเร็จ");
+    }
 
     return { ok: true };
   }

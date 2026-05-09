@@ -24,6 +24,7 @@ import {
 import { safeFormat } from '@/lib/date-utils';
 
 import type { UserProfile, Attendance, LeaveRequest, HRHoliday as HRHolidayType, HRSettings, AttendanceAdjustment, UserStatus } from "@/lib/types";
+import { STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -254,10 +255,23 @@ export default function ManagementHRAttendanceSummaryPage() {
           const startStr = dfFormat(dateRange.from, 'yyyy-MM-dd');
           const nextMonthStart = startOfMonth(addMonths(currentMonth, 1));
           
-          const usersQuery = query(collection(db, 'users'), orderBy('displayName','asc'));
+          const usersQuery = query(
+            collection(db, "users"),
+            where("role", "in", [...STAFF_ROLES_FOR_QUERY]),
+            orderBy("displayName", "asc")
+          );
           const settingsDocRef = doc(db, 'settings', 'hr');
-          const holidaysQuery = query(collection(db, 'hrHolidays'), orderBy('date', 'asc'));
-          const leavesQuery = query(collection(db, 'hrLeaves'), where('year', '==', year));
+          const monthEndStr = dfFormat(dateRange.to, 'yyyy-MM-dd');
+          const holidaysQuery = query(
+            collection(db, "hrHolidays"),
+            where("date", ">=", startStr),
+            where("date", "<=", monthEndStr)
+          );
+          const leavesQuery = query(
+            collection(db, "hrLeaves"),
+            where("year", "==", year),
+            where("status", "==", "APPROVED")
+          );
           const attendanceQuery = query(collection(db, 'attendance'), where('timestamp', '>=', dateRange.from), where('timestamp', '<', nextMonthStart), orderBy('timestamp', 'asc'));
           const adjustmentsQuery = query(collection(db, 'hrAttendanceAdjustments'), where('date', '>=', startStr), where('date', '<', dfFormat(nextMonthStart, 'yyyy-MM-dd')), orderBy('date', 'asc'));
 

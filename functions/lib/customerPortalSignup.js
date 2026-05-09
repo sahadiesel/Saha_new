@@ -1,10 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.rejectPortalCustomerRegistration = exports.provisionCustomerPortalProfile = exports.lookupCustomerForPortalSignup = void 0;
+exports.adminRevokeCustomerPortalRegistration = exports.adminGetCustomerPortalIdCardDownloadUrl = exports.rejectPortalCustomerRegistration = exports.provisionCustomerPortalProfile = exports.lookupCustomerForPortalSignup = void 0;
 exports.findCustomerDocByPhoneRaw = findCustomerDocByPhoneRaw;
+exports.registrationStateForCustomer = registrationStateForCustomer;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const auth_1 = require("firebase-admin/auth");
+const storage_1 = require("firebase-admin/storage");
 const phone_utils_1 = require("./phone-utils");
 function isLegalFullName(displayName) {
     const parts = displayName.trim().split(/\s+/).filter(Boolean);
@@ -122,7 +124,7 @@ exports.provisionCustomerPortalProfile = (0, https_1.onCall)({
     /** Cloud Run ต้องเปิด invoker — ภายในยังตรวจ request.auth อยู่ */
     invoker: "public",
 }, async (request) => {
-    var _a;
+    var _a, _b;
     if (!((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid)) {
         throw new https_1.HttpsError("unauthenticated", "ต้องเข้าสู่ระบบหลังสมัครก่อนบันทึกโปรไฟล์");
     }
@@ -132,6 +134,7 @@ exports.provisionCustomerPortalProfile = (0, https_1.onCall)({
     const displayName = String(payload.displayName || "").trim();
     const nid = (0, phone_utils_1.normalizePhoneDigits)(String(payload.nationalId || ""));
     const addr = String(payload.idCardAddress || "").trim();
+    const idCardImageOriginalName = String(payload.idCardImageOriginalName || "").trim();
     if (!isLegalFullName(displayName)) {
         throw new https_1.HttpsError("invalid-argument", "กรุณากรอกชื่อและนามสกุลจริงให้ครบ");
     }
@@ -143,6 +146,9 @@ exports.provisionCustomerPortalProfile = (0, https_1.onCall)({
     }
     if (!phoneRaw || phoneRaw.length < 9) {
         throw new https_1.HttpsError("invalid-argument", "เบอร์โทรไม่ถูกต้อง");
+    }
+    if (!idCardImageOriginalName || idCardImageOriginalName.length > 200) {
+        throw new https_1.HttpsError("invalid-argument", "ชื่อไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
     }
     const db = (0, firestore_1.getFirestore)();
     let customer;
@@ -180,6 +186,29 @@ exports.provisionCustomerPortalProfile = (0, https_1.onCall)({
     if (authEmail !== expectedEmail.toLowerCase()) {
         throw new https_1.HttpsError("failed-precondition", "ข้อมูลบัญชีไม่ตรงกับรายชื่อลูกค้าในระบบ กรุณาติดต่อศูนย์");
     }
+    const expectedStoragePath = `customerPortalIdCards/${canonicalId}/${uid}/id-card.jpg`;
+    const providedPath = String(payload.idCardStoragePath || "").trim();
+    if (providedPath !== expectedStoragePath) {
+        throw new https_1.HttpsError("invalid-argument", "พาธไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
+    }
+    try {
+        const file = (0, storage_1.getStorage)().bucket().file(expectedStoragePath);
+        const [exists] = await file.exists();
+        if (!exists) {
+            throw new https_1.HttpsError("failed-precondition", "ยังไม่พบไฟล์รูปบัตรประชาชน กรุณาอัปโหลดใหม่");
+        }
+        const [meta] = await file.getMetadata();
+        const sz = Number((_b = meta.size) !== null && _b !== void 0 ? _b : 0);
+        if (sz > 512000) {
+            throw new https_1.HttpsError("failed-precondition", "ไฟล์รูปบัตรประชาชนใหญ่เกินกำหนด");
+        }
+    }
+    catch (e) {
+        if (e instanceof https_1.HttpsError)
+            throw e;
+        console.error("provisionCustomerPortalProfile id card verify", e);
+        throw new https_1.HttpsError("failed-precondition", "ตรวจสอบไฟล์รูปบัตรประชาชนไม่สำเร็จ");
+    }
     const prev = customer.data() || {};
     const existingAuthUid = prev.authUid;
     if (existingAuthUid && existingAuthUid !== uid) {
@@ -212,6 +241,8 @@ exports.provisionCustomerPortalProfile = (0, https_1.onCall)({
         nationalId: nid,
         idCardAddress: addr,
         authUid: uid,
+        idCardStoragePath: expectedStoragePath,
+        idCardImageOriginalName,
         updatedAt: firestore_1.FieldValue.serverTimestamp(),
         ...(custSnap.exists ? {} : { createdAt: firestore_1.FieldValue.serverTimestamp() }),
     }, { merge: true });
@@ -225,6 +256,57 @@ async function assertAdmin(uid) {
     if (role !== "ADMIN") {
         throw new https_1.HttpsError("permission-denied", "เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น");
     }
+}
+async function deleteCustomerIdCardFromStorage(objectPath) {
+    const p = String(objectPath || "").trim();
+    if (!p.startsWith("customerPortalIdCards/"))
+        return;
+    try {
+        await (0, storage_1.getStorage)().bucket().file(p).delete();
+    }
+    catch (e) {
+        const code = typeof e === "object" && e !== null && "code" in e
+            ? Number(e.code)
+            : NaN;
+        if (code === 404)
+            return;
+        console.error("deleteCustomerIdCardFromStorage", e);
+    }
+}
+/** ลบ Auth / users / ไฟล์บัตร / ฟิลด์พอร์ทัลบน customers — คงชื่อและเบอร์ */
+async function purgePortalRegistrationForCustomerId(customerId) {
+    const db = (0, firestore_1.getFirestore)();
+    const custRef = db.collection("customers").doc(customerId);
+    const custSnap = await custRef.get();
+    if (!custSnap.exists) {
+        throw new https_1.HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+    }
+    const data = custSnap.data() || {};
+    const authUid = data.authUid;
+    const idPath = data.idCardStoragePath;
+    await deleteCustomerIdCardFromStorage(idPath);
+    if (authUid) {
+        try {
+            await (0, auth_1.getAuth)().deleteUser(authUid);
+        }
+        catch (e) {
+            console.error("purgePortalRegistration deleteUser", e);
+        }
+        try {
+            await db.collection("users").doc(authUid).delete();
+        }
+        catch (e) {
+            console.error("purgePortalRegistration delete users doc", e);
+        }
+    }
+    await custRef.set({
+        authUid: firestore_1.FieldValue.delete(),
+        nationalId: firestore_1.FieldValue.delete(),
+        idCardAddress: firestore_1.FieldValue.delete(),
+        idCardStoragePath: firestore_1.FieldValue.delete(),
+        idCardImageOriginalName: firestore_1.FieldValue.delete(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
 }
 /** ปฏิเสธการสมัครลูกค้า: ลบ Firebase Auth + ลบ users + เอา authUid ออกจาก customers */
 exports.rejectPortalCustomerRegistration = (0, https_1.onCall)({ region: "us-central1", cors: true }, async (request) => {
@@ -258,16 +340,83 @@ exports.rejectPortalCustomerRegistration = (0, https_1.onCall)({ region: "us-cen
         throw new https_1.HttpsError("failed-precondition", "ข้อมูลการผูกบัญชีไม่ตรงกัน");
     }
     try {
-        await (0, auth_1.getAuth)().deleteUser(targetUid);
+        await purgePortalRegistrationForCustomerId(customerId);
     }
     catch (e) {
-        console.error("deleteUser", e);
-        throw new https_1.HttpsError("internal", "ลบบัญชีผู้ใช้ไม่สำเร็จ (อาจถูกลบไปแล้ว)");
+        if (e instanceof https_1.HttpsError)
+            throw e;
+        console.error("rejectPortalCustomerRegistration purge", e);
+        throw new https_1.HttpsError("internal", "ลบข้อมูลการสมัครไม่สำเร็จ");
     }
-    await db.collection("users").doc(targetUid).delete();
-    await custRef.set({
-        authUid: firestore_1.FieldValue.delete(),
-        updatedAt: firestore_1.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    return { ok: true };
+});
+/** Admin — URL ชั่วคราวดูรูปบัตรประชาชน */
+exports.adminGetCustomerPortalIdCardDownloadUrl = (0, https_1.onCall)({ region: "us-central1", cors: true }, async (request) => {
+    var _a, _b, _c;
+    if (!((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid)) {
+        throw new https_1.HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
+    }
+    await assertAdmin(request.auth.uid);
+    const customerId = String(((_b = request.data) === null || _b === void 0 ? void 0 : _b.customerId) || "").trim();
+    if (!customerId) {
+        throw new https_1.HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
+    }
+    const db = (0, firestore_1.getFirestore)();
+    const cust = await db.collection("customers").doc(customerId).get();
+    if (!cust.exists) {
+        throw new https_1.HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+    }
+    const path = (_c = cust.data()) === null || _c === void 0 ? void 0 : _c.idCardStoragePath;
+    if (!path || !path.startsWith("customerPortalIdCards/")) {
+        throw new https_1.HttpsError("failed-precondition", "ไม่มีไฟล์บัตรประชาชนในระบบ");
+    }
+    try {
+        const file = (0, storage_1.getStorage)().bucket().file(path);
+        const [exists] = await file.exists();
+        if (!exists) {
+            throw new https_1.HttpsError("not-found", "ไม่พบไฟล์ใน Storage");
+        }
+        const [url] = await file.getSignedUrl({
+            action: "read",
+            expires: Date.now() + 15 * 60 * 1000,
+        });
+        return { url };
+    }
+    catch (e) {
+        if (e instanceof https_1.HttpsError)
+            throw e;
+        console.error("adminGetCustomerPortalIdCardDownloadUrl", e);
+        throw new https_1.HttpsError("internal", "สร้างลิงก์ดูรูปไม่สำเร็จ");
+    }
+});
+/** Admin — ลบการลงทะเบียนพอร์ทัลทั้งหมด (รองรับทั้งรออนุมัติและใช้งานแล้ว) */
+exports.adminRevokeCustomerPortalRegistration = (0, https_1.onCall)({ region: "us-central1", cors: true }, async (request) => {
+    var _a, _b, _c;
+    if (!((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid)) {
+        throw new https_1.HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
+    }
+    await assertAdmin(request.auth.uid);
+    const customerId = String(((_b = request.data) === null || _b === void 0 ? void 0 : _b.customerId) || "").trim();
+    if (!customerId) {
+        throw new https_1.HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
+    }
+    const db = (0, firestore_1.getFirestore)();
+    const custSnap = await db.collection("customers").doc(customerId).get();
+    if (!custSnap.exists) {
+        throw new https_1.HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
+    }
+    const authUid = (_c = custSnap.data()) === null || _c === void 0 ? void 0 : _c.authUid;
+    if (!authUid) {
+        throw new https_1.HttpsError("failed-precondition", "ลูกค้ารายนี้ไม่ได้ลงทะเบียนพอร์ทัล");
+    }
+    try {
+        await purgePortalRegistrationForCustomerId(customerId);
+    }
+    catch (e) {
+        if (e instanceof https_1.HttpsError)
+            throw e;
+        console.error("adminRevokeCustomerPortalRegistration", e);
+        throw new https_1.HttpsError("internal", "ลบการลงทะเบียนไม่สำเร็จ");
+    }
     return { ok: true };
 });

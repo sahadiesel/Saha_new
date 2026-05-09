@@ -151,12 +151,20 @@ service cloud.firestore {
     }
 
     /** ลูกค้าห้ามเปลี่ยน phone / role / status / email เอง — อนุมัติผ่าน Admin */
+    /** ลูกค้าห้ามตั้ง mustChangePassword เป็น true เอง — ปิดได้เมื่อเคยเป็น true (หลังเปลี่ยนรหัสแล้ว) */
+    function customerMustChangePasswordFieldOk() {
+      let beforeTrue = 'mustChangePassword' in resource.data && resource.data.mustChangePassword == true;
+      let afterTrue = 'mustChangePassword' in request.resource.data && request.resource.data.mustChangePassword == true;
+      return !(afterTrue && !beforeTrue);
+    }
+
     function customerSelfUserUpdateOk() {
       return role() != 'CUSTOMER' || (
         resource.data.phone == request.resource.data.phone &&
         resource.data.role == request.resource.data.role &&
         resource.data.status == request.resource.data.status &&
-        resource.data.email == request.resource.data.email
+        resource.data.email == request.resource.data.email &&
+        customerMustChangePasswordFieldOk()
       );
     }
 
@@ -218,6 +226,12 @@ service cloud.firestore {
     }
 
     // Customers & Vendors
+    /** คำขอลืมรหัสพอร์ทัลลูกค้า — เขียนผ่าน Cloud Functions เท่านั้น */
+    match /customerPasswordResetRequests/{rid} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /customers/{id} {
       allow read: if signedIn();
       allow create: if (canEditJobs() && request.resource.data.name.size() < 200)

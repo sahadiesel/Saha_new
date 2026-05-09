@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { collection, query, orderBy, updateDoc, doc, serverTimestamp, where, deleteDoc, getDocs, addDoc, Timestamp } from "firebase/firestore";
+import { collection, query, orderBy, updateDoc, doc, serverTimestamp, where, deleteDoc, getDocs, addDoc, Timestamp, limit } from "firebase/firestore";
 import { useFirebase, useCollection, useDoc } from "@/firebase";
 import type { WithId } from "@/firebase/firestore/use-collection";
 import { useAuth } from "@/context/auth-context";
@@ -48,7 +48,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 
-import { LEAVE_STATUSES, LEAVE_TYPES } from "@/lib/constants";
+import { LEAVE_STATUSES, LEAVE_TYPES, STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 import type { UserProfile, LeaveRequest, HRSettings, LeaveStatus, Attendance, HRHoliday, AttendanceAdjustment } from "@/lib/types";
 import { leaveStatusLabel, leaveTypeLabel, deptLabel } from "@/lib/ui-labels";
 
@@ -65,6 +65,9 @@ const leaveSchema = z.object({
 });
 
 type LeaveFormData = z.infer<typeof leaveSchema>;
+
+/** ปีใน dropdown — ไม่ต้องสแกนทุกใบลาใน Firestore (เดิมใช้ onSnapshot ทั้งคอลเลกชัน → ช้ามากเมื่อข้อมูลสะสม) */
+const YEAR_PICKER_RANGE = 25;
 
 const monthOptions = [
   { value: "ALL", label: "ทั้งหมด (ทั้งปี)" },
@@ -297,14 +300,39 @@ export default function ManagementHRLeavesPage() {
   const [isLoadingExtras, setIsLoadingExtras] = useState(false);
   const [indexCreationUrl, setIndexCreationUrl] = useState<string | null>(null);
 
-  const usersQuery = useMemo(() => db ? query(collection(db, 'users'), orderBy('displayName', 'asc')) : null, [db]);
-  const leavesQuery = useMemo(() => db ? query(collection(db, 'hrLeaves'), orderBy('createdAt', 'desc')) : null, [db]);
+  const yearPickerYears = useMemo(() => {
+    const cy = new Date().getFullYear();
+    return Array.from({ length: YEAR_PICKER_RANGE }, (_, i) => cy - i);
+  }, []);
+
+  const usersQuery = useMemo(
+    () =>
+      db
+        ? query(
+            collection(db, "users"),
+            where("role", "in", [...STAFF_ROLES_FOR_QUERY]),
+            orderBy("displayName", "asc")
+          )
+        : null,
+    [db]
+  );
+  /** เฉพาะปีที่เลือก + limit — ลดการซิงค์เอกสารจากทุกปีทุกใบ */
+  const leavesQuery = useMemo(() => {
+    if (!db || selectedYear == null) return null;
+    return query(
+      collection(db, "hrLeaves"),
+      where("year", "==", selectedYear),
+      orderBy("createdAt", "desc"),
+      limit(2500)
+    );
+  }, [db, selectedYear]);
   const settingsDocRef = useMemo(() => db ? doc(db, 'settings', 'hr') : null, [db]);
 
   const { data: users, isLoading: isLoadingUsers } = useCollection<UserProfile>(usersQuery);
   const { data: allLeaves, isLoading: isLoadingLeaves } = useCollection<LeaveRequest>(leavesQuery);
   const { data: hrSettings, isLoading: isLoadingSettings } = useDoc<HRSettings>(settingsDocRef);
 
+  /** นับเฉพาะในปีที่โหลด (ตรงกับแท็บคำขอ); ไฟล์แยกใน sidebar ยังมีจุดแจ้ง SUBMITTED แบบ limit(1) */
   const pendingSubmittedCount = useMemo(
     () => (allLeaves ?? []).filter((l) => l.status === "SUBMITTED").length,
     [allLeaves]
@@ -352,21 +380,8 @@ export default function ManagementHRLeavesPage() {
   }, [db, selectedYear, selectedMonth]);
 
   const { leaveSummary, filteredLeaves, yearOptions } = useMemo(() => {
-    const years = new Set<number>();
-    const currentYear = getYear(new Date());
-    years.add(currentYear);
-
-    if (allLeaves) {
-      allLeaves.forEach(leave => {
-        const year = leave.year || (leave.startDate ? getYear(parseISO(leave.startDate)) : null);
-        if (year) years.add(year);
-      });
-    }
-    
-    const sortedYears = Array.from(years).sort((a, b) => b - a);
-
     if (!allLeaves || !users || !selectedYear || !selectedMonth) {
-      return { leaveSummary: [], filteredLeaves: [], yearOptions: sortedYears };
+      return { leaveSummary: [], filteredLeaves: [], yearOptions: yearPickerYears };
     }
 
     const today = startOfToday();
@@ -465,8 +480,8 @@ export default function ManagementHRLeavesPage() {
       );
     });
 
-    return { leaveSummary: summary, filteredLeaves: filtered, yearOptions: sortedYears };
-  }, [allLeaves, users, selectedYear, selectedMonth, filters, periodAttendance, periodAdjustments, periodHolidays, hrSettings]);
+    return { leaveSummary: summary, filteredLeaves: filtered, yearOptions: yearPickerYears };
+  }, [allLeaves, users, selectedYear, selectedMonth, filters, periodAttendance, periodAdjustments, periodHolidays, hrSettings, yearPickerYears]);
 
   const handleApprove = async () => {
     if (!db || !adminProfile || !approvingLeave) return;

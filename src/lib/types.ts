@@ -53,6 +53,8 @@ export interface UserProfile {
     endDate?: string | null; // YYYY-MM-DD
     ssoRegistered?: boolean; // New field to check if SSO should be deducted
   };
+  /** true เมื่อ Admin รีเซ็ตรหัสผ่าน — บังคับให้ลูกค้าตั้งรหัสใหม่ครั้งแรกเมื่อเข้าสู่ระบบ */
+  mustChangePassword?: boolean;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
   lastAttendance?: {
@@ -75,6 +77,22 @@ export interface CustomerTaxProfile {
   taxBranchNo?: string;
 }
 
+/** คำขอลืมรหัสผ่านพอร์ทัลลูกค้า — `customerPasswordResetRequests/{id}` */
+export interface CustomerPasswordResetRequest {
+  id?: string;
+  customerId: string;
+  phone: string;
+  customerName: string;
+  nationalIdOnFile: string;
+  nationalIdSubmitted: string;
+  authUid: string;
+  status: "PENDING" | "COMPLETED";
+  createdAt: Timestamp;
+  updatedAt?: Timestamp;
+  completedAt?: Timestamp;
+  completedByUid?: string;
+}
+
 export interface Customer {
   id: string;
   name: string;
@@ -88,6 +106,10 @@ export interface Customer {
   idCardAddress?: string;
   /** Firebase Auth uid เมื่อลูกค้าลงทะเบียนพอร์ทัลแล้ว */
   authUid?: string;
+  /** พาธอ็อบเจ็กต์ใน Storage สำหรับรูปบัตรประชาชน (อ่านได้เฉพาะ Admin ผ่าน signed URL) */
+  idCardStoragePath?: string;
+  /** ชื่อไฟล์ต้นฉบับที่ผู้สมัครอัปโหลด — ใช้แสดงในระบบหลังบ้าน */
+  idCardImageOriginalName?: string;
   detail: string;
   useTax: boolean;
   /** หลายชุดสำหรับออกใบกำกับ — ถ้าไม่มีให้อ่านจาก taxName/taxAddress/... แบบเดิม */

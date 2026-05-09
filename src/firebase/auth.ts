@@ -1,6 +1,7 @@
 "use client";
 
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { deleteObject, getStorage, ref, uploadBytes } from "firebase/storage";
 import { initializeFirebase } from "@/firebase/init";
 import { createUserProfile } from "./user";
 import { customerAuthEmailFromDocId } from "@/lib/customer-auth-phone";
@@ -14,6 +15,15 @@ import {
   isValidThaiNationalId13,
   normalizeNationalIdDigits,
 } from "@/lib/customer-portal-registration-validators";
+
+export function sanitizeCustomerIdCardDisplayFileName(name: string): string {
+  const base = String(name || "")
+    .replace(/^.*[/\\]/, "")
+    .replace(/[^\w.\u0E00-\u0E7F()\- ]+/g, "")
+    .trim()
+    .slice(0, 180);
+  return base || "id-card.jpg";
+}
 
 export async function signUp(email: string, password: string, displayName: string, phone: string) {
   const { auth } = initializeFirebase();
@@ -43,10 +53,12 @@ export async function signUpCustomerWithPhone(
   password: string,
   displayName: string,
   nationalId: string,
-  idCardAddress: string
+  idCardAddress: string,
+  idCardJpegBlob: Blob,
+  idCardOriginalFileName: string
 ) {
-  const { auth } = initializeFirebase();
-  if (!auth) throw new Error("Auth not initialized");
+  const { auth, firebaseApp, storage } = initializeFirebase();
+  if (!auth || !firebaseApp || !storage) throw new Error("Auth not initialized");
 
   const dn = displayName.trim();
   if (!isLegalFullName(dn)) {
@@ -59,6 +71,9 @@ export async function signUpCustomerWithPhone(
   const addr = idCardAddress.trim();
   if (!isSubstantialIdCardAddress(addr)) {
     throw new Error("กรุณากรอกที่อยู่ตามบัตรประชาชนให้ครบถ้วน");
+  }
+  if (!idCardJpegBlob || idCardJpegBlob.size > 512 * 1024) {
+    throw new Error("รูปบัตรประชาชนต้องมีขนาดไม่เกิน 500KB หลังบีบอัด");
   }
 
   const lookup = await callLookupCustomerForPortalSignup(phoneRaw);
@@ -81,18 +96,30 @@ export async function signUpCustomerWithPhone(
 
   await updateProfile(cred.user, { displayName: displayName.trim() });
 
+  const storagePath = `customerPortalIdCards/${canonicalId}/${cred.user.uid}/id-card.jpg`;
+  const storageRef = ref(storage, storagePath);
+  const safeOriginalName = sanitizeCustomerIdCardDisplayFileName(idCardOriginalFileName);
+
   try {
     if (typeof auth.authStateReady === "function") {
       await auth.authStateReady();
     }
     await cred.user.getIdToken(true);
+    await uploadBytes(storageRef, idCardJpegBlob, { contentType: "image/jpeg" });
     await callProvisionCustomerPortalProfile({
       phoneRaw,
       displayName,
       nationalId,
       idCardAddress,
+      idCardStoragePath: storagePath,
+      idCardImageOriginalName: safeOriginalName,
     });
   } catch (e) {
+    try {
+      await deleteObject(storageRef);
+    } catch {
+      /* ignore */
+    }
     try {
       await cred.user.delete();
     } catch {

@@ -5,9 +5,15 @@ import {
   lookupCustomerForPortalSignup,
   rejectPortalCustomerRegistration,
   provisionCustomerPortalProfile,
+  adminGetCustomerPortalIdCardDownloadUrl,
+  adminRevokeCustomerPortalRegistration,
 } from "./customerPortalSignup";
 import { postJobCustomerChatMessage } from "./jobCustomerChat";
 import { customerPortalQuotationDecision } from "./customerPortalQuotationDecision";
+import {
+  submitCustomerPasswordResetRequest,
+  adminResetCustomerPasswordAfterForgot,
+} from "./customerPasswordReset";
 
 initializeApp();
 
@@ -15,8 +21,12 @@ export {
   lookupCustomerForPortalSignup,
   rejectPortalCustomerRegistration,
   provisionCustomerPortalProfile,
+  adminGetCustomerPortalIdCardDownloadUrl,
+  adminRevokeCustomerPortalRegistration,
   postJobCustomerChatMessage,
   customerPortalQuotationDecision,
+  submitCustomerPasswordResetRequest,
+  adminResetCustomerPasswordAfterForgot,
 };
 const db = getFirestore();
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { collection, onSnapshot, query, orderBy, doc, getDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, getDoc, limit } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -130,9 +130,12 @@ export default function IntakePage() {
 
   useEffect(() => {
     if (!db) return;
-    const unsub = onSnapshot(collection(db, "customers"), (snap) => {
-      setCustomers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
-    });
+    const unsub = onSnapshot(
+      query(collection(db, "customers"), orderBy("createdAt", "desc"), limit(DATA_LIMITS.MAX_CUSTOMERS)),
+      (snap) => {
+        setCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer)));
+      }
+    );
     return () => unsub();
   }, [db]);
 

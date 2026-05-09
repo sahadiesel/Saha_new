@@ -388,9 +388,14 @@ export function JobList({
         const snap = await getDocs(q);
         setDeptWorkers(snap.docs.map(d => ({ uid: d.id, displayName: d.data().companyName } as any)));
       } else {
-        const q = query(collection(db, "users"), where("department", "==", job.department), where("status", "==", "ACTIVE"));
+        const q = query(
+          collection(db, "users"),
+          where("department", "==", job.department),
+          where("role", "==", "WORKER"),
+          where("status", "==", "ACTIVE")
+        );
         const snap = await getDocs(q);
-        setDeptWorkers(snap.docs.map(d => ({ ...d.data(), uid: d.id } as UserProfile)).filter(u => u.role === 'WORKER'));
+        setDeptWorkers(snap.docs.map(d => ({ ...d.data(), uid: d.id } as UserProfile)));
       }
     } catch (e) { toast({ variant: 'destructive', title: "Error" }); } finally { setIsLoadingWorkers(false); }
   };

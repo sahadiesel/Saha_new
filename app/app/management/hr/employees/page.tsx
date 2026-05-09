@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, MoreHorizontal, PlusCircle, Link as LinkIcon, Edit } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DEPARTMENTS, USER_ROLES, USER_STATUSES, PAY_TYPES } from "@/lib/constants";
+import { DEPARTMENTS, USER_ROLES, USER_STATUSES, PAY_TYPES, STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 import type { UserProfile, SSOHospital, PayType, Vendor } from "@/lib/types";
 import { payTypeLabel, deptLabel } from "@/lib/ui-labels";
 import {
@@ -185,7 +185,11 @@ export default function ManagementHREmployeesPage() {
 
   useEffect(() => {
     if (!db) return;
-    const q = query(collection(db, "users"), orderBy("displayName", "asc"));
+    const q = query(
+      collection(db, "users"),
+      where("role", "in", [...STAFF_ROLES_FOR_QUERY]),
+      orderBy("displayName", "asc")
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserWithId));
       setUsers(usersData);

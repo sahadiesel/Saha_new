@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField, setDoc, addDoc } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, serverTimestamp, updateDoc, where, orderBy, getDocs, limit, writeBatch, deleteField, setDoc, addDoc, getDoc } from "firebase/firestore";
 import { useFirebase, useCollection, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -32,6 +32,7 @@ import { format, parseISO } from "date-fns";
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
+import { DATA_LIMITS } from "@/lib/constants";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "ต้องกรอกรายละเอียดรายการ"),
@@ -156,12 +157,26 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   useEffect(() => {
     if (!db) return;
     setIsLoadingCustomers(true);
-    const unsubscribe = onSnapshot(collection(db, "customers"), (snapshot) => {
-      setCustomers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
-      setIsLoadingCustomers(false);
-    });
+    const unsubscribe = onSnapshot(
+      query(collection(db, "customers"), orderBy("createdAt", "desc"), limit(DATA_LIMITS.MAX_CUSTOMERS)),
+      (snapshot) => {
+        setCustomers(snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Customer)));
+        setIsLoadingCustomers(false);
+      }
+    );
     return () => unsubscribe();
   }, [db]);
+
+  useEffect(() => {
+    if (!db) return;
+    const id = docToEdit?.customerId || job?.customerId;
+    if (!id || customers.some((c) => c.id === id)) return;
+    getDoc(doc(db, "customers", id)).then((snap) => {
+      if (!snap.exists()) return;
+      const row = { id: snap.id, ...snap.data() } as Customer;
+      setCustomers((prev) => (prev.some((p) => p.id === row.id) ? prev : [row, ...prev]));
+    });
+  }, [db, docToEdit?.customerId, job?.customerId, customers]);
 
   useEffect(() => {
     const dataToLoad = docToEdit || job;

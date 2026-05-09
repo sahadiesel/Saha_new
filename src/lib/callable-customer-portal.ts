@@ -69,12 +69,21 @@ export async function callProvisionCustomerPortalProfile(params: {
   displayName: string;
   nationalId: string;
   idCardAddress: string;
+  idCardStoragePath: string;
+  idCardImageOriginalName: string;
 }): Promise<void> {
   const { firebaseApp } = initializeFirebase();
   if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้ กรุณารีเฟรชหน้า");
 
   const fn = httpsCallable<
-    { phoneRaw: string; displayName: string; nationalId: string; idCardAddress: string },
+    {
+      phoneRaw: string;
+      displayName: string;
+      nationalId: string;
+      idCardAddress: string;
+      idCardStoragePath: string;
+      idCardImageOriginalName: string;
+    },
     { ok: boolean }
   >(getFunctions(firebaseApp, "us-central1"), "provisionCustomerPortalProfile");
   try {
@@ -83,6 +92,8 @@ export async function callProvisionCustomerPortalProfile(params: {
       displayName: params.displayName.trim(),
       nationalId: params.nationalId.trim(),
       idCardAddress: params.idCardAddress.trim(),
+      idCardStoragePath: params.idCardStoragePath.trim(),
+      idCardImageOriginalName: params.idCardImageOriginalName.trim(),
     });
   } catch (e) {
     throw new Error(formatCustomerPortalCallableError(e));
@@ -101,4 +112,29 @@ export async function callRejectPortalCustomerRegistration(
     "rejectPortalCustomerRegistration"
   );
   await fn({ targetUid, customerId });
+}
+
+/** Admin — ลบการลงทะเบียนพอร์ทัล (PENDING หรือ ACTIVE): ลบ Auth, users, ไฟล์บัตร, ฟิลด์ลงทะเบียน — คงชื่อและเบอร์ลูกค้า */
+export async function callAdminRevokeCustomerPortalRegistration(customerId: string): Promise<void> {
+  const { firebaseApp } = initializeFirebase();
+  if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้");
+
+  const fn = httpsCallable<{ customerId: string }, { ok: boolean }>(
+    getFunctions(firebaseApp, "us-central1"),
+    "adminRevokeCustomerPortalRegistration"
+  );
+  await fn({ customerId: customerId.trim() });
+}
+
+/** Admin — URL ชั่วคราวสำหรับดูรูปบัตรประชาชน */
+export async function callAdminGetCustomerPortalIdCardDownloadUrl(customerId: string): Promise<string> {
+  const { firebaseApp } = initializeFirebase();
+  if (!firebaseApp) throw new Error("ไม่สามารถเชื่อมต่อระบบได้");
+
+  const fn = httpsCallable<{ customerId: string }, { url: string }>(
+    getFunctions(firebaseApp, "us-central1"),
+    "adminGetCustomerPortalIdCardDownloadUrl"
+  );
+  const res = await fn({ customerId: customerId.trim() });
+  return res.data.url;
 }

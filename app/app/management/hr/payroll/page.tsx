@@ -36,7 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { LEAVE_TYPES } from "@/lib/constants";
+import { LEAVE_TYPES, STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 import { cn, thaiBahtText } from "@/lib/utils";
 
 const formatCurrency = (value: number | undefined) => {
@@ -270,8 +270,16 @@ export default function HRGeneratePayslipsPage() {
             }
             setSsoDecision(finalSsoDecision);
 
-            const usersQuery = query(collection(db, "users"), where("status", "==", "ACTIVE"));
-            const holidaysQuery = collection(db, "hrHolidays");
+            const usersQuery = query(
+              collection(db, "users"),
+              where("status", "==", "ACTIVE"),
+              where("role", "in", [...STAFF_ROLES_FOR_QUERY])
+            );
+            const holidaysQuery = query(
+              collection(db, "hrHolidays"),
+              where("date", ">=", `${year}-01-01`),
+              where("date", "<=", `${year}-12-31`)
+            );
             const leavesQuery = query(collection(db, "hrLeaves"), where("year", "==", year), where("status", "==", "APPROVED"));
             const attendancePeriodQuery = query(collection(db, "attendance"), where("timestamp", ">=", payPeriod.start), where("timestamp", "<=", payPeriod.end));
             const adjustmentsPeriodQuery = query(collection(db, "hrAttendanceAdjustments"), where("date", ">=", format(payPeriod.start, "yyyy-MM-dd")), where("date", "<=", format(payPeriod.end, "yyyy-MM-dd")));

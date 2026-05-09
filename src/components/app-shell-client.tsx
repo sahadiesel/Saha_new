@@ -76,10 +76,21 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         return;
       }
       if (profile.role === "CUSTOMER") {
-        router.replace("/customer");
+        router.replace(profile.mustChangePassword ? "/customer/change-password" : "/customer");
         return;
       }
       router.replace("/");
+      return;
+    }
+
+    if (
+      profile?.role === "CUSTOMER" &&
+      profile.status === "ACTIVE" &&
+      profile.mustChangePassword === true &&
+      isCustomerPortal &&
+      pathname !== "/customer/change-password"
+    ) {
+      router.replace("/customer/change-password");
       return;
     }
 

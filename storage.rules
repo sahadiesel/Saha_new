@@ -59,9 +59,23 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // รูปบัตรประชาชน (ลงทะเบียนพอร์ทัลลูกค้า) — อัปโหลดหลังสมัครด้วย uid ตนเอง, อ่านผ่าน signed URL จาก Admin เท่านั้น
+    match /customerPortalIdCards/{customerId}/{userId}/{fileName} {
+      allow read: if false;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.size <= 512 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    function isNotCustomerPortalIdCardPath() {
+      return !resource.name.matches('^customerPortalIdCards/.+');
+    }
+
     // Default deny for other paths
     match /{allPaths=**} {
-      allow read: if signedIn();
+      allow read: if signedIn() && isNotCustomerPortalIdCardPath();
       allow write: if false;
     }
   }

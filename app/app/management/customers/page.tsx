@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, Suspense } from "react";
-import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, deleteField } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, updateDoc, deleteDoc, doc, serverTimestamp, deleteField, limit, getDoc } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MoreHorizontal, PlusCircle, Search, Edit, Eye, Trash2, ChevronsUpDown, Filter } from "lucide-react";
+import { Loader2, MoreHorizontal, PlusCircle, Search, Edit, Eye, Trash2, ChevronsUpDown, Filter, ImageIcon } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,8 +38,10 @@ import {
   normalizeCustomerTaxProfiles,
   dedupePhoneList,
   findCustomerPhoneConflict,
+  getPortalRegistrationTaxDefaults,
+  mergePortalTaxDefaultsIntoProfiles,
 } from "@/lib/customer-utils";
-import { ACQUISITION_SOURCES } from "@/lib/constants";
+import { ACQUISITION_SOURCES, DATA_LIMITS } from "@/lib/constants";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
@@ -47,6 +49,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
+import {
+  callAdminGetCustomerPortalIdCardDownloadUrl,
+  callAdminRevokeCustomerPortalRegistration,
+} from "@/lib/callable-customer-portal";
 
 export const dynamic = 'force-dynamic';
 
@@ -149,6 +155,8 @@ function CustomersContent() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<string | null>(null);
+  const [isRevokePortalAlertOpen, setIsRevokePortalAlertOpen] = useState(false);
+  const [idCardOpenLoading, setIdCardOpenLoading] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(0);
   const PAGE_SIZE = 20;
@@ -198,34 +206,49 @@ function CustomersContent() {
 
   const useTax = form.watch("useTax");
 
+  const dialogCustomer = useMemo(() => {
+    if (!editingCustomer) return null;
+    return customers.find((c) => c.id === editingCustomer.id) ?? editingCustomer;
+  }, [customers, editingCustomer]);
+
   useEffect(() => {
     if (!db) return;
-    const q = query(collection(db, "customers"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "customers"), orderBy("createdAt", "desc"), limit(DATA_LIMITS.MAX_CUSTOMERS));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const customersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+      const customersData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Customer));
       setCustomers(customersData);
       setLoading(false);
-      
+
       const editCustomerId = searchParams.get("editCustomerId");
       const editPhone = searchParams.get("editPhone");
-      if (customersData.length > 0) {
-        let target: Customer | undefined;
-        if (editCustomerId) {
-          target = customersData.find((c) => c.id === editCustomerId);
-        }
-        if (!target && editPhone) {
-          const q = editPhone.trim();
-          target = customersData.find(
-            (c) =>
-              normalizeCustomerPhones(c).some(
-                (p) => p === q || p.replace(/\D/g, "") === q.replace(/\D/g, "")
-              )
-          );
-        }
-        if (target) {
-          setEditingCustomer(target);
+
+      let target: Customer | undefined;
+      if (editCustomerId) {
+        target = customersData.find((c) => c.id === editCustomerId);
+      }
+      if (!target && editPhone) {
+        const phoneQ = editPhone.trim();
+        target = customersData.find(
+          (c) =>
+            normalizeCustomerPhones(c).some(
+              (p) => p === phoneQ || p.replace(/\D/g, "") === phoneQ.replace(/\D/g, "")
+            )
+        );
+      }
+      if (target) {
+        setEditingCustomer(target);
+        setIsDialogOpen(true);
+        return;
+      }
+
+      if (editCustomerId) {
+        getDoc(doc(db, "customers", editCustomerId)).then((snap) => {
+          if (!snap.exists()) return;
+          const c = { id: snap.id, ...snap.data() } as Customer;
+          setCustomers((prev) => (prev.some((p) => p.id === c.id) ? prev : [c, ...prev]));
+          setEditingCustomer(c);
           setIsDialogOpen(true);
-        }
+        });
       }
     },
     async (error: any) => {
@@ -286,7 +309,7 @@ function CustomersContent() {
       if (editingCustomer) {
         const phones = normalizeCustomerPhones(editingCustomer);
         const rawProfiles = normalizeCustomerTaxProfiles(editingCustomer);
-        const taxProfilesForForm: CustomerTaxProfile[] =
+        let taxProfilesForForm: CustomerTaxProfile[] =
           rawProfiles.length > 0
             ? rawProfiles.map((p) => ({
                 ...p,
@@ -297,6 +320,15 @@ function CustomersContent() {
                 taxBranchNo: p.taxBranchNo || "00000",
               }))
             : [];
+        const portalTax = getPortalRegistrationTaxDefaults(editingCustomer);
+        const primaryPhone = phones.length > 0 ? phones[0] : "";
+        if (editingCustomer.useTax && portalTax) {
+          taxProfilesForForm = mergePortalTaxDefaultsIntoProfiles(
+            taxProfilesForForm,
+            portalTax,
+            primaryPhone
+          );
+        }
         form.reset({
           name: editingCustomer.name || "",
           phones: phones.length > 0 ? phones : [""],
@@ -446,6 +478,47 @@ function CustomersContent() {
       });
   };
 
+  const confirmRevokePortalRegistration = async () => {
+    if (!dialogCustomer?.authUid) return;
+    setIsSubmitting(true);
+    try {
+      await callAdminRevokeCustomerPortalRegistration(dialogCustomer.id);
+      toast({
+        title: "ลบการลงทะเบียนพอร์ทัลแล้ว",
+        description:
+          "บัญชีและข้อมูลการลงทะเบียนถูกลบแล้ว — ชื่อและเบอร์โทรของลูกค้ายังอยู่ สามารถสมัครใหม่ได้",
+      });
+      setIsRevokePortalAlertOpen(false);
+      setIsDialogOpen(false);
+      setEditingCustomer(null);
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "ลบการลงทะเบียนไม่สำเร็จ",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleViewPortalIdCard = async () => {
+    if (!dialogCustomer?.idCardStoragePath || !isAdmin) return;
+    setIdCardOpenLoading(true);
+    try {
+      const url = await callAdminGetCustomerPortalIdCardDownloadUrl(dialogCustomer.id);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "เปิดรูปไม่สำเร็จ",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIdCardOpenLoading(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8" /></div>;
   }
@@ -558,9 +631,29 @@ function CustomersContent() {
 
       <Dialog open={isDialogOpen} onOpenChange={(open) => !isSubmitting && setIsDialogOpen(open)}>
         <DialogContent className="sm:max-w-[720px] max-h-[90vh] p-0 flex flex-col overflow-hidden">
-          <DialogHeader className="p-6 pb-2">
-            <DialogTitle>ข้อมูลลูกค้า</DialogTitle>
-            <DialogDescription>ดูและแก้ไขรายละเอียดข้อมูลลูกค้า</DialogDescription>
+          <DialogHeader className="p-6 pb-4 text-left space-y-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
+              <div className="space-y-1.5">
+                <DialogTitle>ข้อมูลลูกค้า</DialogTitle>
+                <DialogDescription>ดูและแก้ไขรายละเอียดข้อมูลลูกค้า</DialogDescription>
+              </div>
+              {isAdmin && dialogCustomer?.authUid ? (
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <Badge variant="secondary" className="font-semibold tracking-tight">
+                    Registered Customer
+                  </Badge>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={isSubmitting}
+                    onClick={() => setIsRevokePortalAlertOpen(true)}
+                  >
+                    ลบการลงทะเบียน
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           </DialogHeader>
           
           <div className="overflow-y-auto px-6">
@@ -609,6 +702,32 @@ function CustomersContent() {
                     <PlusCircle className="mr-2 h-4 w-4" /> เพิ่มเบอร์โทรศัพท์
                   </Button>
                 </div>
+
+                {isAdmin && dialogCustomer?.idCardStoragePath ? (
+                  <div className="rounded-md border bg-muted/30 px-3 py-2 flex flex-wrap items-center gap-2 justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-muted-foreground">รูปบัตรประชาชน (จากการลงทะเบียน)</p>
+                      <p className="text-sm truncate font-medium">
+                        {dialogCustomer.idCardImageOriginalName?.trim() || "id-card.jpg"}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={idCardOpenLoading}
+                      onClick={() => void handleViewPortalIdCard()}
+                    >
+                      {idCardOpenLoading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <ImageIcon className="mr-2 h-4 w-4" />
+                      )}
+                      ดูรูป
+                    </Button>
+                  </div>
+                ) : null}
                 
                 <Card className="bg-primary/5 border-primary/20 shadow-none">
                     <CardHeader className="pb-2">
@@ -669,9 +788,24 @@ function CustomersContent() {
                     <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4 bg-muted/20">
                     <FormControl><Checkbox checked={field.value} onCheckedChange={(v) => {
                       field.onChange(v);
-                      if (v && form.getValues("taxProfiles").length === 0) {
-                        appendTaxProfile(emptyTaxProfileRow());
+                      if (!v) return;
+                      const portalTax =
+                        dialogCustomer && getPortalRegistrationTaxDefaults(dialogCustomer);
+                      const primaryPhone =
+                        dedupePhoneList(
+                          form.getValues("phones").map((p) => p.trim()).filter(Boolean)
+                        )[0] || "";
+                      let profiles = form.getValues("taxProfiles");
+                      if (portalTax) {
+                        profiles = mergePortalTaxDefaultsIntoProfiles(
+                          profiles,
+                          portalTax,
+                          primaryPhone
+                        );
+                      } else if (profiles.length === 0) {
+                        profiles = [emptyTaxProfileRow()];
                       }
+                      form.setValue("taxProfiles", profiles);
                     }} /></FormControl>
                     <div className="space-y-1 leading-none">
                         <FormLabel className="cursor-pointer font-bold text-primary">ต้องการใบกำกับภาษี (Use Tax Invoice)</FormLabel>
@@ -790,6 +924,36 @@ function CustomersContent() {
                 <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
                 <AlertDialogAction onClick={confirmDelete} className="bg-destructive">ลบข้อมูล</AlertDialogAction>
             </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={isRevokePortalAlertOpen} onOpenChange={(o) => !isSubmitting && setIsRevokePortalAlertOpen(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ลบการลงทะเบียนพอร์ทัล?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span>
+                ระบบจะลบบัญชีเข้าสู่ระบบของลูกค้า อีเมลที่สร้างใน Firebase Auth ไฟล์รูปบัตรประชาชน และข้อมูลที่อยู่/เลขบัตรที่เก็บจากการลงทะเบียน
+              </span>
+              <span className="block font-medium text-foreground">
+                ชื่อลูกค้าและเบอร์โทรในรายชื่อจะไม่ถูกลบ — ลูกค้าสามารถสมัครใหม่ได้ภายหลัง
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSubmitting}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive"
+              disabled={isSubmitting}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmRevokePortalRegistration();
+              }}
+            >
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin inline" /> : null}
+              ยืนยันลบการลงทะเบียน
+            </AlertDialogAction>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
