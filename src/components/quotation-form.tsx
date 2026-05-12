@@ -82,6 +82,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   const [pendingFormData, setPendingFormData] = useState<QuotationFormData | null>(null);
+  const [pendingSaveMode, setPendingSaveMode] = useState<"draft" | "final">("final");
   const [previewDocNo, setPreviewDocNo] = useState<string>("");
 
   const jobDocRef = useMemo(() => (db && jobId ? doc(db, "jobs", jobId) : null), [db, jobId]);
@@ -281,7 +282,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     }
   };
 
-  const executeSave = async (data: QuotationFormData) => {
+  const executeSave = async (data: QuotationFormData, mode: "draft" | "final") => {
     const customerSnapshot = customers.find(c => c.id === data.customerId) || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !profile || !storeSettings) return;
     
@@ -316,16 +317,66 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
     try {
         if (isEditing && editDocId) {
-            await updateDoc(doc(db, 'documents', editDocId), sanitizeForFirestore({ ...documentData, updatedAt: serverTimestamp() }));
-            toast({ title: "อัปเดตสำเร็จ" });
+            const wasDraft = docToEdit?.status === "DRAFT";
+            const upgradeToFinal = mode === "final" && wasDraft && !!docToEdit?.jobId;
+
+            if (upgradeToFinal) {
+              const jid = docToEdit.jobId;
+              if (!jid) throw new Error("ไม่พบรหัสงานสำหรับผูกใบเสนอราคา");
+              const batch = writeBatch(db);
+              batch.update(
+                doc(db, "documents", editDocId),
+                sanitizeForFirestore({
+                  ...documentData,
+                  status: "FINAL",
+                  updatedAt: serverTimestamp(),
+                })
+              );
+              batch.update(doc(db, "jobs", jid), {
+                status: "PENDING_CUSTOMER_INFORM",
+                salesDocId: editDocId,
+                salesDocNo: docToEdit.docNo,
+                salesDocType: "QUOTATION",
+                salesDocStatus: "FINAL",
+                lastActivityAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+              await batch.commit();
+              toast({ title: "บันทึกราคาฉบับจริงแล้ว", description: "งานเข้าขั้นรอแจ้งลูกค้า — พร้อมดำเนินการตามระบบเดิม" });
+            } else {
+              const patch: Record<string, unknown> = { ...documentData, updatedAt: serverTimestamp() };
+              if (mode === "final" && wasDraft && !docToEdit?.jobId) {
+                patch.status = "FINAL";
+              }
+              await updateDoc(doc(db, "documents", editDocId), sanitizeForFirestore(patch));
+              toast({
+                title: mode === "draft" ? "บันทึกฉบับร่างแล้ว" : "อัปเดตสำเร็จ",
+              });
+            }
             router.push(`/app/office/documents/quotation/${editDocId}`);
         } else {
-            const { docId } = await createDocument(db, 'QUOTATION', documentData, profile, data.jobId ? 'PENDING_CUSTOMER_INFORM' : undefined);
-            toast({ title: "สร้างใบเสนอราคาสำเร็จ" });
-            router.push(`/app/office/documents/quotation/${docId}`);
+            if (mode === "draft" && data.jobId) {
+              const { docId } = await createDocument(db, "QUOTATION", documentData, profile, undefined, {
+                initialStatus: "DRAFT",
+                linkJobWithoutStatusChange: true,
+              });
+              toast({ title: "บันทึกฉบับร่างแล้ว", description: "เอกสารถูกบันทึกแล้ว — สถานะงานยังเป็นรอเสนอราคา" });
+              router.push(`/app/office/documents/quotation/${docId}`);
+            } else {
+              const newJobStatus = data.jobId ? ("PENDING_CUSTOMER_INFORM" as const) : undefined;
+              const { docId } = await createDocument(db, "QUOTATION", documentData, profile, newJobStatus, {
+                initialStatus: "FINAL",
+              });
+              toast({
+                title: data.jobId ? "บันทึกราคาฉบับจริงแล้ว" : "สร้างใบเสนอราคาสำเร็จ",
+                description: data.jobId ? "งานเข้าขั้นรอแจ้งลูกค้า — พร้อมดำเนินการตามระบบเดิม" : undefined,
+              });
+              router.push(`/app/office/documents/quotation/${docId}`);
+            }
         }
     } catch (e: any) {
         toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
         setIsProcessing(false);
     }
   };
@@ -351,17 +402,26 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     }
   };
 
-  const onSubmit = async (data: QuotationFormData) => {
-    if (isCancelled || isProcessing) return; 
+  const onSubmitWithMode = async (data: QuotationFormData, mode: "draft" | "final") => {
+    if (isCancelled || isProcessing) return;
+    if (mode === "draft" && !data.jobId) {
+      toast({
+        variant: "destructive",
+        title: "บันทึกฉบับร่าง",
+        description: "ใช้ได้เมื่อผูกกับงานซ่อม (มี jobId) เท่านั้น",
+      });
+      return;
+    }
     if (data.jobId) {
       const ok = await checkUniqueness(data.jobId);
       if (!ok) {
         setPendingFormData(data);
+        setPendingSaveMode(mode);
         setShowDuplicateDialog(true);
         return;
       }
     }
-    await executeSave(data);
+    await executeSave(data, mode);
   };
 
   const handleCancelExistingAndSave = async () => {
@@ -373,14 +433,14 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             updatedAt: serverTimestamp(), 
             notes: (existingActiveDoc.notes || "") + `\n[System] ยกเลิกโดย ${profile.displayName} เพื่อออกใบใหม่แทนที่` 
         });
-        await executeSave(pendingFormData);
+        await executeSave(pendingFormData, pendingSaveMode);
         setShowDuplicateDialog(false);
     } catch(e: any) { toast({ variant: 'destructive', title: "Error", description: e.message }); setIsProcessing(false); }
   };
 
   const markQuotationOfferedToCustomer = async () => {
     if (!db || !profile || !editDocId || !docToEdit) return;
-    if (docToEdit.status !== "DRAFT" || isCancelled) return;
+    if (!["DRAFT", "FINAL"].includes(docToEdit.status) || isCancelled) return;
     setIsProcessing(true);
     try {
       await updateDoc(doc(db, "documents", editDocId), {
@@ -410,6 +470,11 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
   };
 
   const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
+  const showQuotationDraftButton =
+    !isCancelled && !!jobId && (!isEditing || docToEdit?.status === "DRAFT");
+  const quotationFinalButtonLabel = isEditing && docToEdit?.status !== "DRAFT"
+    ? "บันทึกการแก้ไข"
+    : "บันทึกราคาฉบับจริง";
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers;
     const lowercasedFilter = customerSearch.toLowerCase();
@@ -662,7 +727,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
           <div className="flex flex-wrap justify-end gap-2 sm:gap-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
-            {isEditing && docToEdit?.status === "DRAFT" && !isCancelled && (
+            {isEditing && docToEdit && ["DRAFT", "FINAL"].includes(docToEdit.status) && !isCancelled && (
               <Button
                 type="button"
                 variant="secondary"
@@ -675,9 +740,25 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               </Button>
             )}
             <Button type="button" variant="outline" onClick={handleSaveAsTemplate} disabled={isFormLoading || isCancelled} className="border-primary text-primary hover:bg-primary/5"><LayoutTemplate className="mr-2 h-4 w-4" />บันทึกเป็น Template</Button>
-            <Button type="submit" onClick={form.handleSubmit(onSubmit)} disabled={isFormLoading || isCancelled}>
+            {showQuotationDraftButton ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "draft"))()}
+                disabled={isFormLoading || isCancelled}
+              >
+                {isFormLoading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
+                บันทึกฉบับร่าง
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "final"))()}
+              disabled={isFormLoading || isCancelled}
+              className="bg-primary hover:bg-primary/90"
+            >
               {isFormLoading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
-              {isEditing ? 'บันทึกการแก้ไข' : 'บันทึกใบเสนอราคา'}
+              {quotationFinalButtonLabel}
             </Button>
           </div>
 

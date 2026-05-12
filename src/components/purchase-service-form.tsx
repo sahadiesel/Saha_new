@@ -41,6 +41,7 @@ import { format, parseISO } from "date-fns";
 import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
+import { buildPurchaseVendorSnapshot } from "@/lib/vendor-form";
 import type { PurchaseDoc, Vendor, AccountingAccount } from "@/lib/types";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
@@ -341,12 +342,7 @@ export function PurchaseServiceForm() {
           ...data,
           id: finalDocId,
           docNo: finalDocNo,
-          vendorSnapshot: {
-            shortName: vendor.shortName,
-            companyName: vendor.companyName,
-            taxId: vendor.taxId || "",
-            address: vendor.address || "",
-          },
+          vendorSnapshot: buildPurchaseVendorSnapshot(vendor),
           billPhotos: uploadedPhotos,
           status: targetStatus,
           updatedAt: serverTimestamp(),

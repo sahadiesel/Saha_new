@@ -106,6 +106,7 @@ function toYyyyMmDdOrNull(value: unknown): string | null {
 import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
+import { buildPurchaseVendorSnapshot } from "@/lib/vendor-form";
 import type { PurchaseDoc, Vendor, AccountingAccount, Part } from "@/lib/types";
 import Link from "next/link";
 
@@ -479,12 +480,7 @@ export function PurchaseDocForm() {
           ...data,
           id: finalDocId,
           docNo: finalDocNo,
-          vendorSnapshot: { 
-            shortName: vendor.shortName, 
-            companyName: vendor.companyName, 
-            taxId: vendor.taxId || "", 
-            address: vendor.address || "" 
-          },
+          vendorSnapshot: buildPurchaseVendorSnapshot(vendor),
           billPhotos: uploadedPhotos,
           status: targetStatus,
           updatedAt: serverTimestamp(),

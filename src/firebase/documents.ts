@@ -128,7 +128,13 @@ export async function createDocument(
   data: Omit<Document, 'id' | 'docNo' | 'docType' | 'createdAt' | 'updatedAt' | 'status'>,
   userProfile: UserProfile,
   newJobStatus?: JobStatus,
-  options?: { manualDocNo?: string; initialStatus?: string; providedDocId?: string }
+  options?: {
+    manualDocNo?: string;
+    initialStatus?: string;
+    providedDocId?: string;
+    /** ผูก salesDoc* กับงานโดยไม่เปลี่ยน job.status — ใช้ใบเสนอราคาฉบับร่างขณะงานยัง WAITING_QUOTATION */
+    linkJobWithoutStatusChange?: boolean;
+  }
 ): Promise<{ docId: string; docNo: string }> {
 
   const newDocRef = options?.providedDocId ? doc(db, 'documents', options.providedDocId) : doc(collection(db, 'documents'));
@@ -236,15 +242,22 @@ export async function createDocument(
 
       // For withdrawals, we don't necessarily want to change status to WAITING_APPROVE
       if (docType !== 'WITHDRAWAL') {
-        transaction.update(jobRef, {
-          status: newJobStatus || 'WAITING_APPROVE',
+        const jobSalesPatch = {
           salesDocId: docId,
           salesDocNo: finalDocNo,
           salesDocType: docType,
-          salesDocStatus: docStatus, // Sync status to Job
+          salesDocStatus: docStatus,
           lastActivityAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+          updatedAt: serverTimestamp(),
+        };
+        if (options?.linkJobWithoutStatusChange) {
+          transaction.update(jobRef, jobSalesPatch);
+        } else {
+          transaction.update(jobRef, {
+            status: newJobStatus || 'WAITING_APPROVE',
+            ...jobSalesPatch,
+          });
+        }
       }
     }
 

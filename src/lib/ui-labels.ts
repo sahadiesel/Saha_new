@@ -51,6 +51,8 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
 
 export const DOC_STATUS_LABELS: Record<string, string> = {
     DRAFT: 'ฉบับร่าง',
+    /** ใบเสนอราคา: ยืนยันราคาฉบับจริงแล้ว พร้อมขั้นตอนแจ้งลูกค้า */
+    FINAL: 'ฉบับจริง',
     /** ใบเสนอราคา: นำเสนอลูกค้าแล้ว (ยังไม่ใช่การอนุมัติจากบัญชี) */
     OFFERED: 'เสนอแล้ว',
     PAID: 'รับเงินแล้ว',

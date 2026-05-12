@@ -139,7 +139,12 @@ export interface Vendor {
     contactName?: string;
     contactPhone?: string;
     email?: string;
+    /** true = ลงทะเบียนภาษีและกรอกเลขผู้เสียภาษี */
+    hasTax?: boolean;
     taxId?: string;
+    taxBranchType?: "HEAD_OFFICE" | "BRANCH";
+    /** เมื่อสาขา — รหัสสาขา 5 หลัก */
+    taxBranchNo?: string;
     notes?: string;
     isActive: boolean;
     createdAt: Timestamp;
@@ -189,7 +194,7 @@ export interface Job {
   salesDocType?: 'DELIVERY_NOTE' | 'TAX_INVOICE';
   salesDocId?: string;
   salesDocNo?: string;
-  salesDocStatus?: string; // TRACKS: DRAFT, PENDING_REVIEW, APPROVED, PAID
+  salesDocStatus?: string; // TRACKS: DRAFT, FINAL (ใบเสนอราคา), OFFERED, PENDING_REVIEW, APPROVED, PAID
   paymentStatusAtClose?: 'PAID' | 'UNPAID';
   carServiceDetails?: {
     brand?: string;
@@ -913,6 +918,9 @@ export interface PurchaseDoc {
     companyName: string;
     taxId?: string;
     address?: string;
+    hasTax?: boolean;
+    taxBranchType?: "HEAD_OFFICE" | "BRANCH";
+    taxBranchNo?: string;
   };
   invoiceNo: string;
   items: PurchaseDocItem[];

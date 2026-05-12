@@ -660,7 +660,21 @@ export function JobList({
                   )}
 
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => setStatusConfirmAction({ type: 'ACCEPT_JOB', job })} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
-                  {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (<Button asChild className="w-full h-9 font-bold" variant="default"><Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}><FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา</Link></Button>)}
+                  {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (
+                    hasQuotation ? (
+                      <Button asChild className="w-full h-9 font-bold" variant="default">
+                        <Link href={`/app/office/documents/quotation/new?editDocId=${job.salesDocId}`}>
+                          <FileText className="mr-2 h-4 w-4" />แก้ไขใบเสนอราคา
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button asChild className="w-full h-9 font-bold" variant="default">
+                        <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}>
+                          <FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา
+                        </Link>
+                      </Button>
+                    )
+                  )}
                   
                   {['DONE', 'WAITING_CUSTOMER_PICKUP', 'PICKED_UP', 'CLOSED'].includes(job.status) && (
                     <div className="flex flex-col gap-2 w-full">

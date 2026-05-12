@@ -4,7 +4,6 @@ import { useEffect, useMemo, Suspense } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
 import { doc, updateDoc, serverTimestamp, getDocs, query, where, collection, documentId } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -13,7 +12,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Save, ArrowLeft } from "lucide-react";
@@ -23,38 +22,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
 import type { Vendor } from "@/lib/types";
-
-const vendorSchema = z.object({
-  shortName: z.string().min(1, "กรุณากรอกชื่อย่อ").max(15, "ชื่อย่อต้องไม่เกิน 15 ตัวอักษร"),
-  companyName: z.string().min(1, "กรุณากรอกชื่อร้าน/บริษัท"),
-  vendorType: z.enum(VENDOR_TYPES),
-  address: z.string().optional(),
-  phone: z.string().min(9, "กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง (อย่างน้อย 9 หลัก)"),
-  contactName: z.string().optional(),
-  contactPhone: z.string().optional(),
-  email: z.string().email({ message: "อีเมลไม่ถูกต้อง" }).optional().or(z.literal('')),
-  taxId: z.string().optional(),
-  notes: z.string().optional(),
-}).superRefine((data, ctx) => {
-  if (data.vendorType === 'CONTRACTOR') {
-    if (!data.taxId || data.taxId.trim() === '') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "กรุณากรอกเลขประจำตัวผู้เสียภาษีสำหรับผู้รับเหมา",
-        path: ["taxId"],
-      });
-    }
-    if (!data.address || data.address.trim() === '') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "กรุณากรอกที่อยู่สำหรับผู้รับเหมา",
-        path: ["address"],
-      });
-    }
-  }
-});
-
-type VendorFormData = z.infer<typeof vendorSchema>;
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import {
+  vendorFormSchema,
+  vendorFormDefaultValues,
+  vendorToFormDefaults,
+  vendorFormValuesToFirestore,
+  type VendorFormData,
+} from "@/lib/vendor-form";
 
 function EditVendorPageContent() {
   const router = useRouter();
@@ -82,26 +58,16 @@ function EditVendorPageContent() {
   const { data: vendor, isLoading, error } = useDoc<Vendor>(vendorDocRef);
 
   const form = useForm<VendorFormData>({
-    resolver: zodResolver(vendorSchema),
-    defaultValues: {
-        vendorType: "SUPPLIER",
-    },
+    resolver: zodResolver(vendorFormSchema),
+    defaultValues: vendorFormDefaultValues,
   });
+
+  const hasTax = form.watch("hasTax");
+  const taxBranchType = form.watch("taxBranchType");
 
   useEffect(() => {
     if (vendor) {
-      form.reset({
-        shortName: vendor.shortName,
-        companyName: vendor.companyName,
-        vendorType: vendor.vendorType || "SUPPLIER",
-        address: vendor.address || "",
-        phone: vendor.phone || "",
-        contactName: vendor.contactName || "",
-        contactPhone: vendor.contactPhone || "",
-        email: vendor.email || "",
-        taxId: vendor.taxId || "",
-        notes: vendor.notes || "",
-      });
+      form.reset(vendorToFormDefaults(vendor));
     }
   }, [vendor, form]);
 
@@ -141,17 +107,16 @@ function EditVendorPageContent() {
       }
       
       const dataToUpdate = {
-        ...values,
-        shortName: values.shortName.toUpperCase(),
-        phone: values.phone.trim(),
+        ...vendorFormValuesToFirestore(values, { mode: "update" }),
         updatedAt: serverTimestamp(),
       };
 
       await updateDoc(vendorDocRef, dataToUpdate);
       toast({ title: "บันทึกการแก้ไขสำเร็จ" });
       router.push("/app/office/parts/vendors");
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: message });
     }
   };
 
@@ -245,15 +210,143 @@ function EditVendorPageContent() {
 
           <Card>
             <CardHeader>
-              <CardTitle>ข้อมูลอื่นๆ</CardTitle>
+              <CardTitle>ข้อมูลภาษีและหมายเหตุ</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-                <FormField control={form.control} name="taxId" render={({ field }) => (
-                  <FormItem><FormLabel>เลขผู้เสียภาษี</FormLabel><FormControl><Input {...field} value={field.value ?? ''} disabled={!canEdit} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="notes" render={({ field }) => (
-                  <FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field} value={field.value ?? ''} disabled={!canEdit} /></FormControl><FormMessage /></FormItem>
-                )} />
+              <FormField
+                control={form.control}
+                name="hasTax"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>สถานะภาษี</FormLabel>
+                    <FormControl>
+                      <RadioGroup
+                        onValueChange={(v) => {
+                          if (!canEdit) return;
+                          const next = v === "true";
+                          field.onChange(next);
+                          if (!next) {
+                            form.setValue("taxId", "");
+                            form.setValue("taxBranchType", undefined);
+                            form.setValue("taxBranchNo", "");
+                            form.clearErrors(["taxId", "taxBranchType", "taxBranchNo"]);
+                          }
+                        }}
+                        value={field.value ? "true" : "false"}
+                        className="flex flex-wrap gap-6 pt-1"
+                        disabled={!canEdit}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="true" id="edit-vendor-tax-yes" />
+                          <Label htmlFor="edit-vendor-tax-yes" className="font-normal cursor-pointer">
+                            มีภาษี
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="false" id="edit-vendor-tax-no" />
+                          <Label htmlFor="edit-vendor-tax-no" className="font-normal cursor-pointer">
+                            ไม่มีภาษี
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {hasTax && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name="taxId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>เลขประจำตัวผู้เสียภาษี</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value ?? ""} disabled={!canEdit} placeholder="เลข 13 หลัก" />
+                        </FormControl>
+                        <FormDescription className="text-[10px]">จำเป็นหากต้องการออกใบหัก ณ ที่จ่าย</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="taxBranchType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>สำนักงานใหญ่ / สาขา</FormLabel>
+                        <FormControl>
+                          <RadioGroup
+                            onValueChange={(v) => {
+                              if (!canEdit) return;
+                              field.onChange(v as "HEAD_OFFICE" | "BRANCH");
+                              if (v === "HEAD_OFFICE") {
+                                form.setValue("taxBranchNo", "");
+                                form.clearErrors("taxBranchNo");
+                              }
+                            }}
+                            value={field.value ?? ""}
+                            className="flex flex-wrap gap-6 pt-1"
+                            disabled={!canEdit}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="HEAD_OFFICE" id="edit-vendor-branch-hq" />
+                              <Label htmlFor="edit-vendor-branch-hq" className="font-normal cursor-pointer">
+                                สำนักงานใหญ่
+                              </Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="BRANCH" id="edit-vendor-branch-br" />
+                              <Label htmlFor="edit-vendor-branch-br" className="font-normal cursor-pointer">
+                                สาขา
+                              </Label>
+                            </div>
+                          </RadioGroup>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  {taxBranchType === "BRANCH" && (
+                    <FormField
+                      control={form.control}
+                      name="taxBranchNo"
+                      render={({ field }) => (
+                        <FormItem className="max-w-xs">
+                          <FormLabel>รหัสสาขา (5 หลัก)</FormLabel>
+                          <FormControl>
+                            <Input
+                              inputMode="numeric"
+                              maxLength={5}
+                              placeholder="00001"
+                              {...field}
+                              value={field.value ?? ""}
+                              disabled={!canEdit}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </>
+              )}
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>หมายเหตุเพิ่มเติม</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} value={field.value ?? ""} disabled={!canEdit} placeholder="ข้อมูลอื่นๆ เช่น เงื่อนไขการส่งของ..." />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </CardContent>
           </Card>
 

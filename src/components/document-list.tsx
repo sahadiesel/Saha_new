@@ -42,6 +42,7 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
     let description = "สถานะเอกสารปกติ";
     switch(statusKey) {
         case "DRAFT": description = "ออฟฟิศกำลังจัดทำ ยังไม่ได้ส่งให้บัญชีตรวจสอบ"; break;
+        case "FINAL": description = doc.docType === "QUOTATION" ? "ราคาฉบับจริง — พร้อมแจ้งลูกค้า / รอดำเนินการต่อ" : "สถานะเอกสาร"; break;
         case "PENDING_REVIEW": description = "ส่งเรื่องให้ฝ่ายบัญชีตรวจสอบแล้ว"; break;
         case "REJECTED": description = "ฝ่ายบัญชีพบจุดที่ต้องแก้ไขและส่งกลับมาให้ออฟฟิศ"; break;
         case "APPROVED": description = "ฝ่ายบัญชีตรวจสอบข้อมูลเบื้องต้นถูกต้องแล้ว (รอออกใบเสร็จ)"; break;
@@ -54,6 +55,10 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
 
     if (doc.docType === 'QUOTATION' && statusKey === 'OFFERED') {
         return { key: "OFFERED", label, description, variant: "secondary" };
+    }
+
+    if (doc.docType === "QUOTATION" && statusKey === "FINAL") {
+        return { key: "FINAL", label, description, variant: "secondary" };
     }
 
     if (doc.docType === 'DELIVERY_NOTE' && statusKey === 'APPROVED') {
@@ -142,8 +147,12 @@ export function DocumentList({
     let base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
     if (docType === 'QUOTATION') {
       const i = base.indexOf("DRAFT");
-      if (i >= 0 && !base.includes("OFFERED")) {
-        base = [...base.slice(0, i + 1), "OFFERED", ...base.slice(i + 1)];
+      if (i >= 0 && !base.includes("FINAL")) {
+        base = [...base.slice(0, i + 1), "FINAL", ...base.slice(i + 1)];
+      }
+      const j = base.indexOf("FINAL");
+      if (j >= 0 && !base.includes("OFFERED")) {
+        base = [...base.slice(0, j + 1), "OFFERED", ...base.slice(j + 1)];
       }
     }
     if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");

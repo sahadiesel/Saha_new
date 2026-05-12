@@ -25,6 +25,7 @@ import type { Document, Job, JobActivity } from "@/lib/types";
 import { jobStatusLabel, deptLabel, docStatusLabel } from "@/lib/ui-labels";
 import { jobDisplayRef } from "@/lib/job-display";
 import { customerPortalVehicleLines, customerPortalStatusBadgeClass } from "@/lib/customer-job-portal-ui";
+import { isJobActivityHiddenFromTimeline } from "@/lib/job-activity-display";
 import { JobCustomerChatPanel } from "@/components/customer-portal/job-customer-chat-panel";
 import { format } from "date-fns";
 import { th } from "date-fns/locale/th";
@@ -161,6 +162,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
         const actSnap = await getDocs(collection(r.jobRef, "activities"));
         const acts = actSnap.docs
           .map((d) => ({ id: d.id, ...d.data() } as JobActivity))
+          .filter((a) => !isJobActivityHiddenFromTimeline(a.text))
           .sort((a, b) => {
             const ta = a.createdAt?.toMillis?.() ?? 0;
             const tb = b.createdAt?.toMillis?.() ?? 0;
@@ -199,6 +201,7 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
     const actSnap = await getDocs(collection(liveRef, "activities"));
     const acts = actSnap.docs
       .map((d) => ({ id: d.id, ...d.data() } as JobActivity))
+      .filter((a) => !isJobActivityHiddenFromTimeline(a.text))
       .sort((a, b) => {
         const ta = a.createdAt?.toMillis?.() ?? 0;
         const tb = b.createdAt?.toMillis?.() ?? 0;

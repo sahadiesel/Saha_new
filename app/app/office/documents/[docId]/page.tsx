@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo, Suspense, useState, useEffect } from "react";
+import { useMemo, Suspense, useState, useEffect, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, type DocumentReference } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
@@ -18,7 +18,6 @@ import { cn, thaiBahtText } from "@/lib/utils";
 import type { Document, AccountingAccount, Customer, Job } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +30,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
+
+/** ชื่อไฟล์แนะนำตอนบันทึก PDF (Edge/Chrome ใช้ document.title) — ตัดอักขระที่ Windows ไม่อนุญาต */
+function sanitizePrintFilenameBase(raw: string): string {
+  let s = raw.replace(/[/\\?%*:|"<>]/g, "-").replace(/\s+/g, " ").trim();
+  if (!s.length) s = "document";
+  if (s.length > 200) s = s.slice(0, 200);
+  return s;
+}
 
 function VehicleInfo({ doc, isTaxInvoicePrint }: { doc: Document; isTaxInvoicePrint?: boolean }) {
     const s = doc.carSnapshot;
@@ -515,6 +522,8 @@ function DocumentPageContent() {
     const [informConfirmOpen, setInformConfirmOpen] = useState(false);
     const [resubmitQuotationOpen, setResubmitQuotationOpen] = useState(false);
 
+    const printTitleRef = useRef({ docNo: "", titleBeforePrint: "" });
+
     const docRef = useMemo((): DocumentReference<Document> | null => {
       if (!db || typeof docId !== "string") return null;
       return doc(db, "documents", docId) as DocumentReference<Document>;
@@ -568,16 +577,26 @@ function DocumentPageContent() {
         return typeof uid === "string" && uid.trim().length > 0;
     }, [liveCustomer?.authUid]);
 
-    // Set browser tab title to document number for filename auto-suggestion
     useEffect(() => {
-        if (document?.docNo) {
-            const originalTitle = window.document.title;
-            window.document.title = document.docNo;
-            return () => {
-                window.document.title = originalTitle;
-            };
-        }
+        printTitleRef.current.docNo = document?.docNo?.trim() || "";
     }, [document?.docNo]);
+
+    useEffect(() => {
+        const beforePrint = () => {
+            printTitleRef.current.titleBeforePrint = document.title;
+            const no = printTitleRef.current.docNo;
+            if (no) document.title = sanitizePrintFilenameBase(no);
+        };
+        const afterPrint = () => {
+            document.title = printTitleRef.current.titleBeforePrint;
+        };
+        window.addEventListener("beforeprint", beforePrint);
+        window.addEventListener("afterprint", afterPrint);
+        return () => {
+            window.removeEventListener("beforeprint", beforePrint);
+            window.removeEventListener("afterprint", afterPrint);
+        };
+    }, []);
 
     useEffect(() => {
         if (document && searchParams.get('autoprint') === '1') {

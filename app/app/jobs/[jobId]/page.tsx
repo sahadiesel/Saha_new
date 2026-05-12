@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
+import { isJobActivityHiddenFromTimeline } from "@/lib/job-activity-display";
 import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
@@ -265,6 +266,11 @@ function JobDetailsPageContent() {
     activitiesQuery as Query<JobActivity> | null
   );
 
+  const visibleActivities = useMemo(() => {
+    const list = activities ?? [];
+    return list.filter((a) => !isJobActivityHiddenFromTimeline(a.text));
+  }, [activities]);
+
   const isStaff = profile?.role !== 'VIEWER';
   const isUserAdmin = profile?.role === 'ADMIN';
   /** ตรงกับ isMgmt() ใน Firestore — ลบทั้งรายการกิจกรรม / ลบรูปในบล็อกกิจกรรม */
@@ -447,8 +453,7 @@ function JobDetailsPageContent() {
     setIsSavingTechReport(true);
     const batch = writeBatch(db);
     batch.update(jobDocRef, { technicalReport: techReport, officeNote: deleteField(), lastActivityAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `แก้ไขสมุดบันทึก`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
-    
+
     batch.commit().then(() => {
       toast({ title: "บันทึกสมุดบันทึกสำเร็จ" });
       setIsEditNotebookDialogOpen(false);
@@ -480,8 +485,7 @@ function JobDetailsPageContent() {
     
     const batch = writeBatch(db);
     batch.update(jobDocRef, { [fieldName]: vehicleEditData, lastActivityAt: serverTimestamp() });
-    batch.set(doc(collection(jobDocRef, "activities")), { text: `แก้ไขรายละเอียดรถ/ชิ้นส่วน`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
-    
+
     batch.commit().then(() => {
       toast({ title: "อัปเดตรายละเอียดสำเร็จ" });
       setIsEditVehicleDialogOpen(false);
@@ -1353,8 +1357,8 @@ function JobDetailsPageContent() {
                   : "รายการส่วนใหญ่บันทึกโดยระบบอัตโนมัติจากการดำเนินการในแอป รายการที่ขึ้นต้นว่า «แนบรูปกิจกรรม» มาจากการแนบรูปพร้อมคำอธิบาย"}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">{activitiesLoading ? <div className="flex items-center justify-center h-24"><Loader2 className="h-66 w-6 animate-spin text-muted-foreground" /></div> : activities && activities.length > 0 ? (
-                activities.map((activity) => (
+            <CardContent className="space-y-6">{activitiesLoading ? <div className="flex items-center justify-center h-24"><Loader2 className="h-66 w-6 animate-spin text-muted-foreground" /></div> : visibleActivities.length > 0 ? (
+                visibleActivities.map((activity) => (
                   <div key={activity.id} className="flex gap-4">
                       <User className="h-5 w-5 mt-1 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1 min-w-0">
