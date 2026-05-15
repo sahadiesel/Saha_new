@@ -172,6 +172,19 @@ export function withdrawalListStatusLabel(doc: Document): string {
     return docStatusLabel(doc.status, "WITHDRAWAL");
 }
 
+/** สถานะบัญชีพนักงาน (จัดการพนักงาน) */
+export const USER_STATUS_LABELS: Record<string, string> = {
+    ACTIVE: "ใช้งาน",
+    PENDING: "รอเปิดใช้งาน",
+    SUSPENDED: "ระงับ",
+    RESIGNED: "ลาออก",
+};
+
+export function userStatusLabel(status: string | undefined): string {
+    if (!status) return "";
+    return USER_STATUS_LABELS[status] || status;
+}
+
 export function payTypeLabel(payType: string | undefined): string {
     if (!payType) return '';
     return PAY_TYPE_LABELS[payType] || payType;

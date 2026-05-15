@@ -7,7 +7,7 @@ export type Role = (typeof USER_ROLES)[number];
 /** ไม่รวม CUSTOMER — ใช้ใน Firestore query เพื่อไม่ดึงบัญชีพอร์ทัลลูกค้าจำนวนมากขณะโหลดหน้า HR */
 export const STAFF_ROLES_FOR_QUERY = ["ADMIN", "MANAGER", "OFFICER", "PURCHASE", "WORKER", "VIEWER"] as const satisfies readonly Role[];
 
-export const USER_STATUSES = ["ACTIVE", "PENDING", "SUSPENDED"] as const;
+export const USER_STATUSES = ["ACTIVE", "PENDING", "SUSPENDED", "RESIGNED"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
 
 export const PAY_TYPES = ["MONTHLY", "DAILY", "MONTHLY_NOSCAN", "NOPAY"] as const;

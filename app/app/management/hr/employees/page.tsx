@@ -21,7 +21,7 @@ import { Loader2, MoreHorizontal, PlusCircle, Link as LinkIcon, Edit } from "luc
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DEPARTMENTS, USER_ROLES, USER_STATUSES, PAY_TYPES, STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 import type { UserProfile, SSOHospital, PayType, Vendor } from "@/lib/types";
-import { payTypeLabel, deptLabel } from "@/lib/ui-labels";
+import { payTypeLabel, deptLabel, userStatusLabel } from "@/lib/ui-labels";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -116,7 +116,7 @@ const UserCard = ({ user, onEdit, onDelete, loggedInUser }: { user: UserWithId, 
                 </div>
                  <div className="flex justify-between items-center border-t pt-2">
                     <span className="text-muted-foreground">สถานะ</span>
-                    <span className="font-medium">{user.status}</span>
+                    <span className="font-medium">{userStatusLabel(user.status)}</span>
                 </div>
                 {user.linkedVendorName && (
                     <div className="flex justify-between items-center border-t pt-2 text-primary font-bold">
@@ -394,7 +394,7 @@ export default function ManagementHREmployeesPage() {
                         <TableCell>{user.phone}</TableCell>
                         <TableCell>{deptLabel(user.department) || 'N/A'}</TableCell>
                         <TableCell>{user.role}</TableCell>
-                        <TableCell>{user.status}</TableCell>
+                        <TableCell>{userStatusLabel(user.status)}</TableCell>
                         <TableCell className="text-right">
                             {isAdminUser ? (
                                 isLoggedInAdmin ? (
@@ -465,7 +465,7 @@ export default function ManagementHREmployeesPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <FormField name="department" control={form.control} render={({ field }) => (<FormItem><FormLabel>แผนก</FormLabel><Select onValueChange={field.onChange} value={field.value ?? ''}><FormControl><SelectTrigger><SelectValue placeholder="เลือก" /></SelectTrigger></FormControl><SelectContent>{DEPARTMENTS.map(d=><SelectItem key={d} value={d}>{deptLabel(d)}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
                                 <FormField name="role" control={form.control} render={({ field }) => (<FormItem><FormLabel>ตำแหน่ง</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือก" /></SelectTrigger></FormControl><SelectContent>{USER_ROLES.map(r=><SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
-                                <FormField name="status" control={form.control} render={({ field }) => (<FormItem><FormLabel>สถานะ</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือก" /></SelectTrigger></FormControl><SelectContent>{USER_STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
+                                <FormField name="status" control={form.control} render={({ field }) => (<FormItem><FormLabel>สถานะ</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="เลือก" /></SelectTrigger></FormControl><SelectContent>{USER_STATUSES.map(s=><SelectItem key={s} value={s}>{userStatusLabel(s)}</SelectItem>)}</SelectContent></Select><FormMessage /></FormItem>)} />
                             </div>
 
                             {/* --- Linked Vendor for OUTSOURCE --- */}

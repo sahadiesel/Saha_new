@@ -292,7 +292,13 @@ export default function ManagementHRAttendanceSummaryPage() {
           const allHolidaysData = holidaysSnap.docs.map(d => ({ id: d.id, name: d.data().name, date: d.data().date })).filter(h => !!h.date);
           const monthAdjustmentsData = adjustmentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
           
-          const usersToProcess = allUsersData.filter(u => u.hr?.payType && u.hr.payType !== 'NOPAY' && u.hr.payType !== 'MONTHLY_NOSCAN');
+          const usersToProcess = allUsersData.filter(
+            (u) =>
+              u.status === "ACTIVE" &&
+              u.hr?.payType &&
+              u.hr.payType !== "NOPAY" &&
+              u.hr.payType !== "MONTHLY_NOSCAN"
+          );
           setSummaryData(calculateSummary(usersToProcess, hrSettingsData, allHolidaysData, yearLeavesData, monthAttendanceData, monthAdjustmentsData, dateRange));
       } catch (err: any) {
           if (err.message?.includes('requires an index')) {

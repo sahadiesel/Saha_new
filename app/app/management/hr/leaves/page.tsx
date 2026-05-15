@@ -403,6 +403,8 @@ export default function ManagementHRLeavesPage() {
   const leaveSummary = useMemo(() => {
     if (activeTab !== "summary") return [];
     if (!allLeaves || !users || selectedYear == null || !selectedMonth || isLoadingExtras) return [];
+
+    const today = startOfToday();
     let dateRangeForSummary: { start: Date; end: Date };
 
     if (selectedMonth === "ALL") {
@@ -451,7 +453,11 @@ export default function ManagementHRLeavesPage() {
     }
 
     const summary = users
-      .filter((u) => u.hr?.payType === "MONTHLY" || u.hr?.payType === "DAILY")
+      .filter(
+        (u) =>
+          u.status === "ACTIVE" &&
+          (u.hr?.payType === "MONTHLY" || u.hr?.payType === "DAILY")
+      )
       .map((user) => {
         const userApprovedLeaves = approvedLeavesByUser.get(user.id) ?? [];
 

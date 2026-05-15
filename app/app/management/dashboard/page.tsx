@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
 import { collection, onSnapshot, query, orderBy, Timestamp, limit, where, type FirestoreError } from "firebase/firestore";
@@ -150,100 +150,63 @@ function AppDashboardPage() {
   const [vatDocuments, setVatDocuments] = useState<Document[]>([]);
   const [vatPurchaseDocs, setVatPurchaseDocs] = useState<PurchaseDoc[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  /** ข้อมูลหลักพร้อมแล้ว — แสดง KPI/งาน/กระแสเงินสดได้ทันที */
+  const [coreReady, setCoreReady] = useState(false);
+  /** ข้อมูลเสริม (VAT, ลูกค้า, งาน archive) — กราฟบางส่วนโหลดต่อในพื้นหลัง */
+  const [extrasReady, setExtrasReady] = useState(false);
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
-  /** รอ snapshot แรกจากแต่ละสตรีม — เดิมรอแค่ customers ทำให้หน้าค้างนาน */
-  const bootstrapRef = useRef<Set<string>>(new Set());
 
-  // Filters
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
-
-  // Initialize date range on client only
-  useEffect(() => {
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const today = startOfToday();
-    setDateRange({
-      from: startOfMonth(today),
-      to: endOfMonth(today),
-    });
-  }, []);
+    return { from: startOfMonth(today), to: endOfMonth(today) };
+  });
 
   const selectedYear = useMemo(() => dateRange?.from ? dateRange.from.getFullYear() : new Date().getFullYear(), [dateRange]);
 
   useEffect(() => {
     if (!db) return;
-    setLoading(true);
+    setCoreReady(false);
     setIndexErrorUrl(null);
-    bootstrapRef.current = new Set();
-
-    const STREAM_KEYS = [
-      "jobs",
-      "archived",
-      "documents",
-      "entries",
-      "obligations",
-      "vatDocs",
-      "vatPurchases",
-      "customers",
-    ] as const;
-    const markStream = (key: (typeof STREAM_KEYS)[number]) => {
-      if (bootstrapRef.current.has(key)) return;
-      bootstrapRef.current.add(key);
-      if (bootstrapRef.current.size >= STREAM_KEYS.length) {
-        setLoading(false);
-      }
+    const done = new Set<string>();
+    const mark = (key: string) => {
+      if (done.has(key)) return;
+      done.add(key);
+      if (done.size >= 4) setCoreReady(true);
     };
+    const failSafe = window.setTimeout(() => setCoreReady(true), 4000);
 
-    // Fetch active jobs
     const unsubJobs = onSnapshot(
       query(collection(db, "jobs"), limit(500)),
       (snap) => {
         setJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
-        markStream("jobs");
+        mark("jobs");
       },
-      () => markStream("jobs")
+      () => mark("jobs")
     );
 
-    // Fetch archived jobs
-    const archivedQuery = query(
-      collection(db, `jobsArchive_${selectedYear}`),
-      orderBy("lastActivityAt", "desc"),
-      limit(200)
-    );
-    const unsubArchived = onSnapshot(
-      archivedQuery,
-      (snap) => {
-        setArchivedJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
-        markStream("archived");
-      },
-      () => markStream("archived")
-    );
-
-    // Fetch documents
     const unsubDocs = onSnapshot(
       query(collection(db, "documents"), limit(500)),
       (snap) => {
         setDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
-        markStream("documents");
+        mark("documents");
       },
-      () => markStream("documents")
+      () => mark("documents")
     );
 
-    // Fetch accounting entries
     const unsubEntries = onSnapshot(
-      query(collection(db, "accountingEntries"), orderBy("entryDate", "desc"), limit(800)),
+      query(collection(db, "accountingEntries"), orderBy("entryDate", "desc"), limit(600)),
       (snap) => {
         setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() } as AccountingEntry)));
-        markStream("entries");
+        mark("entries");
       },
-      () => markStream("entries")
+      () => mark("entries")
     );
 
-    // FETCH OBLIGATIONS (AR/AP)
     const unsubObligations = onSnapshot(
-      query(collection(db, "accountingObligations"), where("status", "in", ["UNPAID", "PARTIAL"]), limit(1000)),
+      query(collection(db, "accountingObligations"), where("status", "in", ["UNPAID", "PARTIAL"]), limit(500)),
       (snap) => {
         setObligations(snap.docs.map((d) => ({ id: d.id, ...d.data() } as AccountingObligation)));
-        markStream("obligations");
+        mark("obligations");
       },
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
@@ -251,71 +214,97 @@ function AppDashboardPage() {
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
         }
         setObligations([]);
-        markStream("obligations");
+        mark("obligations");
       }
     );
 
-    /** กราฟ VAT ใช้ 6 เดือนย้อนหลังจากช่วงที่เลือก — ดึงเอกสารย้อนหลัง ~22 เดือนจากวันนี้ (ไม่ดึงหลายปี × 8000 ใบ) */
-    const vatLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 22)), "yyyy-MM-dd");
+    return () => {
+      window.clearTimeout(failSafe);
+      unsubJobs();
+      unsubDocs();
+      unsubEntries();
+      unsubObligations();
+    };
+  }, [db]);
+
+  useEffect(() => {
+    if (!db) return;
+    setExtrasReady(false);
+    const done = new Set<string>();
+    const mark = (key: string) => {
+      if (done.has(key)) return;
+      done.add(key);
+      if (done.size >= 4) setExtrasReady(true);
+    };
+    const failSafe = window.setTimeout(() => setExtrasReady(true), 8000);
+
+    const unsubArchived = onSnapshot(
+      query(collection(db, `jobsArchive_${selectedYear}`), limit(200)),
+      (snap) => {
+        setArchivedJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
+        mark("archived");
+      },
+      () => {
+        setArchivedJobs([]);
+        mark("archived");
+      }
+    );
+
+    const vatLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 14)), "yyyy-MM-dd");
     const unsubVatDocs = onSnapshot(
       query(
         collection(db, "documents"),
         where("docDate", ">=", vatLookbackYmd),
         orderBy("docDate", "desc"),
-        limit(2500)
+        limit(800)
       ),
       (snap) => {
         setVatDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
-        markStream("vatDocs");
+        mark("vatDocs");
       },
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
         }
-        console.error("Dashboard VAT documents", err);
         setVatDocuments([]);
-        markStream("vatDocs");
+        mark("vatDocs");
       }
     );
+
     const unsubVatPurchases = onSnapshot(
       query(
         collection(db, "purchaseDocs"),
         where("docDate", ">=", vatLookbackYmd),
         orderBy("docDate", "desc"),
-        limit(1500)
+        limit(500)
       ),
       (snap) => {
         setVatPurchaseDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PurchaseDoc)));
-        markStream("vatPurchases");
+        mark("vatPurchases");
       },
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
         }
-        console.error("Dashboard VAT purchaseDocs", err);
         setVatPurchaseDocs([]);
-        markStream("vatPurchases");
+        mark("vatPurchases");
       }
     );
 
-    // Fetch customers
     const unsubCustomers = onSnapshot(
-      query(collection(db, "customers"), limit(800)),
+      query(collection(db, "customers"), limit(500)),
       (snap) => {
         setCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer)));
-        markStream("customers");
+        mark("customers");
       },
-      () => markStream("customers")
+      () => mark("customers")
     );
 
     return () => {
-      unsubJobs();
+      window.clearTimeout(failSafe);
       unsubArchived();
-      unsubDocs();
-      unsubEntries();
-      unsubObligations();
       unsubVatDocs();
       unsubVatPurchases();
       unsubCustomers();
@@ -591,13 +580,21 @@ function AppDashboardPage() {
     }
   };
 
-  if (loading || !stats) {
+  if (!coreReady || !stats) {
     return (
-      <div className="flex h-[80vh] w-full items-center justify-center">
+      <div className="flex h-[80vh] w-full flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">กำลังโหลดข้อมูลหลัก...</p>
       </div>
     );
   }
+
+  const chartLoading = (
+    <div className="flex h-full min-h-[200px] items-center justify-center gap-2 text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin" />
+      <span className="text-sm">กำลังโหลดกราฟ...</span>
+    </div>
+  );
 
   return (
     <div className="space-y-8 pb-10">
@@ -690,6 +687,7 @@ function AppDashboardPage() {
           </CardHeader>
           <CardContent className="flex-1">
             <div className="h-[280px]">
+              {extrasReady ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.vatTrendData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -701,6 +699,9 @@ function AppDashboardPage() {
                   <Bar dataKey="ภาษีซื้อ" fill="hsl(var(--chart-5))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+              ) : (
+                chartLoading
+              )}
             </div>
           </CardContent>
         </Card>
@@ -790,6 +791,10 @@ function AppDashboardPage() {
             <CardDescription>สัดส่วนลูกค้าที่เปิดงานซ่อมในช่วงเวลานี้</CardDescription>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col justify-center">
+            {!extrasReady ? (
+              chartLoading
+            ) : (
+            <>
             <div className="h-[180px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -811,6 +816,8 @@ function AppDashboardPage() {
                 </div>
               ))}
             </div>
+            </>
+            )}
           </CardContent>
         </Card>
       </div>
