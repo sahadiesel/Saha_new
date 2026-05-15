@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useDeferredValue, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch, addDoc } from "firebase/firestore";
 import type { AccountingObligation } from "@/lib/types";
@@ -107,6 +107,11 @@ export function DocumentList({
   
   const [currentPage, setCurrentPage] = useState(0);
 
+  /** ใบเสนอราคา: โหลดเป็นชุดเล็กก่อน (เรียงตามแก้ไขล่าสุด) เพื่อลดเวลาเปิดหน้า — กดโหลดเพิ่มได้ */
+  const [quotationFetchLimit, setQuotationFetchLimit] = useState(200);
+  const deferredSearchTerm = useDeferredValue(searchTerm.trim());
+  const listFirstLoadRef = useRef(true);
+
   const [billingReceiptOpen, setBillingReceiptOpen] = useState(false);
   const [billingReceiptSource, setBillingReceiptSource] = useState<Document | null>(null);
   const [billingLines, setBillingLines] = useState<{ id: string; docNo: string; balance: number }[]>([]);
@@ -190,22 +195,57 @@ export function DocumentList({
     return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [allDocuments]);
 
+  /** รวมข้อความจากรายการอะไหล่เป็นสตริงเดียว — ค้นหาไม่ต้องวน items ทุกครั้ง */
+  const lineItemSearchBlobByDocId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of allDocuments) {
+      const items = d.items;
+      if (!items?.length) {
+        m.set(d.id, "");
+        continue;
+      }
+      const parts: string[] = [];
+      for (const line of items) {
+        parts.push((line.description || "").toLowerCase());
+        parts.push((line.code || "").toLowerCase());
+      }
+      m.set(d.id, parts.join("\0"));
+    }
+    return m;
+  }, [allDocuments]);
+
+  useEffect(() => {
+    setQuotationFetchLimit(200);
+    listFirstLoadRef.current = true;
+  }, [docType]);
+
   const stableQuery = useMemo(() => {
     if (!db) return null;
+    if (docType === "QUOTATION") {
+      return query(
+        collection(db, "documents"),
+        where("docType", "==", "QUOTATION"),
+        orderBy("updatedAt", "desc"),
+        limit(quotationFetchLimit)
+      );
+    }
     return query(
-      collection(db, "documents"), 
+      collection(db, "documents"),
       where("docType", "==", docType),
       orderBy(orderByField, orderByDirection),
       limit(500)
     );
-  }, [db, docType, orderByField, orderByDirection]);
+  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit]);
 
   useEffect(() => {
     if (!stableQuery) return;
-    setLoading(true);
+    if (listFirstLoadRef.current) {
+      setLoading(true);
+    }
     const unsubscribe = onSnapshot(stableQuery, (snapshot) => {
         setAllDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document)));
         setLoading(false);
+        listFirstLoadRef.current = false;
     }, (err) => {
         if (err.message?.includes('requires an index')) {
             const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
@@ -217,6 +257,7 @@ export function DocumentList({
             }));
         }
         setLoading(false);
+        listFirstLoadRef.current = false;
     });
     return () => unsubscribe();
   }, [stableQuery]);
@@ -226,8 +267,8 @@ export function DocumentList({
     if (prefixFilter !== "ALL") filtered = filtered.filter(doc => doc.docNo.startsWith(prefixFilter));
     if (monthFilter !== "ALL") filtered = filtered.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
     if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
-    if (searchTerm) {
-      const q = searchTerm.toLowerCase().trim();
+    const q = deferredSearchTerm.toLowerCase();
+    if (q) {
       const qCompact = q.replace(/\s|-/g, "");
       filtered = filtered.filter((doc) => {
         const snap = doc.customerSnapshot;
@@ -262,19 +303,16 @@ export function DocumentList({
           if (qCompact.length >= 2 && carCompact.includes(qCompact)) return true;
         }
 
-        for (const line of doc.items || []) {
-          const desc = (line.description || "").toLowerCase();
-          const code = (line.code || "").toLowerCase();
-          if (desc.includes(q) || code.includes(q)) return true;
-          const codeCompact = code.replace(/\s|-/g, "");
-          if (qCompact.length >= 2 && codeCompact.includes(qCompact)) return true;
-        }
+        const blob = lineItemSearchBlobByDocId.get(doc.id) || "";
+        if (blob.includes(q)) return true;
+        const blobCompact = blob.replace(/\s|-/g, "");
+        if (qCompact.length >= 2 && blobCompact.includes(qCompact)) return true;
 
         return false;
       });
     }
     return filtered;
-  }, [allDocuments, searchTerm, statusFilter, prefixFilter, monthFilter]);
+  }, [allDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId]);
 
   const taxInvoiceTotals = useMemo(() => {
     if (docType !== "TAX_INVOICE" && docType !== "RECEIPT") return null;
@@ -299,7 +337,7 @@ export function DocumentList({
   const paginatedDocuments = useMemo(() => processedDocuments.slice(currentPage * limitProp, (currentPage + 1) * limitProp), [processedDocuments, currentPage, limitProp]);
   const totalPages = Math.max(1, Math.ceil(processedDocuments.length / limitProp));
   
-  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter]);
+  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter, quotationFetchLimit]);
 
   /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
   const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
@@ -536,6 +574,24 @@ export function DocumentList({
             /></div>
             <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
+          {docType === "QUOTATION" && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span>
+                แสดง {allDocuments.length} ใบล่าสุด (โหลดสูงสุด {quotationFetchLimit} ฉบับ เรียงตามวันที่แก้ไข) — ค้นหาทำงานภายในชุดที่โหลดแล้ว
+              </span>
+              {allDocuments.length >= quotationFetchLimit && quotationFetchLimit < 500 && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setQuotationFetchLimit((n) => Math.min(n + 200, 500))}
+                >
+                  โหลดเพิ่ม (+200 ฉบับ)
+                </Button>
+              )}
+            </div>
+          )}
           {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);

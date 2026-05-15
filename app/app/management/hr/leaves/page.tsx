@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { collection, query, orderBy, updateDoc, doc, serverTimestamp, where, deleteDoc, getDocs, addDoc, Timestamp, limit } from "firebase/firestore";
 import { useFirebase, useCollection, useDoc } from "@/firebase";
 import type { WithId } from "@/firebase/firestore/use-collection";
@@ -15,6 +15,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -77,7 +78,7 @@ const monthOptions = [
   { value: "4", label: "เมษายน" },
   { value: "5", label: "พฤษภาคม" },
   { value: "6", label: "มิถุนายน" },
-  { value: "7", label: "กุมภาพันธ์" },
+  { value: "7", label: "กรกฎาคม" },
   { value: "8", label: "สิงหาคม" },
   { value: "9", label: "กันยายน" },
   { value: "10", label: "ตุลาคม" },
@@ -274,7 +275,7 @@ export default function ManagementHRLeavesPage() {
   const { profile: adminProfile } = useAuth();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState('summary');
+  const [activeTab, setActiveTab] = useState("requests");
   
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
@@ -316,16 +317,17 @@ export default function ManagementHRLeavesPage() {
         : null,
     [db]
   );
-  /** เฉพาะปีที่เลือก + limit — ลดการซิงค์เอกสารจากทุกปีทุกใบ */
+  /** เฉพาะปีที่เลือก + limit — เริ่มชุดเล็กเพื่อเปิดหน้าเร็ว; กดโหลดเพิ่มได้ */
+  const [leaveFetchLimit, setLeaveFetchLimit] = useState(500);
   const leavesQuery = useMemo(() => {
     if (!db || selectedYear == null) return null;
     return query(
       collection(db, "hrLeaves"),
       where("year", "==", selectedYear),
       orderBy("createdAt", "desc"),
-      limit(2500)
+      limit(leaveFetchLimit)
     );
-  }, [db, selectedYear]);
+  }, [db, selectedYear, leaveFetchLimit]);
   const settingsDocRef = useMemo(() => db ? doc(db, 'settings', 'hr') : null, [db]);
 
   const { data: users, isLoading: isLoadingUsers } = useCollection<UserProfile>(usersQuery);
@@ -339,8 +341,13 @@ export default function ManagementHRLeavesPage() {
   );
 
   useEffect(() => {
-    if (!db || !selectedYear || !selectedMonth) return;
-    
+    setLeaveFetchLimit(500);
+  }, [selectedYear]);
+
+  /** ดึง attendance/วันหยุด/การปรับเวลาเฉพาะแท็บสรุป — ลดภาระตอนเปิดแท็บคำขอ */
+  useEffect(() => {
+    if (!db || !selectedYear || !selectedMonth || activeTab !== "summary") return;
+
     const fetchPeriodData = async () => {
         setIsLoadingExtras(true);
         setIndexCreationUrl(null);
@@ -377,14 +384,25 @@ export default function ManagementHRLeavesPage() {
     };
 
     fetchPeriodData();
-  }, [db, selectedYear, selectedMonth]);
+  }, [db, selectedYear, selectedMonth, activeTab]);
 
-  const { leaveSummary, filteredLeaves, yearOptions } = useMemo(() => {
-    if (!allLeaves || !users || !selectedYear || !selectedMonth) {
-      return { leaveSummary: [], filteredLeaves: [], yearOptions: yearPickerYears };
-    }
+  const yearOptions = yearPickerYears;
 
-    const today = startOfToday();
+  const filteredLeaves = useMemo(() => {
+    if (!allLeaves || selectedYear == null) return [];
+    return allLeaves.filter((leave) => {
+      const leaveYear = leave.year || (leave.startDate ? getYear(parseISO(leave.startDate)) : null);
+      return (
+        leaveYear === selectedYear &&
+        (filters.status === "ALL" || leave.status === filters.status) &&
+        (filters.userId === "ALL" || leave.userId === filters.userId)
+      );
+    });
+  }, [allLeaves, selectedYear, filters]);
+
+  const leaveSummary = useMemo(() => {
+    if (activeTab !== "summary") return [];
+    if (!allLeaves || !users || selectedYear == null || !selectedMonth || isLoadingExtras) return [];
     let dateRangeForSummary: { start: Date; end: Date };
 
     if (selectedMonth === "ALL") {
@@ -393,26 +411,53 @@ export default function ManagementHRLeavesPage() {
         end: selectedYear === getYear(today) ? today : endOfYear(new Date(selectedYear, 0, 1)),
       };
     } else {
-      const monthIndex = parseInt(selectedMonth) - 1;
+      const monthIndex = parseInt(selectedMonth, 10) - 1;
       const start = startOfMonth(new Date(selectedYear, monthIndex, 1));
       const end = endOfMonth(new Date(selectedYear, monthIndex, 1));
-      
       dateRangeForSummary = { start, end };
     }
 
     const daysInterval = eachDayOfInterval({ start: dateRangeForSummary.start, end: dateRangeForSummary.end });
-    const weekendMode = hrSettings?.weekendPolicy?.mode || 'SAT_SUN';
+    const weekendMode = hrSettings?.weekendPolicy?.mode || "SAT_SUN";
+
+    const attendanceDatesByUser = new Map<string, Set<string>>();
+    for (const a of periodAttendance) {
+      const dayStr = dfFormat(a.timestamp.toDate(), "yyyy-MM-dd");
+      let set = attendanceDatesByUser.get(a.userId);
+      if (!set) {
+        set = new Set<string>();
+        attendanceDatesByUser.set(a.userId, set);
+      }
+      set.add(dayStr);
+    }
+
+    const addRecordDatesByUser = new Map<string, Set<string>>();
+    for (const adj of periodAdjustments) {
+      if (adj.type !== "ADD_RECORD") continue;
+      let set = addRecordDatesByUser.get(adj.userId);
+      if (!set) {
+        set = new Set<string>();
+        addRecordDatesByUser.set(adj.userId, set);
+      }
+      set.add(adj.date);
+    }
+
+    const approvedLeavesByUser = new Map<string, LeaveRequest[]>();
+    for (const l of allLeaves) {
+      if (l.status !== "APPROVED") continue;
+      const arr = approvedLeavesByUser.get(l.userId);
+      if (arr) arr.push(l);
+      else approvedLeavesByUser.set(l.userId, [l]);
+    }
 
     const summary = users
-      .filter(u => u.hr?.payType === 'MONTHLY' || u.hr?.payType === 'DAILY')
-      .map(user => {
-        const userApprovedLeaves = allLeaves.filter(l => l.userId === user.id && l.status === 'APPROVED');
-        const userAttendance = periodAttendance.filter(a => a.userId === user.id);
-        const userAdjustments = periodAdjustments.filter(a => a.userId === user.id);
+      .filter((u) => u.hr?.payType === "MONTHLY" || u.hr?.payType === "DAILY")
+      .map((user) => {
+        const userApprovedLeaves = approvedLeavesByUser.get(user.id) ?? [];
 
-        const attendanceDates = new Set([
-            ...userAttendance.map(a => dfFormat(a.timestamp.toDate(), 'yyyy-MM-dd')),
-            ...userAdjustments.filter(a => a.type === 'ADD_RECORD').map(a => a.date)
+        const attendanceDates = new Set<string>([
+          ...(attendanceDatesByUser.get(user.id) ?? []),
+          ...(addRecordDatesByUser.get(user.id) ?? []),
         ]);
 
         let sickDays = 0;
@@ -420,68 +465,78 @@ export default function ManagementHRLeavesPage() {
         let totalLeaveCount = 0;
         let absentDays = 0;
 
-        daysInterval.forEach(day => {
-            const dayStr = dfFormat(day, 'yyyy-MM-dd');
-            const isToday = dayStr === dfFormat(today, 'yyyy-MM-dd');
-            
-            if (isAfter(day, today)) return;
-            
-            if (isToday) {
-                const now = new Date();
-                const cutoff = set(now, { hours: 23, minutes: 50, seconds: 0 });
-                if (isBefore(now, cutoff) && !attendanceDates.has(dayStr)) return;
+        daysInterval.forEach((day) => {
+          const dayStr = dfFormat(day, "yyyy-MM-dd");
+          const isToday = dayStr === dfFormat(today, "yyyy-MM-dd");
+
+          if (isAfter(day, today)) return;
+
+          if (isToday) {
+            const now = new Date();
+            const cutoff = set(now, { hours: 23, minutes: 50, seconds: 0 });
+            if (isBefore(now, cutoff) && !attendanceDates.has(dayStr)) return;
+          }
+
+          if (user.hr?.startDate && isBefore(day, parseISO(user.hr.startDate))) return;
+          if (user.hr?.endDate && isBefore(parseISO(user.hr.endDate), day)) return;
+          if (periodHolidays.has(dayStr)) return;
+          const isWeekendDay =
+            (weekendMode === "SAT_SUN" && (isSaturday(day) || isSunday(day))) ||
+            (weekendMode === "SUN_ONLY" && isSunday(day));
+          if (isWeekendDay) return;
+
+          const onLeaveOnThisDay = userApprovedLeaves.find((l) => dayStr >= l.startDate && dayStr <= l.endDate);
+
+          let leaveUnits = 0;
+          if (onLeaveOnThisDay) {
+            if (
+              onLeaveOnThisDay.isHalfDay &&
+              onLeaveOnThisDay.startDate === onLeaveOnThisDay.endDate &&
+              dayStr === onLeaveOnThisDay.startDate
+            ) {
+              leaveUnits = 0.5;
+            } else {
+              leaveUnits = 1;
             }
 
-            if (user.hr?.startDate && isBefore(day, parseISO(user.hr.startDate))) return;
-            if (user.hr?.endDate && isBefore(parseISO(user.hr.endDate), day)) return;
-            if (periodHolidays.has(dayStr)) return;
-            const isWeekendDay = (weekendMode === 'SAT_SUN' && (isSaturday(day) || isSunday(day))) || (weekendMode === 'SUN_ONLY' && isSunday(day));
-            if (isWeekendDay) return;
-            
-            const onLeaveOnThisDay = userApprovedLeaves.find(l => dayStr >= l.startDate && dayStr <= l.endDate);
-            
-            let leaveUnits = 0;
-            if (onLeaveOnThisDay) {
-                if (onLeaveOnThisDay.isHalfDay && onLeaveOnThisDay.startDate === onLeaveOnThisDay.endDate && dayStr === onLeaveOnThisDay.startDate) {
-                    leaveUnits = 0.5;
-                } else {
-                    leaveUnits = 1;
-                }
-                
-                if (onLeaveOnThisDay.leaveType === 'SICK') sickDays += leaveUnits;
-                else if (onLeaveOnThisDay.leaveType === 'BUSINESS') businessDays += leaveUnits;
-                totalLeaveCount += leaveUnits;
+            if (onLeaveOnThisDay.leaveType === "SICK") sickDays += leaveUnits;
+            else if (onLeaveOnThisDay.leaveType === "BUSINESS") businessDays += leaveUnits;
+            totalLeaveCount += leaveUnits;
 
-                if (leaveUnits === 1) return;
-            }
+            if (leaveUnits === 1) return;
+          }
 
-            if (!attendanceDates.has(dayStr)) {
-                absentDays += (1 - leaveUnits);
-            }
+          if (!attendanceDates.has(dayStr)) {
+            absentDays += 1 - leaveUnits;
+          }
         });
 
         return {
-            userId: user.id,
-            userName: user.displayName,
-            user,
-            SICK: sickDays,
-            BUSINESS: businessDays,
-            TOTAL: totalLeaveCount,
-            ABSENT: absentDays
+          userId: user.id,
+          userName: user.displayName,
+          user,
+          SICK: sickDays,
+          BUSINESS: businessDays,
+          TOTAL: totalLeaveCount,
+          ABSENT: absentDays,
         };
-    }).filter(s => filters.userId === 'ALL' || filters.userId === s.userId);
-    
-    const filtered = allLeaves.filter(leave => {
-      const leaveYear = leave.year || (leave.startDate ? getYear(parseISO(leave.startDate)) : null);
-      return (
-        leaveYear === selectedYear &&
-        (filters.status === 'ALL' || leave.status === filters.status) &&
-        (filters.userId === 'ALL' || leave.userId === filters.userId)
-      );
-    });
+      })
+      .filter((s) => filters.userId === "ALL" || filters.userId === s.userId);
 
-    return { leaveSummary: summary, filteredLeaves: filtered, yearOptions: yearPickerYears };
-  }, [allLeaves, users, selectedYear, selectedMonth, filters, periodAttendance, periodAdjustments, periodHolidays, hrSettings, yearPickerYears]);
+    return summary;
+  }, [
+    activeTab,
+    allLeaves,
+    users,
+    selectedYear,
+    selectedMonth,
+    filters.userId,
+    periodAttendance,
+    periodAdjustments,
+    periodHolidays,
+    hrSettings,
+    isLoadingExtras,
+  ]);
 
   const handleApprove = async () => {
     if (!db || !adminProfile || !approvingLeave) return;
@@ -572,7 +627,7 @@ export default function ManagementHRLeavesPage() {
     }
   };
 
-  if (isLoadingUsers || isLoadingSettings || isLoadingLeaves || !selectedYear || !selectedMonth) {
+  if (!db || !selectedYear || !selectedMonth || isLoadingUsers || isLoadingSettings) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8" /></div>;
   }
 
@@ -612,6 +667,25 @@ export default function ManagementHRLeavesPage() {
                     <Select value={selectedYear?.toString() || ""} onValueChange={(v) => setSelectedYear(Number(v))}><SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger><SelectContent>{yearOptions.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
                   </div>
                 </div>
+                {indexCreationUrl && (
+                  <Alert variant="destructive" className="mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>ต้องสร้างดัชนี Firestore</AlertTitle>
+                    <AlertDescription className="flex flex-wrap items-center gap-2">
+                      การโหลดข้อมูลเช็คอินต้องใช้ composite index
+                      <Button asChild variant="outline" size="sm">
+                        <a href={indexCreationUrl} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="mr-2 h-3 w-3" /> สร้าง index
+                        </a>
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {leaveFetchLimit < 2500 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    สรุปวันลาใช้เฉพาะใบลาที่โหลดแล้ว (สูงสุด {leaveFetchLimit} ฉบับต่อปี เรียงตามวันที่สร้างล่าสุด) — ถ้ามีใบลามาก ให้ไปแท็บคำขอทั้งหมดแล้วกดโหลดเพิ่ม
+                  </p>
+                )}
             </CardHeader>
             <CardContent>
                 <Table>
@@ -634,7 +708,13 @@ export default function ManagementHRLeavesPage() {
                             </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={6} className="text-center h-24 text-muted-foreground">ไม่พบข้อมูลพนักงาน</TableCell></TableRow>}
+                    )) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">
+                        {isLoadingExtras ? "กำลังโหลดข้อมูลเช็คอิน/วันหยุดสำหรับสรุป..." : "ไม่พบข้อมูลพนักงาน"}
+                      </TableCell>
+                    </TableRow>
+                    )}
                 </TableBody>
                 </Table>
             </CardContent>
@@ -649,9 +729,40 @@ export default function ManagementHRLeavesPage() {
                 <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]"><Label className="text-xs">สถานะ</Label><Select value={filters.status} onValueChange={(v) => setFilters(f => ({...f, status: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">ทุกสถานะ</SelectItem>{LEAVE_STATUSES.map(s=><SelectItem key={s} value={s}>{leaveStatusLabel(s)}</SelectItem>)}</SelectContent></Select></div>
                 <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]"><Label className="text-xs">พนักงาน</Label><Select value={filters.userId} onValueChange={(v) => setFilters(f => ({...f, userId: v}))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>{users?.map(u=><SelectItem key={u.id} value={u.id}>{u.displayName}</SelectItem>)}</SelectContent></Select></div>
                 </div>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  {isLoadingLeaves && allLeaves === null ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                      กำลังโหลดรายการลา...
+                    </span>
+                  ) : (
+                    <span>
+                      แสดง {allLeaves?.length ?? 0} ใบในปี {selectedYear} (โหลดสูงสุด {leaveFetchLimit} ฉบับล่าสุด)
+                    </span>
+                  )}
+                  {!isLoadingLeaves && allLeaves && allLeaves.length >= leaveFetchLimit && leaveFetchLimit < 2500 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="w-fit shrink-0"
+                      onClick={() => setLeaveFetchLimit((n) => Math.min(n + 500, 2500))}
+                    >
+                      โหลดใบลาเพิ่ม (+500)
+                    </Button>
+                  )}
+                </div>
                 <Table>
                 <TableHeader><TableRow><TableHead>พนักงาน</TableHead><TableHead>ประเภท</TableHead><TableHead>วันที่ลา</TableHead><TableHead className="text-center">จำนวนวัน</TableHead><TableHead>สถานะ</TableHead><TableHead className="min-w-[100px]">เอกสาร</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
-                <TableBody>{filteredLeaves.length > 0 ? filteredLeaves.map(leave => (
+                <TableBody>
+                  {isLoadingLeaves && allLeaves === null ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                        <Loader2 className="inline h-6 w-6 animate-spin align-middle mr-2" />
+                        กำลังโหลดรายการลา...
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredLeaves.length > 0 ? filteredLeaves.map(leave => (
                     <TableRow key={leave.id}><TableCell className="font-medium">{leave.userName}</TableCell><TableCell>{leaveTypeLabel(leave.leaveType)}{leave.isHalfDay && <Badge variant="outline" className="ml-2 text-[9px] h-4">0.5 วัน</Badge>}</TableCell><TableCell className="text-sm">{dfFormat(parseISO(leave.startDate), 'dd/MM/yy')} {!leave.isHalfDay && leave.endDate !== leave.startDate && ` - ${dfFormat(parseISO(leave.endDate), 'dd/MM/yy')}`}</TableCell><TableCell className="text-center">{leave.days}</TableCell><TableCell><Badge variant={leave.status === 'APPROVED' ? 'default' : leave.status === 'REJECTED' ? 'destructive' : 'secondary'}>{leaveStatusLabel(leave.status)}</Badge></TableCell>
                         <TableCell className="text-xs">
                           {leave.attachmentUrls && leave.attachmentUrls.length > 0 ? (
@@ -678,7 +789,8 @@ export default function ManagementHRLeavesPage() {
                           </DropdownMenu>
                         </TableCell>
                     </TableRow>
-                    )) : <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}</TableBody>
+                    )) : <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">ไม่พบคำขอ</TableCell></TableRow>}
+                </TableBody>
                 </Table>
             </CardContent>
             </Card>

@@ -122,22 +122,27 @@ export function vendorToFormDefaults(v: {
   };
 }
 
-type FirestoreVendorPayload = Record<string, string | boolean | FieldValue | undefined>;
+type FirestoreVendorPayload = Record<string, string | boolean | FieldValue>;
+
+/** Firestore ไม่รองรับค่า undefined — กรองออกก่อน setDoc/addDoc/updateDoc */
+function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
 
 export function vendorFormValuesToFirestore(
   values: VendorFormData,
   options: { mode: "create" | "update" }
-): FirestoreVendorPayload {
-  const base: FirestoreVendorPayload = {
+): Record<string, string | boolean | FieldValue> {
+  const base: Record<string, string | boolean | FieldValue | undefined> = {
     shortName: values.shortName.toUpperCase(),
     companyName: values.companyName,
     vendorType: values.vendorType,
-    address: values.address?.trim() || undefined,
+    address: (values.address ?? "").trim(),
     phone: values.phone.trim(),
-    contactName: values.contactName?.trim() || undefined,
-    contactPhone: values.contactPhone?.trim() || undefined,
-    email: values.email?.trim() || undefined,
-    notes: values.notes?.trim() || undefined,
+    contactName: (values.contactName ?? "").trim(),
+    contactPhone: (values.contactPhone ?? "").trim(),
+    email: (values.email ?? "").trim(),
+    notes: (values.notes ?? "").trim(),
   };
 
   const clearTax =
@@ -150,12 +155,12 @@ export function vendorFormValuesToFirestore(
       : {};
 
   if (!values.hasTax) {
-    return { ...base, hasTax: false, ...clearTax };
+    return omitUndefined({ ...base, hasTax: false, ...clearTax });
   }
 
   const taxId = normalizeVendorTaxId(values.taxId);
   const taxBranchType = values.taxBranchType!;
-  const out: FirestoreVendorPayload = {
+  const out: Record<string, string | boolean | FieldValue | undefined> = {
     ...base,
     hasTax: true,
     taxId,
@@ -168,7 +173,7 @@ export function vendorFormValuesToFirestore(
     out.taxBranchNo = deleteField();
   }
 
-  return out;
+  return omitUndefined(out);
 }
 
 /** snapshot บนเอกสารซื้อ — สอดคล้องกับ PurchaseDoc.vendorSnapshot */

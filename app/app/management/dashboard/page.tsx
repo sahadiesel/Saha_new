@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
 import { collection, onSnapshot, query, orderBy, Timestamp, limit, where, type FirestoreError } from "firebase/firestore";
@@ -14,14 +14,12 @@ import {
   subMonths, 
   format, 
   differenceInDays, 
-  startOfYear, 
   isWithinInterval,
   isBefore,
   parseISO,
   startOfDay,
   endOfDay,
   set,
-  subYears,
 } from "date-fns";
 import { 
   BarChart, 
@@ -148,13 +146,14 @@ function AppDashboardPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [entries, setEntries] = useState<AccountingEntry[]>([]);
   const [obligations, setObligations] = useState<AccountingObligation[]>([]);
-  const [purchaseDocs, setPurchaseDocs] = useState<PurchaseDoc[]>([]);
-  /** โหลดตาม docDate ย้อนหลัง 2 ปี — กราฟ VAT 6 เดือน ไม่อิง limit(500) ดิบ ที่เฉือนข้อมูลเดิม */
+  /** โหลดตาม docDate — กราฟ VAT ใช้ 6 เดือนย้อนหลังจากช่วงที่เลือก (ไม่ดึงทั้งคอลเลกชัน) */
   const [vatDocuments, setVatDocuments] = useState<Document[]>([]);
   const [vatPurchaseDocs, setVatPurchaseDocs] = useState<PurchaseDoc[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
+  /** รอ snapshot แรกจากแต่ละสตรีม — เดิมรอแค่ customers ทำให้หน้าค้างนาน */
+  const bootstrapRef = useRef<Set<string>>(new Set());
 
   // Filters
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
@@ -174,57 +173,100 @@ function AppDashboardPage() {
     if (!db) return;
     setLoading(true);
     setIndexErrorUrl(null);
+    bootstrapRef.current = new Set();
+
+    const STREAM_KEYS = [
+      "jobs",
+      "archived",
+      "documents",
+      "entries",
+      "obligations",
+      "vatDocs",
+      "vatPurchases",
+      "customers",
+    ] as const;
+    const markStream = (key: (typeof STREAM_KEYS)[number]) => {
+      if (bootstrapRef.current.has(key)) return;
+      bootstrapRef.current.add(key);
+      if (bootstrapRef.current.size >= STREAM_KEYS.length) {
+        setLoading(false);
+      }
+    };
 
     // Fetch active jobs
-    const unsubJobs = onSnapshot(query(collection(db, "jobs"), limit(500)), (snap) => {
-      setJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Job)));
-    });
+    const unsubJobs = onSnapshot(
+      query(collection(db, "jobs"), limit(500)),
+      (snap) => {
+        setJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
+        markStream("jobs");
+      },
+      () => markStream("jobs")
+    );
 
     // Fetch archived jobs
-    const archivedQuery = query(collection(db, `jobsArchive_${selectedYear}`), orderBy("lastActivityAt", "desc"), limit(200));
-    const unsubArchived = onSnapshot(archivedQuery, (snap) => {
-      setArchivedJobs(snap.docs.map(d => ({ id: d.id, ...d.data() } as Job)));
-    });
+    const archivedQuery = query(
+      collection(db, `jobsArchive_${selectedYear}`),
+      orderBy("lastActivityAt", "desc"),
+      limit(200)
+    );
+    const unsubArchived = onSnapshot(
+      archivedQuery,
+      (snap) => {
+        setArchivedJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
+        markStream("archived");
+      },
+      () => markStream("archived")
+    );
 
     // Fetch documents
-    const unsubDocs = onSnapshot(query(collection(db, "documents"), limit(500)), (snap) => {
-      setDocuments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Document)));
-    });
-    
-    // Fetch accounting entries
-    const unsubEntries = onSnapshot(query(collection(db, "accountingEntries"), orderBy("entryDate", "desc"), limit(1000)), (snap) => {
-      setEntries(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingEntry)));
-    });
-    
-    // FETCH OBLIGATIONS (AR/AP)
-    const unsubObligations = onSnapshot(query(
-      collection(db, "accountingObligations"), 
-      where("status", "in", ["UNPAID", "PARTIAL"]),
-      limit(1000)
-    ), (snap) => {
-      setObligations(snap.docs.map(d => ({ id: d.id, ...d.data() } as AccountingObligation)));
-    }, (err: FirestoreError) => {
-      if (err.message?.includes('requires an index')) {
-        const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
-      }
-    });
-    
-    // Fetch purchases
-    const unsubPurchases = onSnapshot(query(collection(db, "purchaseDocs"), limit(200)), (snap) => {
-      setPurchaseDocs(snap.docs.map(d => ({ id: d.id, ...d.data() } as PurchaseDoc)));
-    });
+    const unsubDocs = onSnapshot(
+      query(collection(db, "documents"), limit(500)),
+      (snap) => {
+        setDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+        markStream("documents");
+      },
+      () => markStream("documents")
+    );
 
-    const vatLookbackYmd = format(subYears(startOfToday(), 7), "yyyy-MM-dd");
+    // Fetch accounting entries
+    const unsubEntries = onSnapshot(
+      query(collection(db, "accountingEntries"), orderBy("entryDate", "desc"), limit(800)),
+      (snap) => {
+        setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() } as AccountingEntry)));
+        markStream("entries");
+      },
+      () => markStream("entries")
+    );
+
+    // FETCH OBLIGATIONS (AR/AP)
+    const unsubObligations = onSnapshot(
+      query(collection(db, "accountingObligations"), where("status", "in", ["UNPAID", "PARTIAL"]), limit(1000)),
+      (snap) => {
+        setObligations(snap.docs.map((d) => ({ id: d.id, ...d.data() } as AccountingObligation)));
+        markStream("obligations");
+      },
+      (err: FirestoreError) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        setObligations([]);
+        markStream("obligations");
+      }
+    );
+
+    /** กราฟ VAT ใช้ 6 เดือนย้อนหลังจากช่วงที่เลือก — ดึงเอกสารย้อนหลัง ~22 เดือนจากวันนี้ (ไม่ดึงหลายปี × 8000 ใบ) */
+    const vatLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 22)), "yyyy-MM-dd");
     const unsubVatDocs = onSnapshot(
       query(
         collection(db, "documents"),
         where("docDate", ">=", vatLookbackYmd),
         orderBy("docDate", "desc"),
-        limit(8000)
+        limit(2500)
       ),
       (snap) => {
         setVatDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+        markStream("vatDocs");
       },
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
@@ -232,6 +274,8 @@ function AppDashboardPage() {
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
         }
         console.error("Dashboard VAT documents", err);
+        setVatDocuments([]);
+        markStream("vatDocs");
       }
     );
     const unsubVatPurchases = onSnapshot(
@@ -239,10 +283,11 @@ function AppDashboardPage() {
         collection(db, "purchaseDocs"),
         where("docDate", ">=", vatLookbackYmd),
         orderBy("docDate", "desc"),
-        limit(5000)
+        limit(1500)
       ),
       (snap) => {
         setVatPurchaseDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PurchaseDoc)));
+        markStream("vatPurchases");
       },
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
@@ -250,14 +295,20 @@ function AppDashboardPage() {
           if (urlMatch) setIndexErrorUrl(urlMatch[0]);
         }
         console.error("Dashboard VAT purchaseDocs", err);
+        setVatPurchaseDocs([]);
+        markStream("vatPurchases");
       }
     );
-    
+
     // Fetch customers
-    const unsubCustomers = onSnapshot(query(collection(db, "customers"), limit(1000)), (snap) => {
-      setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
-      setLoading(false);
-    });
+    const unsubCustomers = onSnapshot(
+      query(collection(db, "customers"), limit(800)),
+      (snap) => {
+        setCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer)));
+        markStream("customers");
+      },
+      () => markStream("customers")
+    );
 
     return () => {
       unsubJobs();
@@ -265,7 +316,6 @@ function AppDashboardPage() {
       unsubDocs();
       unsubEntries();
       unsubObligations();
-      unsubPurchases();
       unsubVatDocs();
       unsubVatPurchases();
       unsubCustomers();
@@ -529,7 +579,7 @@ function AppDashboardPage() {
       acquisitionData,
       alerts
     };
-  }, [jobs, archivedJobs, documents, vatDocuments, vatPurchaseDocs, entries, obligations, purchaseDocs, customers, dateRange]);
+  }, [jobs, archivedJobs, documents, vatDocuments, vatPurchaseDocs, entries, obligations, customers, dateRange]);
 
   const handleDatePreset = (preset: string) => {
     const today = startOfToday();

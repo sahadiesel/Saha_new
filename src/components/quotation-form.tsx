@@ -46,7 +46,13 @@ const quotationFormSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้าจากรายการ"),
   issueDate: z.string().min(1, "กรุณาเลือกวันที่ออกเอกสาร"),
   expiryDate: z.string().min(1, "กรุณาเลือกวันที่ยืนราคา"),
-  items: z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการในตาราง"),
+  items: z.preprocess(
+    (raw) => {
+      if (!Array.isArray(raw)) return raw;
+      return raw.filter((row: { description?: string }) => String((row as { description?: string })?.description ?? "").trim().length > 0);
+    },
+    z.array(lineItemSchema).min(1, "ต้องมีอย่างน้อย 1 รายการในตาราง")
+  ),
   subtotal: z.coerce.number().default(0),
   discountAmount: z.coerce.number().min(0, "ส่วนลดห้ามติดลบ").optional().default(0),
   net: z.coerce.number().default(0),
@@ -351,16 +357,25 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               await updateDoc(doc(db, "documents", editDocId), sanitizeForFirestore(patch));
               toast({
                 title: mode === "draft" ? "บันทึกฉบับร่างแล้ว" : "อัปเดตสำเร็จ",
+                description:
+                  mode === "draft" && docToEdit?.jobId
+                    ? "แก้ไขต่อได้ — ยังไม่ส่งลูกค้า จนกว่าจะกดบันทึกราคาฉบับจริง"
+                    : undefined,
               });
             }
             router.push(`/app/office/documents/quotation/${editDocId}`);
         } else {
-            if (mode === "draft" && data.jobId) {
+            if (mode === "draft") {
               const { docId } = await createDocument(db, "QUOTATION", documentData, profile, undefined, {
                 initialStatus: "DRAFT",
-                linkJobWithoutStatusChange: true,
+                skipJobAttachment: true,
               });
-              toast({ title: "บันทึกฉบับร่างแล้ว", description: "เอกสารถูกบันทึกแล้ว — สถานะงานยังเป็นรอเสนอราคา" });
+              toast({
+                title: "บันทึกฉบับร่างแล้ว",
+                description: data.jobId
+                  ? "แก้ไขต่อได้ — ยังไม่แสดงบนจ๊อบหรือส่งลูกค้า จนกว่าจะกดบันทึกราคาฉบับจริง"
+                  : "แก้ไขต่อได้ — ยังไม่ส่งลูกค้า จนกว่าจะกดบันทึกราคาฉบับจริง",
+              });
               router.push(`/app/office/documents/quotation/${docId}`);
             } else {
               const newJobStatus = data.jobId ? ("PENDING_CUSTOMER_INFORM" as const) : undefined;
@@ -404,14 +419,6 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
   const onSubmitWithMode = async (data: QuotationFormData, mode: "draft" | "final") => {
     if (isCancelled || isProcessing) return;
-    if (mode === "draft" && !data.jobId) {
-      toast({
-        variant: "destructive",
-        title: "บันทึกฉบับร่าง",
-        description: "ใช้ได้เมื่อผูกกับงานซ่อม (มี jobId) เท่านั้น",
-      });
-      return;
-    }
     if (data.jobId) {
       const ok = await checkUniqueness(data.jobId);
       if (!ok) {
@@ -469,9 +476,15 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     }
   };
 
+  const onFormInvalid = () => {
+    toast({
+      variant: "destructive",
+      title: "ยังบันทึกไม่ได้",
+      description: "กรุณาเลือกลูกค้า กรอกรายละเอียดรายการอย่างน้อย 1 แถว และตรวจสอบจำนวน/ราคาให้ครบ",
+    });
+  };
   const isFormLoading = form.formState.isSubmitting || isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit || isProcessing;
-  const showQuotationDraftButton =
-    !isCancelled && !!jobId && (!isEditing || docToEdit?.status === "DRAFT");
+  const showQuotationDraftButton = !isCancelled && (!isEditing || docToEdit?.status === "DRAFT");
   const quotationFinalButtonLabel = isEditing && docToEdit?.status !== "DRAFT"
     ? "บันทึกการแก้ไข"
     : "บันทึกราคาฉบับจริง";
@@ -744,7 +757,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "draft"))()}
+                onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "draft"), onFormInvalid)()}
                 disabled={isFormLoading || isCancelled}
               >
                 {isFormLoading ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
@@ -753,7 +766,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             ) : null}
             <Button
               type="button"
-              onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "final"))()}
+              onClick={() => void form.handleSubmit((d) => onSubmitWithMode(d, "final"), onFormInvalid)()}
               disabled={isFormLoading || isCancelled}
               className="bg-primary hover:bg-primary/90"
             >

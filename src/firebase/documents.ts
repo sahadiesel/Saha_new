@@ -134,6 +134,8 @@ export async function createDocument(
     providedDocId?: string;
     /** ผูก salesDoc* กับงานโดยไม่เปลี่ยน job.status — ใช้ใบเสนอราคาฉบับร่างขณะงานยัง WAITING_QUOTATION */
     linkJobWithoutStatusChange?: boolean;
+    /** ไม่เขียน salesDoc* / activities ลง job — ใช้ใบเสนอราคาฉบับร่างที่บันทึกไว้แก้ก่อน ยังไม่ให้โผล่บนจ๊อบ */
+    skipJobAttachment?: boolean;
   }
 ): Promise<{ docId: string; docNo: string }> {
 
@@ -228,7 +230,7 @@ export async function createDocument(
     transaction.set(newDocRef, docData);
 
     const targetJobId = data.jobId;
-    if (targetJobId && typeof targetJobId === 'string' && targetJobId.trim() !== '') {
+    if (!options?.skipJobAttachment && targetJobId && typeof targetJobId === "string" && targetJobId.trim() !== "") {
       const jobRef = doc(db, 'jobs', targetJobId);
       
       // LOG ACTIVITY: Standardized log for document creation
