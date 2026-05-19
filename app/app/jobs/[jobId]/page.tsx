@@ -47,7 +47,7 @@ import { JobCustomerChatPanel } from "@/components/customer-portal/job-customer-
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
-import { restoreJobFromArchive } from "@/firebase/jobs-archive";
+import { restoreJobFromArchive, JOB_RESTORE_STATUS_OPTIONS } from "@/firebase/jobs-archive";
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 import { jobDisplayRef } from "@/lib/job-display";
 
@@ -220,6 +220,7 @@ function JobDetailsPageContent() {
   const [isReverting, setIsReverting] = useState(false);
 
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
+  const [restoreTargetStatus, setRestoreTargetStatus] = useState<JobStatus>('DONE');
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
@@ -919,14 +920,23 @@ function JobDetailsPageContent() {
   };
 
   const handleRestoreJob = async () => {
-    if (!db || !profile || !job || !job.isArchived) return;
+    if (!db || !profile || !job || !(job.isArchived || archiveYear != null)) return;
     setIsRestoring(true);
     try {
       const year =
         archiveYear != null ? archiveYear : getGregorianArchiveYearFromDateString(job.closedDate || "");
-      await restoreJobFromArchive(db, job.id, year, profile);
-      toast({ title: "กู้คืนงานสำเร็จ", description: "งานถูกย้ายกลับมาเป็นงานที่กำลังดำเนินการ (Active) เรียบร้อยแล้วค่ะ" });
+      if (!year) {
+        throw new Error('ไม่พบปีของประวัติงาน — ลองเปิดงานจากรายการประวัติอีกครั้ง');
+      }
+      await restoreJobFromArchive(db, job.id, year, profile, restoreTargetStatus);
+      toast({
+        title: "กู้คืนงานสำเร็จ",
+        description: `ย้ายกลับไปที่ Jobs แล้ว — สถานะ: ${jobStatusLabel(restoreTargetStatus)}`,
+      });
       setIsRestoreDialogOpen(false);
+      setArchiveYear(null);
+      setNotFoundInPrimary(false);
+      router.replace(`/app/jobs/${job.id}`);
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'กู้คืนไม่สำเร็จ', description: e.message });
     } finally {
@@ -1113,11 +1123,14 @@ function JobDetailsPageContent() {
                 <Button 
                   variant="outline" 
                   className="border-amber-600 text-amber-700 hover:bg-amber-100 w-full font-bold"
-                  onClick={() => setIsRestoreDialogOpen(true)}
+                  onClick={() => {
+                    setRestoreTargetStatus('DONE');
+                    setIsRestoreDialogOpen(true);
+                  }}
                   disabled={isRestoring}
                 >
                   {isRestoring ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-                  กู้คืนกลับเป็นงานที่กำลังทำ (Restore to Active)
+                  กู้คืนกลับไปที่ Jobs
                 </Button>
               </CardContent>
             </Card>
@@ -1713,26 +1726,46 @@ function JobDetailsPageContent() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
+      <Dialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-5 w-5 text-amber-600" />
-              ยืนยันการกู้คืนงานจากประวัติ?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              ต้องการย้ายงานซ่อมนี้จากประวัติกลับมาเป็นงานที่กำลังดำเนินการหรือไม่?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isRestoring}>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRestoreJob} disabled={isRestoring} className="bg-amber-600 hover:bg-amber-700">
+              กู้คืนงานจากประวัติ
+            </DialogTitle>
+            <DialogDescription>
+              ย้ายงานจาก <span className="font-mono text-xs">jobsArchive_{archiveYear ?? '…'}</span> กลับไปที่ collection <span className="font-mono text-xs">jobs</span> และเลือกสถานะที่ต้องการ
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>สถานะหลังกู้คืน</Label>
+            <Select value={restoreTargetStatus} onValueChange={(v) => setRestoreTargetStatus(v as JobStatus)}>
+              <SelectTrigger>
+                <SelectValue placeholder="เลือกสถานะ" />
+              </SelectTrigger>
+              <SelectContent>
+                {JOB_RESTORE_STATUS_OPTIONS.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {jobStatusLabel(s)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              แนะนำ: เลือก &quot;ทำเสร็จรอทำบิล&quot; หากต้องการให้ฝ่ายออฟฟิศออกบิลต่อ
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRestoreDialogOpen(false)} disabled={isRestoring}>
+              ยกเลิก
+            </Button>
+            <Button onClick={handleRestoreJob} disabled={isRestoring} className="bg-amber-600 hover:bg-amber-700">
               {isRestoring ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
               ยืนยันกู้คืน
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={isBillingSelectionOpen} onOpenChange={setIsBillingSelectionOpen}>
         <AlertDialogContent>

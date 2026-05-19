@@ -11,7 +11,9 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import { archiveCollectionNameByYear } from '@/lib/archive-utils';
+import type { JobStatus } from '@/lib/constants';
 import type { UserProfile, Job } from '@/lib/types';
+import { jobStatusLabel } from '@/lib/ui-labels';
 import { sanitizeForFirestore } from '@/lib/utils';
 import { resolveJobNoForArchivedDocument } from '@/lib/job-no-utils';
 
@@ -76,17 +78,35 @@ export async function archiveAndCloseJob(
   return { archiveCollection: archiveColName, archiveJobId: jobId };
 }
 
+/** สถานะที่เลือกได้เมื่อกู้คืนจากประวัติ (ไม่รวม CLOSED) */
+export const JOB_RESTORE_STATUS_OPTIONS = [
+  'DONE',
+  'WAITING_CUSTOMER_PICKUP',
+  'PICKED_UP',
+  'IN_REPAIR_PROCESS',
+  'PENDING_PARTS',
+  'WAITING_APPROVE',
+  'IN_PROGRESS',
+  'WAITING_QUOTATION',
+  'PENDING_CUSTOMER_INFORM',
+] as const satisfies readonly JobStatus[];
+
 /**
- * Restores a job from the archive back to the active jobs collection.
+ * Restores a job from the archive back to the active `jobs` collection.
  */
 export async function restoreJobFromArchive(
   db: Firestore,
   jobId: string,
   year: number,
-  userProfile: UserProfile
+  userProfile: UserProfile,
+  targetStatus: JobStatus = 'DONE'
 ) {
+  if (targetStatus === 'CLOSED') {
+    throw new Error('ไม่สามารถกู้คืนเป็นสถานะปิดงานได้ — กรุณาเลือกสถานะอื่น');
+  }
+
   const archiveColName = archiveCollectionNameByYear(year);
-  const archiveRef = doc(archiveColName, jobId);
+  const archiveRef = doc(db, archiveColName, jobId);
   const jobRef = doc(db, 'jobs', jobId);
 
   await runTransaction(db, async (transaction) => {
@@ -101,12 +121,13 @@ export async function restoreJobFromArchive(
     const { 
       isArchived, archivedAt, archivedAtDate, archivedByUid, archivedByName,
       paymentStatusAtClose, closedByName, closedByUid, originalJobId,
+      closedDate, salesDocType, salesDocId, salesDocNo,
       ...restOfData 
-    } = archiveData as any;
+    } = archiveData as Record<string, unknown>;
 
     const restoredData = {
       ...restOfData,
-      status: 'WAITING_CUSTOMER_PICKUP', // Restore to the state before closing
+      status: targetStatus,
       isArchived: false,
       updatedAt: serverTimestamp(),
       lastActivityAt: serverTimestamp(),
@@ -114,10 +135,10 @@ export async function restoreJobFromArchive(
 
     transaction.set(jobRef, sanitizeForFirestore(restoredData));
     
-    // LOG ACTIVITY: Standardized log for job restoration
-    const activityRef = doc(collection(jobRef, 'activities'));
+    const statusLabel = jobStatusLabel(targetStatus);
+    const activityRef = doc(collection(db, 'jobs', jobId, 'activities'));
     transaction.set(activityRef, {
-        text: `Admin กู้คืนงานจากประวัติ (ปี ${year}) กลับเข้าสู่ระบบงานปัจจุบัน`,
+        text: `Admin กู้คืนงานจากประวัติ (ปี ${year}) → สถานะ "${statusLabel}" (${targetStatus})`,
         userName: userProfile.displayName,
         userId: userProfile.uid,
         createdAt: serverTimestamp()
