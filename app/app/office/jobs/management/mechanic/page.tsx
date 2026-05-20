@@ -3,6 +3,7 @@
 
 import { PageHeader } from "@/components/page-header";
 import { JobList } from "@/components/job-list";
+import { JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW } from "@/lib/job-department-visibility";
 
 export default function OfficeJobManagementMechanicPage() {
   return (
@@ -10,7 +11,7 @@ export default function OfficeJobManagementMechanicPage() {
       <PageHeader title="จัดการงานซ่อม - แผนกปั๊มหัวฉีดแมคคานิค" description="งานทั้งหมดของแผนก Mechanic" />
       <JobList 
         department="MECHANIC" 
-        excludeStatus={["CLOSED"]}
+        excludeStatus={JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW}
         emptyTitle="ไม่มีงานในแผนกแมคคานิค"
         emptyDescription="ยังไม่มีการเปิดงานสำหรับแผนกนี้"
       />

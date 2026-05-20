@@ -5,6 +5,7 @@ import { JobList } from "@/components/job-list";
 import { useAuth } from "@/context/auth-context";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { JOB_STATUSES_IN_WORKER_MY_JOBS } from "@/lib/job-department-visibility";
 
 export default function CarServiceMyJobsPage() {
   const { profile, loading } = useAuth();
@@ -29,7 +30,7 @@ export default function CarServiceMyJobsPage() {
       <PageHeader title="งานของฉัน" description="งานที่อยู่ในความรับผิดชอบของคุณ" />
       <JobList 
         department="CAR_SERVICE" 
-        status={['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'PENDING_PARTS', 'IN_REPAIR_PROCESS']}
+        status={JOB_STATUSES_IN_WORKER_MY_JOBS}
         assigneeUid={profile.uid}
         emptyTitle="คุณยังไม่มีงานที่กำลังทำ"
         emptyDescription="ไปที่หน้า 'งานทั้งหมด' เพื่อรับงานใหม่"

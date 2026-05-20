@@ -8,8 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Search, Filter } from "lucide-react";
 import { jobStatusLabel } from "@/lib/ui-labels";
 import type { JobStatus } from "@/lib/types";
-
-const ALL_ACTIVE_STATUSES: JobStatus[] = ['RECEIVED', 'IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'PENDING_PARTS', 'IN_REPAIR_PROCESS'];
+import { JOB_STATUSES_IN_DEPARTMENT_VIEW } from "@/lib/job-department-visibility";
 
 export default function CarServiceAllJobsPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -37,7 +36,7 @@ export default function CarServiceAllJobsPage() {
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem value="ALL">งานที่กำลังทำทั้งหมด</SelectItem>
-                    {ALL_ACTIVE_STATUSES.map(s => (
+                    {JOB_STATUSES_IN_DEPARTMENT_VIEW.map(s => (
                         <SelectItem key={s} value={s}>{jobStatusLabel(s)}</SelectItem>
                     ))}
                 </SelectContent>
@@ -46,7 +45,7 @@ export default function CarServiceAllJobsPage() {
       </PageHeader>
       <JobList 
         department="CAR_SERVICE" 
-        status={statusFilter === "ALL" ? ALL_ACTIVE_STATUSES : (statusFilter as JobStatus)} 
+        status={statusFilter === "ALL" ? JOB_STATUSES_IN_DEPARTMENT_VIEW : (statusFilter as JobStatus)} 
         searchTerm={searchTerm}
       />
     </>

@@ -5,6 +5,7 @@ import { JobList } from "@/components/job-list";
 import { useAuth } from "@/context/auth-context";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { JOB_STATUSES_IN_WORKER_MY_JOBS } from "@/lib/job-department-visibility";
 
 export default function OutsourceMyJobsPage() {
   const { profile, loading } = useAuth();
@@ -37,7 +38,7 @@ export default function OutsourceMyJobsPage() {
       />
       <JobList 
         department="OUTSOURCE" 
-        status={['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'PENDING_PARTS', 'IN_REPAIR_PROCESS']}
+        status={JOB_STATUSES_IN_WORKER_MY_JOBS}
         assigneeUid={assigneeUid}
         emptyTitle="ยังไม่มีงานที่มอบหมายให้ท่าน"
         emptyDescription={profile.linkedVendorName ? `ขณะนี้ยังไม่มีงานใหม่ที่มอบหมายให้ร้าน ${profile.linkedVendorName} ค่ะ` : "ไปที่หน้า 'งานทั้งหมด' เพื่อรับงานใหม่ (หากมีสิทธิ์)"}

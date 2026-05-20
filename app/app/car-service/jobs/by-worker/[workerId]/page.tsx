@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { JobList } from "@/components/job-list";
 import { Loader2 } from "lucide-react";
 import type { UserProfile } from "@/lib/types";
+import { JOB_STATUSES_IN_DEPARTMENT_VIEW } from "@/lib/job-department-visibility";
 import { useMemo } from "react";
 
 export default function WorkerJobsPage() {
@@ -34,7 +35,7 @@ export default function WorkerJobsPage() {
       <PageHeader title={`งานของ ${worker.displayName}`} description={`งานทั้งหมดที่ ${worker.displayName} กำลังรับผิดชอบ`} />
       <JobList 
         department="CAR_SERVICE" 
-        status={['RECEIVED', 'IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'PENDING_PARTS', 'IN_REPAIR_PROCESS']}
+        status={JOB_STATUSES_IN_DEPARTMENT_VIEW}
         assigneeUid={worker.uid}
         emptyTitle="ไม่มีงานที่กำลังทำ"
         emptyDescription={`${worker.displayName} ยังไม่มีงานที่รับผิดชอบในขณะนี้`}

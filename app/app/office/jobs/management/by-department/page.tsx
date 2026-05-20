@@ -9,11 +9,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Search, Loader2 } from "lucide-react";
-import type { JobDepartment, JobStatus } from "@/lib/types";
-
-// Stable constant to prevent infinite loops in children
-// ซ่อนงานที่ "รับสินค้าแล้ว/รอรับเงิน" ออกจากหน้าตามแผนก
-const EXCLUDE_DEPT_VIEW: JobStatus[] = ["CLOSED", "PICKED_UP"];
+import type { JobDepartment } from "@/lib/types";
+import { JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW } from "@/lib/job-department-visibility";
 
 const DEPT_TAB_TO_DEPARTMENT = {
   "car-service": "CAR_SERVICE",
@@ -66,7 +63,7 @@ function ByDepartmentContent() {
 
   return (
     <>
-      <PageHeader title="จัดการงานซ่อม - ตามแผนก" description="แสดงงานทั้งหมดที่ยังไม่ปิด แยกตามแผนกที่รับผิดชอบ">
+      <PageHeader title="จัดการงานซ่อม - ตามแผนก" description="แสดงงานในแผนกตั้งแต่เปิดงานจนก่อนแจ้งทำบิล (หลัง DONE จะไม่แสดงในรายการแผนก)">
         {customerChatUnreadJobs > 0 ? (
           <p className="animate-blink text-right text-base font-semibold text-red-600 md:max-w-md">
             มีข้อความจากลูกค้า จำนวน {customerChatUnreadJobs} ราย
@@ -99,7 +96,7 @@ function ByDepartmentContent() {
                     key={activeTab}
                     searchTerm={searchTerm}
                     department={DEPT_TAB_TO_DEPARTMENT[activeTab]}
-                    excludeStatus={EXCLUDE_DEPT_VIEW}
+                    excludeStatus={JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW}
                     emptyTitle={TAB_EMPTY[activeTab].title}
                     emptyDescription={TAB_EMPTY[activeTab].description}
                     sortByOldestInSystem

@@ -86,6 +86,7 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { jobDisplayRef } from "@/lib/job-display";
 import { JOB_STATUSES } from "@/lib/constants";
+import { JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW } from "@/lib/job-department-visibility";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import { jobStatusLabel, deptLabel } from "@/lib/ui-labels";
 import type { Job, JobStatus, JobDepartment, Document as DocumentType, AccountingAccount, UserProfile } from "@/lib/types";
@@ -93,6 +94,10 @@ import {
   isJobCustomerChatUnreadForStaff,
   subscribeJobCustomerChatReadsMap,
 } from "@/lib/job-customer-chat-reads";
+import {
+  customerPortalJobAgeDays,
+  customerPortalStaleAgeBadgeClass,
+} from "@/lib/customer-job-portal-ui";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -112,37 +117,6 @@ const getStatusStyles = (status: Job['status']) => {
 }
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-const getJobAgeDays = (job: Job) => {
-  const anyJob = job as Job & {
-    createdAt?: { toDate?: () => Date } | Date | string;
-    lastActivityAt?: { toDate?: () => Date } | Date | string;
-  };
-  const source = anyJob.createdAt ?? anyJob.lastActivityAt;
-  if (!source) return 0;
-
-  let start: Date | null = null;
-  if (source instanceof Date) start = source;
-  else if (typeof source === "string") {
-    const d = new Date(source);
-    start = Number.isNaN(d.getTime()) ? null : d;
-  } else if (typeof source === "object" && source && "toDate" in source && typeof source.toDate === "function") {
-    start = source.toDate();
-  }
-
-  if (!start || Number.isNaN(start.getTime())) return 0;
-  const diff = Math.floor((Date.now() - start.getTime()) / MS_PER_DAY) + 1;
-  return Math.max(1, diff);
-};
-
-const getStaleAgeBadgeClass = (days: number) => {
-  if (days >= 15) return "bg-red-600 text-white";
-  if (days >= 8) return "bg-orange-500 text-white";
-  if (days >= 1) return "bg-green-600 text-white";
-  return "bg-slate-500 text-white";
-};
 
 interface JobListProps {
   department?: JobDepartment;
@@ -174,6 +148,9 @@ export function JobList({
   onCustomerChatUnreadJobCount,
 }: JobListProps) {
   type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
+
+  /** แสดงป้าย "ค้าง X วัน" บนการ์ดเมื่อดูตามแผนก หรือเปิดชัดเจนจากหน้าจัดการ */
+  const effectiveShowSystemAgeBadge = showSystemAgeBadge || Boolean(department);
 
   const { db } = useFirebase();
   const { profile, user } = useAuth();
@@ -237,8 +214,12 @@ export function JobList({
 
   const statusConfig = useMemo(() => {
     const statusArray = status ? (Array.isArray(status) ? status : [status]) : [];
-    const excludeArray = excludeStatus ? (Array.isArray(excludeStatus) ? excludeStatus : [excludeStatus]) : [];
-    
+    const excludeArray = excludeStatus
+      ? (Array.isArray(excludeStatus) ? excludeStatus : [excludeStatus])
+      : department && !status
+        ? JOB_STATUSES_EXCLUDED_FROM_DEPARTMENT_VIEW
+        : [];
+
     let finalInStatus: JobStatus[] = statusArray;
     if (statusArray.length === 0 && excludeArray.length > 0) {
         finalInStatus = (JOB_STATUSES as unknown as JobStatus[]).filter(s => !excludeArray.includes(s));
@@ -248,7 +229,7 @@ export function JobList({
         inStatus: finalInStatus,
         key: JSON.stringify(finalInStatus)
     };
-  }, [status, excludeStatus]);
+  }, [status, excludeStatus, department]);
 
   const isMgmtOrOffice = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'OFFICE' || profile?.department === 'MANAGEMENT';
   const canAssignWork = isMgmtOrOffice || profile?.role === 'OFFICER';
@@ -311,7 +292,7 @@ export function JobList({
         );
       }
       if (sortByOldestInSystem) {
-        jobsData = [...jobsData].sort((a, b) => getJobAgeDays(b) - getJobAgeDays(a));
+        jobsData = [...jobsData].sort((a, b) => customerPortalJobAgeDays(b) - customerPortalJobAgeDays(a));
       }
       setJobs(jobsData);
       setLoading(false);
@@ -598,7 +579,7 @@ export function JobList({
           const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
           const hasQuotation = !!job.salesDocId && job.salesDocType === 'QUOTATION';
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
-          const ageDays = getJobAgeDays(job);
+          const ageDays = customerPortalJobAgeDays(job);
           const thumbUrl = job.photos?.find(Boolean);
 
           return (
@@ -617,8 +598,8 @@ export function JobList({
                   )}
                   <Badge className={cn("shadow-sm border", getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge>
                 </div>
-                {showSystemAgeBadge && ageDays > 0 && (
-                  <Badge className={cn("absolute top-2 left-2 shadow-sm border border-black/80 font-bold", getStaleAgeBadgeClass(ageDays))}>
+                {effectiveShowSystemAgeBadge && ageDays > 0 && (
+                  <Badge className={cn("absolute top-2 left-2 shadow-sm border border-black/80 font-bold", customerPortalStaleAgeBadgeClass(ageDays))}>
                     ค้าง {ageDays} วัน
                   </Badge>
                 )}
