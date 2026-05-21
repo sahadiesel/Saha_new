@@ -38,70 +38,8 @@ import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
-import { format, parseISO, isValid } from "date-fns";
-
-/** กันค่าวันที่ผิดรูปแบบ / null / Timestamp ทำให้ format() และ Calendar ได้ RangeError: Invalid time value */
-function dateFromYyyyMmDdField(value: unknown): Date | undefined {
-  if (value == null || value === "") return undefined;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const d = new Date(value);
-    return isValid(d) ? d : undefined;
-  }
-  if (value instanceof Date) {
-    return isValid(value) ? value : undefined;
-  }
-  if (typeof value === "string") {
-    const s = value.trim();
-    if (!s) return undefined;
-    const ymd = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-    if (ymd) {
-      const y = Number(ymd[1]);
-      const mo = Number(ymd[2]);
-      const day = Number(ymd[3]);
-      const d = new Date(y, mo - 1, day);
-      if (
-        !isValid(d) ||
-        d.getFullYear() !== y ||
-        d.getMonth() !== mo - 1 ||
-        d.getDate() !== day
-      ) {
-        return undefined;
-      }
-      return d;
-    }
-    const d = parseISO(s);
-    return isValid(d) ? d : undefined;
-  }
-  if (typeof value === "object" && value !== null && "toDate" in value && typeof (value as { toDate?: () => Date }).toDate === "function") {
-    try {
-      const d = (value as { toDate: () => Date }).toDate();
-      return d instanceof Date && isValid(d) ? d : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
-function formatDdMmYyyySafe(value: unknown): string | null {
-  try {
-    const d = dateFromYyyyMmDdField(value);
-    if (!d) return null;
-    return format(d, "dd/MM/yyyy");
-  } catch {
-    return null;
-  }
-}
-
-function toYyyyMmDdOrNull(value: unknown): string | null {
-  try {
-    const d = dateFromYyyyMmDdField(value);
-    if (!d) return null;
-    return format(d, "yyyy-MM-dd");
-  } catch {
-    return null;
-  }
-}
+import { format } from "date-fns";
+import { dateFromYyyyMmDdField, formatDdMmYyyySafe, toYyyyMmDdOrNull } from "@/lib/date-utils";
 
 import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";

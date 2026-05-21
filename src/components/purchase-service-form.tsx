@@ -36,7 +36,8 @@ import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns";
+import { dateFromYyyyMmDdField, formatDdMmYyyySafe, toYyyyMmDdOrNull } from "@/lib/date-utils";
 
 import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { VENDOR_TYPES } from "@/lib/constants";
@@ -168,6 +169,7 @@ export function PurchaseServiceForm() {
       items: [{ description: "", quantity: 1, unitPrice: 0, total: 0 }],
       withTax: true,
       paymentMode: "CASH",
+      dueDate: null,
       subtotal: 0,
       discountAmount: 0,
       net: 0,
@@ -237,7 +239,7 @@ export function PurchaseServiceForm() {
         vatAmount: docToEdit.vatAmount || 0,
         grandTotal: docToEdit.grandTotal || 0,
         paymentMode: docToEdit.paymentMode || "CASH",
-        dueDate: docToEdit.dueDate || null,
+        dueDate: toYyyyMmDdOrNull(docToEdit.dueDate) ?? null,
         expectedPaymentAccountId: docToEdit.expectedPaymentAccountId || "",
         note: docToEdit.note || "",
         suggestedAccountId: docToEdit.suggestedAccountId || "",
@@ -519,8 +521,8 @@ export function PurchaseServiceForm() {
                             <FormItem className="flex flex-col">
                               <FormLabel>วันที่ในบิล</FormLabel>
                               <Popover>
-                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
+                                <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !dateFromYyyyMmDdField(field.value) && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{formatDdMmYyyySafe(field.value) ?? <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateFromYyyyMmDdField(field.value)} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : null)} initialFocus /></PopoverContent>
                               </Popover>
                               <FormMessage />
                             </FormItem>
@@ -548,8 +550,8 @@ export function PurchaseServiceForm() {
                               <FormItem className="flex flex-col">
                                 <FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel>
                                 <Popover>
-                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
-                                  <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")} initialFocus /></PopoverContent>
+                                  <PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !dateFromYyyyMmDdField(field.value) && "text-muted-foreground")} disabled={isSubmitting || isLocked}>{formatDdMmYyyySafe(field.value) ?? <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50" /></Button></FormControl></PopoverTrigger>
+                                  <PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={dateFromYyyyMmDdField(field.value)} onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : null)} initialFocus /></PopoverContent>
                                 </Popover>
                                 <FormMessage />
                               </FormItem>

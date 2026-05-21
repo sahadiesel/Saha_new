@@ -46,6 +46,7 @@ import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { DATA_LIMITS } from "@/lib/constants";
+import { fetchQuotationsForBilling, mapDocItemsToInvoiceLines } from "@/lib/quotation-picker";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ").max(DATA_LIMITS.MAX_STRING_SHORT, "ยาวเกินกำหนด"),
@@ -118,6 +119,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
   const [isSearchingQt, setIsSearchingQt] = useState(false);
   const [isQtSearchOpen, setIsQtSearchOpen] = useState(false);
   const [qtSearchQuery, setQtSearchQuery] = useState("");
+  const autoLoadedQuotationRef = useRef(false);
 
   const jobDocRef = useMemo(() => (db && effectiveJobId ? doc(db, "jobs", effectiveJobId) : null), [db, effectiveJobId]);
   const docToEditRef = useMemo(() => (db && effectiveEditDocId ? doc(db, "documents", effectiveEditDocId) : null), [db, effectiveEditDocId]);
@@ -400,29 +402,63 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     }
   };
 
-  const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
-    const itemsFromDoc = (sourceDoc.items || []).map((item: any) => ({ description: String(item.description ?? ''), quantity: Number(item.quantity ?? 1), unitPrice: Number(item.unitPrice ?? 0), total: Math.round((Number(item.quantity ?? 1) * Number(item.unitPrice ?? 0)) * 100) / 100 }));
-    if (itemsFromDoc.length === 0) return;
+  const applyQuotationToForm = (sourceDoc: DocumentType) => {
+    const itemsFromDoc = mapDocItemsToInvoiceLines(sourceDoc);
+    if (itemsFromDoc.length === 0) {
+      toast({ variant: "destructive", title: "ใบเสนอราคาไม่มีรายการ", description: sourceDoc.docNo });
+      return false;
+    }
     replace(itemsFromDoc);
-    if (sourceDoc.docType === 'QUOTATION') setReferencedQuotationId(sourceDoc.id);
-    if (sourceDoc.jobId) form.setValue('jobId', sourceDoc.jobId);
-    form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
-    form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
-    form.setValue('receiverName', sourceDoc.customerSnapshot?.name || "");
+    if (sourceDoc.docType === "QUOTATION") setReferencedQuotationId(sourceDoc.id);
+    if (sourceDoc.jobId) form.setValue("jobId", sourceDoc.jobId);
+    form.setValue("discountAmount", Number(sourceDoc.discountAmount ?? 0));
+    form.setValue("customerId", sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
+    form.setValue("receiverName", sourceDoc.customerSnapshot?.name || "");
     setIsQtSearchOpen(false);
+    return true;
   };
 
-  const loadAllDocs = async (type: DocType | 'BILLS') => {
-    if (!db) return;
-    if (type === 'QUOTATION') {
-        setIsSearchingQt(true);
-        try {
-            const snap = await getDocs(query(collection(db, "documents"), where("docType", "==", "QUOTATION"), limit(500)));
-            const getTime = (v: any) => v?.toMillis?.() || v?.seconds * 1000 || 0;
-            setAllQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentType)).filter(d => d.status !== 'CANCELLED').sort((a,b) => getTime(b.createdAt) - getTime(a.createdAt)));
-        } finally { setIsSearchingQt(false); }
+  const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
+    if (applyQuotationToForm(sourceDoc)) {
+      toast({ title: "ดึงรายการจากใบเสนอราคาแล้ว", description: sourceDoc.docNo });
     }
   };
+
+  const loadQuotations = async (searchTerm?: string) => {
+    if (!db) return;
+    setIsSearchingQt(true);
+    try {
+      setAllQuotations(
+        await fetchQuotationsForBilling(db, {
+          jobId: effectiveJobId,
+          linkedSalesDocId: job?.salesDocType === "QUOTATION" ? job.salesDocId : null,
+          searchTerm: searchTerm ?? qtSearchQuery,
+        })
+      );
+    } finally {
+      setIsSearchingQt(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!db || isEditing || isLoadingCustomers || isLoadingJob || !job || autoLoadedQuotationRef.current) return;
+    if (job.salesDocType !== "QUOTATION" || !job.salesDocId) return;
+    autoLoadedQuotationRef.current = true;
+    (async () => {
+      const snap = await getDoc(doc(db, "documents", job.salesDocId!));
+      if (!snap.exists()) return;
+      const qDoc = { id: snap.id, ...snap.data() } as DocumentType;
+      if (applyQuotationToForm(qDoc)) {
+        toast({ title: "ดึงรายการจากใบเสนอราคาที่ผูกกับงานแล้ว", description: job.salesDocNo || qDoc.docNo });
+      }
+    })();
+  }, [db, isEditing, isLoadingCustomers, isLoadingJob, job]);
+
+  useEffect(() => {
+    if (!isQtSearchOpen || !db) return;
+    const t = window.setTimeout(() => void loadQuotations(qtSearchQuery), 300);
+    return () => window.clearTimeout(t);
+  }, [qtSearchQuery, isQtSearchOpen, db, effectiveJobId, job?.salesDocId]);
 
   const isFormLoading = isLoadingJob || isLoadingStore || isLoadingCustomers || (effectiveEditDocId && isLoadingDocToEdit);
 
@@ -521,7 +557,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
               <CardTitle className="text-base whitespace-nowrap">ข้อมูลลูกค้าและรายการ</CardTitle>
               <div className="flex gap-2">
                 <Popover open={isQtSearchOpen} onOpenChange={setIsQtSearchOpen}>
-                  <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => loadAllDocs('QUOTATION')} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
+                  <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => { setQtSearchQuery(job?.salesDocNo || ""); void loadQuotations(job?.salesDocNo || ""); }} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
                   <PopoverContent className="w-80 p-0" align="start">
                     <div className="p-2 border-b">
                       <Input placeholder="ค้นหาชื่อลูกค้า หรือเลขที่..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} />

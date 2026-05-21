@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -59,6 +59,7 @@ import {
   buildCustomerSnapshotForTaxInvoice,
   getInvoiceableTaxProfiles,
 } from "@/lib/customer-utils";
+import { fetchQuotationsForBilling, mapDocItemsToInvoiceLines } from "@/lib/quotation-picker";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "กรุณากรอกรายละเอียดรายการ"),
@@ -151,6 +152,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const [isSearchingQt, setIsSearchingQt] = useState(false);
   const [isQtSearchOpen, setIsQtSearchOpen] = useState(false);
   const [qtSearchQuery, setQtSearchQuery] = useState("");
+  const autoLoadedQuotationRef = useRef(false);
 
   const jobDocRef = useMemo(() => (db && effectiveJobId ? doc(db, "jobs", effectiveJobId) : null), [db, effectiveJobId]);
   const docToEditRef = useMemo(() => (db && effectiveEditDocId ? doc(db, "documents", effectiveEditDocId) : null), [db, effectiveEditDocId]);
@@ -535,15 +537,24 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
   };
 
-  const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
-    const itemsFromDoc = (sourceDoc.items || []).map((item: any) => ({ description: String(item.description ?? ''), quantity: Number(item.quantity ?? 1), unitPrice: Number(item.unitPrice ?? 0), total: Math.round((Number(item.quantity ?? 1) * Number(item.unitPrice ?? 0)) * 100) / 100 }));
-    if (itemsFromDoc.length === 0) return;
+  const applyQuotationToForm = (sourceDoc: DocumentType, opts?: { silent?: boolean }) => {
+    const itemsFromDoc = mapDocItemsToInvoiceLines(sourceDoc);
+    if (itemsFromDoc.length === 0) {
+      if (!opts?.silent) {
+        toast({
+          variant: "destructive",
+          title: "ใบเสนอราคาไม่มีรายการ",
+          description: `เปิด ${sourceDoc.docNo} แล้วเพิ่มรายการก่อนดึงเข้าบิล`,
+        });
+      }
+      return false;
+    }
     replace(itemsFromDoc);
-    if (sourceDoc.docType === 'QUOTATION') setReferencedQuotationId(sourceDoc.id);
-    if (sourceDoc.jobId) form.setValue('jobId', sourceDoc.jobId);
-    form.setValue('discountAmount', Number(sourceDoc.discountAmount ?? 0));
-    form.setValue('customerId', sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
-    form.setValue('receiverName', sourceDoc.customerSnapshot?.taxName || sourceDoc.customerSnapshot?.name || "");
+    if (sourceDoc.docType === "QUOTATION") setReferencedQuotationId(sourceDoc.id);
+    if (sourceDoc.jobId) form.setValue("jobId", sourceDoc.jobId);
+    form.setValue("discountAmount", Number(sourceDoc.discountAmount ?? 0));
+    form.setValue("customerId", sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "");
+    form.setValue("receiverName", sourceDoc.customerSnapshot?.taxName || sourceDoc.customerSnapshot?.name || "");
     const cid = sourceDoc.customerId || sourceDoc.customerSnapshot?.id || "";
     const cust = customers.find((c) => c.id === cid);
     if (cust) {
@@ -553,19 +564,75 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
       form.setValue("taxProfileId", match?.id ?? profs[0]?.id ?? "");
     }
     setIsQtSearchOpen(false);
+    return true;
   };
 
-  const loadAllDocs = async (type: DocType | 'BILLS') => {
-    if (!db) return;
-    if (type === 'QUOTATION') {
-        setIsSearchingQt(true);
-        try {
-            const snap = await getDocs(query(collection(db, "documents"), where("docType", "==", "QUOTATION"), limit(500)));
-            const getTime = (v: any) => v?.toMillis?.() || v?.seconds * 1000 || 0;
-            setAllQuotations(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentType)).filter(d => d.status !== 'CANCELLED').sort((a,b) => getTime(b.createdAt) - getTime(a.createdAt)));
-        } finally { setIsSearchingQt(false); }
+  const handleFetchFromDoc = async (sourceDoc: DocumentType) => {
+    if (applyQuotationToForm(sourceDoc)) {
+      toast({ title: "ดึงรายการจากใบเสนอราคาแล้ว", description: sourceDoc.docNo });
     }
   };
+
+  const loadQuotations = async (searchTerm?: string) => {
+    if (!db) return;
+    setIsSearchingQt(true);
+    try {
+      const list = await fetchQuotationsForBilling(db, {
+        jobId: effectiveJobId,
+        linkedSalesDocId:
+          job?.salesDocType === "QUOTATION" ? job.salesDocId : null,
+        searchTerm: searchTerm ?? qtSearchQuery,
+      });
+      setAllQuotations(list);
+    } finally {
+      setIsSearchingQt(false);
+    }
+  };
+
+  /** เปิดจากงานที่ผูกใบเสนอราคาแล้ว — ดึงรายการอัตโนมัติ */
+  useEffect(() => {
+    if (!db || isEditing || isLoadingCustomers || isLoadingJob || !job || autoLoadedQuotationRef.current) return;
+    if (job.salesDocType !== "QUOTATION" || !job.salesDocId) return;
+    autoLoadedQuotationRef.current = true;
+
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "documents", job.salesDocId!));
+        if (!snap.exists()) {
+          toast({
+            variant: "destructive",
+            title: "ไม่พบใบเสนอราคาที่ผูกกับงาน",
+            description: job.salesDocNo || job.salesDocId,
+          });
+          return;
+        }
+        const qDoc = { id: snap.id, ...snap.data() } as DocumentType;
+        if (applyQuotationToForm(qDoc, { silent: true })) {
+          toast({
+            title: "ดึงรายการจากใบเสนอราคาที่ผูกกับงานแล้ว",
+            description: job.salesDocNo || qDoc.docNo,
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "ใบเสนอราคาไม่มีรายการ",
+            description: `กรุณาเปิด ${job.salesDocNo || qDoc.docNo} แล้วเพิ่มรายการก่อนออกบิล`,
+          });
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "โหลดใบเสนอราคาไม่สำเร็จ";
+        toast({ variant: "destructive", title: "ดึงใบเสนอราคาไม่สำเร็จ", description: msg });
+      }
+    })();
+  }, [db, isEditing, isLoadingCustomers, isLoadingJob, job, customers, form, replace, toast]);
+
+  useEffect(() => {
+    if (!isQtSearchOpen || !db) return;
+    const t = window.setTimeout(() => {
+      void loadQuotations(qtSearchQuery);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [qtSearchQuery, isQtSearchOpen, db, effectiveJobId, job?.salesDocId]);
 
   const isFormLoading = isLoadingCustomers || isLoadingStore || isLoadingJob || (effectiveEditDocId && isLoadingDocToEdit);
 
@@ -664,7 +731,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               <CardTitle className="text-base whitespace-nowrap">ข้อมูลลูกค้าและรายการ</CardTitle>
               <div className="flex gap-2">
                 <Popover open={isQtSearchOpen} onOpenChange={setIsQtSearchOpen}>
-                  <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => loadAllDocs('QUOTATION')} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
+                  <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => { setQtSearchQuery(job?.salesDocNo || ""); void loadQuotations(job?.salesDocNo || ""); }} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
                   <PopoverContent className="w-80 p-0" align="start">
                     <div className="p-2 border-b">
                       <Input placeholder="ค้นหาชื่อลูกค้า หรือเลขที่..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} />
@@ -672,10 +739,14 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                     <ScrollArea className="h-60">
                       {isSearchingQt ? (
                         <Loader2 className="animate-spin m-4" /> 
-                      ) : allQuotations.filter(q => 
-                          q.docNo.toLowerCase().includes(qtSearchQuery.toLowerCase()) || 
-                          q.customerSnapshot?.name?.toLowerCase().includes(qtSearchQuery.toLowerCase())
-                        ).map(q => (
+                      ) : allQuotations.filter(q => {
+                          const term = qtSearchQuery.toLowerCase().trim();
+                          if (!term) return true;
+                          return (
+                            q.docNo.toLowerCase().includes(term) ||
+                            q.customerSnapshot?.name?.toLowerCase().includes(term)
+                          );
+                        }).map(q => (
                           <Button key={q.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleFetchFromDoc(q)}>
                             <div className="flex flex-col">
                               <span className="font-semibold">{q.docNo}</span>
