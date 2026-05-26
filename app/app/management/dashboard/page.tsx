@@ -193,13 +193,28 @@ function AppDashboardPage() {
       () => mark("documents")
     );
 
+    // ดึงรายการสมุดบัญชีย้อนหลัง 12 เดือน เพื่อให้กราฟกระแสเงินสด (3 เดือน) มีข้อมูลครบ
+    // ก่อนหน้านี้ใช้แค่ limit(600) ทำให้บางเดือน (เช่น เดือน 3) ถูกตัดออกเมื่อช่วงล่าสุดมีรายการเยอะ
+    const entriesLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 11)), "yyyy-MM-dd");
     const unsubEntries = onSnapshot(
-      query(collection(db, "accountingEntries"), orderBy("entryDate", "desc"), limit(600)),
+      query(
+        collection(db, "accountingEntries"),
+        where("entryDate", ">=", entriesLookbackYmd),
+        orderBy("entryDate", "desc"),
+        limit(5000)
+      ),
       (snap) => {
         setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() } as AccountingEntry)));
         mark("entries");
       },
-      () => mark("entries")
+      (err: FirestoreError) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+        setEntries([]);
+        mark("entries");
+      }
     );
 
     const unsubObligations = onSnapshot(
