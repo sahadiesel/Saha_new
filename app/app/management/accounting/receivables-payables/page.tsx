@@ -74,6 +74,7 @@ import {
   dedupeUnpaidArBySalesDocNo,
   isArDedupeDocType,
 } from "@/lib/accounting-ar-dedupe";
+import { resolveArOutstandingBalance, resolveArPaidAmount } from "@/lib/accounting-ar-outstanding";
 import { PayCreditorDialog } from "@/components/accounting/pay-creditor-dialog";
 
 const formatCurrency = (value: number | null | undefined) => {
@@ -333,6 +334,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
           netAmount?: number;
           vatAmount?: number;
           grandTotal?: number;
+          paymentSummary?: DocumentType["paymentSummary"];
         }
       >
     >({});
@@ -531,6 +533,66 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                     await batchNames.commit();
                     toast({ title: 'อัปเดตชื่อลูกค้าในลูกหนี้', description: `เติมชื่อจากเอกสารต้นทาง ${nNames} รายการ (ให้ค้นหาตามชื่อตรงกับรายการจริง)` });
                 }
+
+                // ซิงก์ amountPaid/balance บน obligation ให้ตรงกับใบกำกับ (grandTotal − paymentSummary.paidTotal)
+                if (cancelled) return;
+                const batchBalance = writeBatch(db);
+                let nBalance = 0;
+                for (const d of arAll.docs) {
+                    const ob = { id: d.id, ...d.data() } as WithId<AccountingObligation>;
+                    if (ob.status === "PAID" || !ob.sourceDocId || ob.sourceDocType === "CREDIT_NOTE") continue;
+                    const src = await getDoc(doc(db, "documents", ob.sourceDocId));
+                    if (!src.exists()) continue;
+                    const dd = src.data() as DocumentType;
+                    const resolvedPaid = resolveArPaidAmount(ob, dd);
+                    const resolvedBalance = resolveArOutstandingBalance(ob, dd);
+                    const resolvedTotal = Number(dd.grandTotal ?? ob.amountTotal ?? 0);
+                    const resolvedStatus: AccountingObligation["status"] =
+                      resolvedBalance <= 0.009 ? "PAID" : resolvedPaid > 0.009 ? "PARTIAL" : "UNPAID";
+
+                    const needsObUpdate =
+                      Math.abs((ob.amountPaid ?? 0) - resolvedPaid) > 0.009 ||
+                      Math.abs((ob.balance ?? 0) - resolvedBalance) > 0.009 ||
+                      Math.abs((ob.amountTotal ?? 0) - resolvedTotal) > 0.009 ||
+                      ob.status !== resolvedStatus;
+
+                    if (needsObUpdate) {
+                        batchBalance.update(doc(db, "accountingObligations", ob.id), {
+                            amountPaid: resolvedPaid,
+                            balance: resolvedBalance,
+                            amountTotal: resolvedTotal,
+                            status: resolvedStatus,
+                            updatedAt: serverTimestamp(),
+                        });
+                        nBalance++;
+                    }
+
+                    const ps = dd.paymentSummary;
+                    const psBalance = ps?.balance;
+                    const psPaid = ps?.paidTotal;
+                    const needsDocUpdate =
+                      resolvedTotal > 0 &&
+                      ps != null &&
+                      (Math.abs((psBalance ?? 0) - resolvedBalance) > 0.009 ||
+                        Math.abs((psPaid ?? 0) - resolvedPaid) > 0.009);
+
+                    if (needsDocUpdate) {
+                        batchBalance.update(doc(db, "documents", ob.sourceDocId), {
+                            paymentSummary: {
+                                paidTotal: resolvedPaid,
+                                balance: resolvedBalance,
+                                paymentStatus: resolvedStatus,
+                            },
+                            updatedAt: serverTimestamp(),
+                        });
+                    }
+
+                    if (nBalance >= 400) break;
+                }
+                if (nBalance > 0 && !cancelled) {
+                    await batchBalance.commit();
+                    toast({ title: "ซิงก์ยอดลูกหนี้", description: `อัปเดตยอดคงค้างให้ตรงกับใบกำกับ ${nBalance} รายการ` });
+                }
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : String(e);
                 toast({ variant: 'destructive', title: 'ซ่อมข้อมูลลูกหนี้ไม่สำเร็จ', description: msg });
@@ -593,6 +655,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                     netAmount,
                     vatAmount,
                     grandTotal,
+                    paymentSummary: data.paymentSummary,
                   },
                 }));
             }, () => {});
@@ -652,9 +715,15 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
             const grand = Number(det?.grandTotal ?? ob.amountTotal ?? 0);
             const vat = Number(det?.vatAmount ?? 0);
             const net = Number(det?.netAmount ?? Math.max(0, grand - vat));
-            const denom = Math.max(Number(ob.amountTotal) || grand || 0, 0.00001);
-            const paid = Number(ob.amountPaid) || 0;
-            const bal = Number(ob.balance) || 0;
+            const paid =
+              type === "AR"
+                ? resolveArPaidAmount(ob, det)
+                : Number(ob.amountPaid) || 0;
+            const bal =
+              type === "AR"
+                ? resolveArOutstandingBalance(ob, det)
+                : Number(ob.balance) || 0;
+            const denom = Math.max(grand || Number(ob.amountTotal) || 0, 0.00001);
 
             paidNet += (net * paid) / denom;
             paidVat += (vat * paid) / denom;
@@ -690,6 +759,14 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 <Table className="w-full table-fixed"><TableHeader><TableRow><TableHead className="w-[10%] whitespace-nowrap">วันที่</TableHead><TableHead className="w-[14%] whitespace-nowrap">{type === 'AR' ? 'เลขที่เอกสาร' : 'เลขที่บิล'}</TableHead><TableHead className="w-[18%]">{type === 'AR' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดก่อนภาษี</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ภาษี</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดรวม</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ชำระแล้ว</TableHead><TableHead className="w-[12%] whitespace-nowrap text-right">ยอดคงค้าง</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">จัดการ</TableHead></TableRow></TableHeader>
                     <TableBody>{filteredObligations.length > 0 ? filteredObligations.map(ob => {
                             const details = docDetails[ob.sourceDocId || ''];
+                            const paidAmount =
+                              type === "AR"
+                                ? resolveArPaidAmount(ob, details)
+                                : Number(ob.amountPaid) || 0;
+                            const outstandingBalance =
+                              type === "AR"
+                                ? resolveArOutstandingBalance(ob, details)
+                                : Number(ob.balance) || 0;
                             const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
                             const billDateRaw = ob.docDate || (ob as any).createdAt?.toDate?.();
                             const customerIdForReceipt = ob.customerId || details?.customerId || '';
@@ -698,17 +775,17 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                             const arReceiveDisabled =
                               type === "AR" &&
                               (ob.sourceDocType === "CREDIT_NOTE" ||
-                                (ob.balance ?? 0) <= 0.009 ||
+                                outstandingBalance <= 0.009 ||
                                 (requireReceiptBeforeReceive && !isReceiptIssued));
                             const receiptHref = (() => {
                               const q = new URLSearchParams();
                               q.set('tab', 'new');
                               if (customerIdForReceipt) q.set('customerId', customerIdForReceipt);
                               q.set('sourceDocId', ob.sourceDocId);
-                              q.set('presetAmount', String(ob.balance ?? ''));
+                              q.set('presetAmount', String(outstandingBalance));
                               return `/app/management/accounting/documents/receipt?${q.toString()}`;
                             })();
-                            const apPayDisabled = type === "AP" && (ob.status === "PAID" || (ob.balance ?? 0) <= 0.009);
+                            const apPayDisabled = type === "AP" && (ob.status === "PAID" || outstandingBalance <= 0.009);
                             return (
                               <TableRow key={ob.id} className="hover:bg-muted/30">
                                 <TableCell className="text-xs whitespace-nowrap">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
@@ -745,14 +822,14 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                 <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.netAmount ?? Math.max(0, (details?.grandTotal ?? ob.amountTotal ?? 0) - (details?.vatAmount ?? 0))))}</TableCell>
                                 <TableCell className="text-right text-xs whitespace-nowrap">{(details?.vatAmount ?? 0) > 0 ? formatCurrency(details?.vatAmount) : ""}</TableCell>
                                 <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.grandTotal ?? ob.amountTotal ?? 0))}</TableCell>
-                                <TableCell className="text-right text-xs text-green-600 whitespace-nowrap">{formatCurrency(ob.amountPaid)}</TableCell>
+                                <TableCell className="text-right text-xs text-green-600 whitespace-nowrap">{formatCurrency(paidAmount)}</TableCell>
                                 <TableCell
                                   className={cn(
                                     "text-right font-bold whitespace-nowrap",
-                                    type === "AR" && (ob.balance ?? 0) < 0 && "text-rose-700"
+                                    type === "AR" && outstandingBalance < 0 && "text-rose-700"
                                   )}
                                 >
-                                  {formatCurrency(ob.balance)}
+                                  {formatCurrency(outstandingBalance)}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <DropdownMenu>
