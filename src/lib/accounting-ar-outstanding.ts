@@ -3,6 +3,8 @@ import { roundMoney } from "@/lib/accounting-balance";
 
 export type ArDocPaymentSnapshot = {
   grandTotal?: number;
+  netAmount?: number;
+  vatAmount?: number;
   paymentSummary?: {
     paidTotal?: number;
     balance?: number;
@@ -40,4 +42,55 @@ export function resolveArOutstandingBalance(
     return roundMoney(grand - paid);
   }
   return roundMoney(Number(ob.balance) || 0);
+}
+
+/** ยอดก่อนภาษี/ภาษี/รวม — กัน net ผิดปกติจากฟิลด์เอกสาร */
+export function sanitizeArDocAmounts(
+  ob: Pick<AccountingObligation, "amountTotal">,
+  doc?: ArDocPaymentSnapshot | null
+): { net: number; vat: number; grand: number } {
+  const grand = roundMoney(Number(doc?.grandTotal ?? ob.amountTotal ?? 0));
+  let vat = roundMoney(Number(doc?.vatAmount ?? 0));
+  if (!Number.isFinite(vat) || vat < 0 || vat > grand + 0.01) vat = 0;
+  let net = roundMoney(Number(doc?.netAmount ?? 0));
+  if (!Number.isFinite(net) || net < 0 || net > grand + 0.01) {
+    net = roundMoney(Math.max(0, grand - vat));
+  }
+  return { net, vat, grand };
+}
+
+/** แยกยอดชำระแล้ว/ค้างชำระ เป็น net/vat สำหรับสรุปหน้าลูกหนี้ */
+export function splitObligationPaidOutstanding(
+  ob: Pick<AccountingObligation, "amountPaid" | "status" | "amountTotal" | "balance" | "sourceDocType">,
+  doc?: ArDocPaymentSnapshot | null,
+  type: "AR" | "AP" = "AR"
+): {
+  net: number;
+  vat: number;
+  grand: number;
+  paid: number;
+  balance: number;
+  paidNet: number;
+  paidVat: number;
+  outNet: number;
+  outVat: number;
+} {
+  const { net, vat, grand } = sanitizeArDocAmounts(ob, doc);
+  const paidRaw =
+    type === "AR" ? resolveArPaidAmount(ob, doc) : roundMoney(Number(ob.amountPaid) || 0);
+  const paid =
+    grand > 0.009 ? roundMoney(Math.min(Math.max(0, paidRaw), grand)) : roundMoney(Math.max(0, paidRaw));
+  const balanceRaw =
+    type === "AR" ? resolveArOutstandingBalance(ob, doc) : roundMoney(Number(ob.balance) || 0);
+  const balance =
+    grand > 0.009
+      ? roundMoney(Math.min(Math.max(0, balanceRaw), grand))
+      : roundMoney(Math.max(0, balanceRaw));
+
+  const paidNet = grand > 0.009 ? roundMoney((net * paid) / grand) : 0;
+  const paidVat = grand > 0.009 ? roundMoney((vat * paid) / grand) : 0;
+  const outNet = grand > 0.009 ? roundMoney((net * balance) / grand) : 0;
+  const outVat = grand > 0.009 ? roundMoney((vat * balance) / grand) : 0;
+
+  return { net, vat, grand, paid, balance, paidNet, paidVat, outNet, outVat };
 }

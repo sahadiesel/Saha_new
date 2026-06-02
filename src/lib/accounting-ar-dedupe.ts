@@ -19,7 +19,17 @@ export function isArDedupeDocType(t: string | undefined): boolean {
 }
 
 export function pickCanonicalArAmongDuplicates(group: WithId<AccountingObligation>[]): WithId<AccountingObligation> {
-  return [...group].sort((a, b) => {
+  if (group.length <= 1) return group[0];
+
+  const outstanding = group.filter(
+    (o) => o.status !== "PAID" && (Number(o.balance) || 0) > 0.009
+  );
+  const pool = outstanding.length > 0 ? outstanding : group;
+
+  const byArId = pool.find((o) => o.sourceDocId && o.id === `AR_${o.sourceDocId}`);
+  if (byArId) return byArId;
+
+  return [...pool].sort((a, b) => {
     const da = (a.docDate || "").trim();
     const db = (b.docDate || "").trim();
     if (da && db && da !== db) return da.localeCompare(db);
@@ -32,6 +42,11 @@ export function pickCanonicalArAmongDuplicates(group: WithId<AccountingObligatio
     if (ta !== tb) return ta - tb;
     return (a.sourceDocId || "").localeCompare(b.sourceDocId || "");
   })[0];
+}
+
+/** รวมรายการลูกหนี้ทั้งชำระแล้วและค้างชำระ — แถวเดียวต่อเลขที่ + ลูกค้า */
+export function dedupeArBySalesDocNo(obligations: WithId<AccountingObligation>[]): WithId<AccountingObligation>[] {
+  return dedupeUnpaidArBySalesDocNo(obligations);
 }
 
 /** แสดงแถวเดียวต่อเลขที่ + ลูกค้า สำหรับใบกำกับ / ใบส่งของ / วางบิล */

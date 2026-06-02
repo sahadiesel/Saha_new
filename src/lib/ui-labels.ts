@@ -154,6 +154,11 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
         if (s === 'CANCELLED') return 'ยกเลิก';
     }
 
+    // ใบลดหนี้ — จบที่ตรวจสอบแล้ว ไม่ต้องออกใบเสร็จ
+    if (docType === 'CREDIT_NOTE' && s === 'APPROVED') {
+        return 'ตรวจสอบแล้ว';
+    }
+
     return DOC_STATUS_LABELS[s] || status;
 }
 

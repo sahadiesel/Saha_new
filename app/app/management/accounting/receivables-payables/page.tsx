@@ -71,10 +71,14 @@ import { FirestorePermissionError } from '@/firebase/errors';
 import { ReceiveArPaymentDialog } from "@/components/accounting/receive-ar-payment-dialog";
 import {
   arInvoiceDedupeKey,
-  dedupeUnpaidArBySalesDocNo,
+  dedupeArBySalesDocNo,
   isArDedupeDocType,
 } from "@/lib/accounting-ar-dedupe";
-import { resolveArOutstandingBalance, resolveArPaidAmount } from "@/lib/accounting-ar-outstanding";
+import {
+  resolveArOutstandingBalance,
+  resolveArPaidAmount,
+  splitObligationPaidOutstanding,
+} from "@/lib/accounting-ar-outstanding";
 import { PayCreditorDialog } from "@/components/accounting/pay-creditor-dialog";
 
 const formatCurrency = (value: number | null | undefined) => {
@@ -89,6 +93,14 @@ const roundMoney2 = (n: number) => Math.round(n * 100) / 100;
 type ReceivablesPayablesSummary = {
   paid: { net: number; vat: number; grand: number; lineCount: number };
   outstanding: { net: number; vat: number; grand: number; count: number };
+};
+
+type PaymentStatusFilter = "ALL" | "PAID" | "OUTSTANDING";
+
+const PAYMENT_FILTER_LABELS: Record<PaymentStatusFilter, string> = {
+  ALL: "ทั้งหมด",
+  PAID: "ชำระแล้ว",
+  OUTSTANDING: "ค้างชำระ",
 };
 
 /** ดึงใบกำกับ APPROVED ทั้งชุดที่เกี่ยวกับการซ่อมลูกหนี้ — แบ่งหน้า + orderBy ไม่ให้พลาดใบที่ไม่อยู่ใน limit แรก */
@@ -317,7 +329,7 @@ function AddCreditorDialog({
     return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="expectedPaymentAccountId" render={({ field }) => (<FormItem><FormLabel>บัญชีที่คาดว่าจะจ่าย (ไม่บังคับ)</FormLabel><Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"}><FormControl><SelectTrigger><SelectValue placeholder="ไม่ระบุ"/></SelectTrigger></FormControl><SelectContent><SelectItem value="__none__">ไม่ระบุ</SelectItem>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select></FormItem>)}/><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
-function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (s: ReceivablesPayablesSummary) => void; isAdmin?: boolean }) {
+function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, paymentFilter: PaymentStatusFilter, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (s: ReceivablesPayablesSummary) => void; isAdmin?: boolean }) {
     const { db } = useFirebase();
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
@@ -693,12 +705,25 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
             });
         }
         if (type === 'AR') {
-            const unpaidPart = result.filter((o) => o.status !== "PAID");
-            const paidPart = result.filter((o) => o.status === "PAID");
-            result = [...dedupeUnpaidArBySalesDocNo(unpaidPart), ...paidPart];
+            result = dedupeArBySalesDocNo(result);
+        }
+        if (paymentFilter !== "ALL") {
+            result = result.filter((ob) => {
+                const det = docDetails[ob.sourceDocId || ""];
+                const balance =
+                  type === "AR"
+                    ? resolveArOutstandingBalance(ob, det)
+                    : Number(ob.balance) || 0;
+                const paid =
+                  type === "AR"
+                    ? resolveArPaidAmount(ob, det)
+                    : Number(ob.amountPaid) || 0;
+                if (paymentFilter === "OUTSTANDING") return balance > 0.009;
+                return paid > 0.009 && balance <= 0.009;
+            });
         }
         return result;
-    }, [obligations, searchTerm, monthFilter, docDetails, type]);
+    }, [obligations, searchTerm, monthFilter, paymentFilter, docDetails, type]);
 
     useEffect(() => {
         let paidNet = 0;
@@ -712,27 +737,16 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
 
         for (const ob of filteredObligations) {
             const det = docDetails[ob.sourceDocId || ""];
-            const grand = Number(det?.grandTotal ?? ob.amountTotal ?? 0);
-            const vat = Number(det?.vatAmount ?? 0);
-            const net = Number(det?.netAmount ?? Math.max(0, grand - vat));
-            const paid =
-              type === "AR"
-                ? resolveArPaidAmount(ob, det)
-                : Number(ob.amountPaid) || 0;
-            const bal =
-              type === "AR"
-                ? resolveArOutstandingBalance(ob, det)
-                : Number(ob.balance) || 0;
-            const denom = Math.max(grand || Number(ob.amountTotal) || 0, 0.00001);
+            const split = splitObligationPaidOutstanding(ob, det, type);
 
-            paidNet += (net * paid) / denom;
-            paidVat += (vat * paid) / denom;
-            outNet += (net * bal) / denom;
-            outVat += (vat * bal) / denom;
-            paidGrand += paid;
-            outGrand += bal;
-            if (bal > 0.009) outstandingCount += 1;
-            if (paid > 0.009) paidLineCount += 1;
+            paidNet += split.paidNet;
+            paidVat += split.paidVat;
+            outNet += split.outNet;
+            outVat += split.outVat;
+            paidGrand += split.paid;
+            outGrand += split.balance;
+            if (split.balance > 0.009) outstandingCount += 1;
+            if (split.paid > 0.009 && split.balance <= 0.009) paidLineCount += 1;
         }
 
         onSummaryChange({
@@ -749,7 +763,7 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 count: outstandingCount,
             },
         });
-    }, [filteredObligations, docDetails, onSummaryChange]);
+    }, [filteredObligations, docDetails, onSummaryChange, type]);
 
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
 
@@ -759,14 +773,9 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                 <Table className="w-full table-fixed"><TableHeader><TableRow><TableHead className="w-[10%] whitespace-nowrap">วันที่</TableHead><TableHead className="w-[14%] whitespace-nowrap">{type === 'AR' ? 'เลขที่เอกสาร' : 'เลขที่บิล'}</TableHead><TableHead className="w-[18%]">{type === 'AR' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดก่อนภาษี</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ภาษี</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดรวม</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ชำระแล้ว</TableHead><TableHead className="w-[12%] whitespace-nowrap text-right">ยอดคงค้าง</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">จัดการ</TableHead></TableRow></TableHeader>
                     <TableBody>{filteredObligations.length > 0 ? filteredObligations.map(ob => {
                             const details = docDetails[ob.sourceDocId || ''];
-                            const paidAmount =
-                              type === "AR"
-                                ? resolveArPaidAmount(ob, details)
-                                : Number(ob.amountPaid) || 0;
-                            const outstandingBalance =
-                              type === "AR"
-                                ? resolveArOutstandingBalance(ob, details)
-                                : Number(ob.balance) || 0;
+                            const amounts = splitObligationPaidOutstanding(ob, details, type);
+                            const paidAmount = amounts.paid;
+                            const outstandingBalance = amounts.balance;
                             const isReceiptIssued = details?.receiptStatus === 'ISSUED_NOT_CONFIRMED' || details?.receiptStatus === 'CONFIRMED';
                             const billDateRaw = ob.docDate || (ob as any).createdAt?.toDate?.();
                             const customerIdForReceipt = ob.customerId || details?.customerId || '';
@@ -819,9 +828,9 @@ function ObligationList({ type, searchTerm, monthFilter, accounts, vendors, onSu
                                     ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
                                     : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}
                                 </TableCell>
-                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.netAmount ?? Math.max(0, (details?.grandTotal ?? ob.amountTotal ?? 0) - (details?.vatAmount ?? 0))))}</TableCell>
-                                <TableCell className="text-right text-xs whitespace-nowrap">{(details?.vatAmount ?? 0) > 0 ? formatCurrency(details?.vatAmount) : ""}</TableCell>
-                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(Number(details?.grandTotal ?? ob.amountTotal ?? 0))}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(amounts.net)}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{amounts.vat > 0 ? formatCurrency(amounts.vat) : ""}</TableCell>
+                                <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(amounts.grand)}</TableCell>
                                 <TableCell className="text-right text-xs text-green-600 whitespace-nowrap">{formatCurrency(paidAmount)}</TableCell>
                                 <TableCell
                                   className={cn(
@@ -922,6 +931,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         const now = new Date();
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     });
+    const [paymentFilter, setPaymentFilter] = useState<PaymentStatusFilter>("ALL");
     const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
     const [vendors, setVendors] = useState<WithId<Vendor>[]>([]);
     const [isAddingCreditor, setIsAddingCreditor] = useState(false);
@@ -989,7 +999,7 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
         <PageHeader title="ลูกหนี้/เจ้าหนี้" description="จัดการและติดตามข้อมูลลูกหนี้และเจ้าหนี้">
             <div className="flex flex-col items-end gap-2">
                 <div className="text-[10px] text-muted-foreground w-full text-right max-w-xl">
-                    สรุปตามรายการที่แสดง (กรองเดือน/ค้นหา)
+                    สรุปตามรายการที่แสดง (กรองเดือน/สถานะชำระ/ค้นหา)
                 </div>
                 <div className="flex flex-col gap-2">
                     <div className="flex flex-wrap justify-end gap-2">
@@ -1033,6 +1043,21 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
                 <div className="flex flex-wrap w-full md:w-auto items-center gap-2">
                     {activeTab === 'creditors' && (<Button onClick={() => setIsAddingCreditor(true)}><PlusCircle className="mr-2 h-4 w-4"/> เพิ่มเจ้าหนี้</Button>)}
                     <div className="w-full md:w-40">
+                      <Select value={paymentFilter} onValueChange={(v) => setPaymentFilter(v as PaymentStatusFilter)}>
+                        <SelectTrigger className="bg-background">
+                          <div className="flex items-center gap-2">
+                            <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                            <SelectValue placeholder="สถานะชำระ..." />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.keys(PAYMENT_FILTER_LABELS) as PaymentStatusFilter[]).map((key) => (
+                            <SelectItem key={key} value={key}>{PAYMENT_FILTER_LABELS[key]}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-full md:w-40">
                       <Select value={monthFilter} onValueChange={setMonthFilter}>
                         <SelectTrigger className="bg-background">
                           <div className="flex items-center gap-2">
@@ -1052,8 +1077,8 @@ function ReceivablesPayablesContent({ profile }: { profile: UserProfile }) {
             </div>
             <Card>
               <CardContent className="pt-6">
-                <TabsContent value="debtors" className="mt-0">{activeTab === 'debtors' && (<ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
-                <TabsContent value="creditors" className="mt-0">{activeTab === 'creditors' && (<ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
+                <TabsContent value="debtors" className="mt-0">{activeTab === 'debtors' && (<ObligationList type="AR" searchTerm={searchTerm} monthFilter={monthFilter} paymentFilter={paymentFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
+                <TabsContent value="creditors" className="mt-0">{activeTab === 'creditors' && (<ObligationList type="AP" searchTerm={searchTerm} monthFilter={monthFilter} paymentFilter={paymentFilter} accounts={accounts} vendors={vendors} onSummaryChange={handleSummaryChange} isAdmin={profile.role === "ADMIN"} />)}</TabsContent>
               </CardContent>
             </Card>
         </Tabs>

@@ -45,7 +45,12 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
         case "FINAL": description = doc.docType === "QUOTATION" ? "ราคาฉบับจริง — พร้อมแจ้งลูกค้า / รอดำเนินการต่อ" : "สถานะเอกสาร"; break;
         case "PENDING_REVIEW": description = "ส่งเรื่องให้ฝ่ายบัญชีตรวจสอบแล้ว"; break;
         case "REJECTED": description = "ฝ่ายบัญชีพบจุดที่ต้องแก้ไขและส่งกลับมาให้ออฟฟิศ"; break;
-        case "APPROVED": description = "ฝ่ายบัญชีตรวจสอบข้อมูลเบื้องต้นถูกต้องแล้ว (รอออกใบเสร็จ)"; break;
+        case "APPROVED":
+            description =
+                doc.docType === "CREDIT_NOTE"
+                    ? "ฝ่ายบัญชีตรวจสอบและหักยอดลูกหนี้แล้ว"
+                    : "ฝ่ายบัญชีตรวจสอบข้อมูลเบื้องต้นถูกต้องแล้ว (รอออกใบเสร็จ)";
+            break;
         case "PAID": description = "บันทึกรับเงินเข้าสมุดบัญชีเรียบร้อยแล้ว"; break;
         case "CANCELLED": description = "เอกสารนี้ถูกยกเลิกการใช้งานแล้ว"; break;
         case "UNPAID": description = "เป็นรายการขายเชื่อ ยอดเงินยังคงค้างชำระในระบบ"; break;
@@ -63,6 +68,10 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
 
     if (doc.docType === 'DELIVERY_NOTE' && statusKey === 'APPROVED') {
         description = "ใบส่งของรอฝ่ายบัญชียืนยันรับเงินเพื่อปิดงาน";
+    }
+
+    if (doc.docType === 'CREDIT_NOTE' && statusKey === 'APPROVED') {
+        return { key: "APPROVED", label, description, variant: "default" };
     }
 
     if (statusKey === "CANCELLED") return { key: "CANCELLED", label, description, variant: "destructive" };

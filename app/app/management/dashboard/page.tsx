@@ -54,6 +54,7 @@ import type { Job, Document, AccountingEntry, JobDepartment, AccountingObligatio
 import { JOB_DEPARTMENTS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { deptLabel } from "@/lib/ui-labels";
+import { buildJobsPageLink, type JobsDatePreset } from "@/lib/jobs-page-filters";
 
 export const dynamic = 'force-dynamic';
 
@@ -160,6 +161,7 @@ function AppDashboardPage() {
     const today = startOfToday();
     return { from: startOfMonth(today), to: endOfMonth(today) };
   });
+  const [datePreset, setDatePreset] = useState<JobsDatePreset>("THIS_MONTH");
 
   const selectedYear = useMemo(() => dateRange?.from ? dateRange.from.getFullYear() : new Date().getFullYear(), [dateRange]);
 
@@ -477,7 +479,7 @@ function AppDashboardPage() {
       };
     });
 
-    // 6. Customer Acquisition Stats
+    // 6. Customer Acquisition Stats — นับตามจำนวนงานเปิดใหม่ (สอดคล้อง KPI "งานเข้าใหม่")
     const acqCounts = {
       EXISTING: 0,
       REFERRAL: 0,
@@ -492,32 +494,31 @@ function AppDashboardPage() {
     const customerMap = new Map<string, Customer>();
     customers.forEach(c => customerMap.set(c.id, c));
 
-    const allJobsInPeriod = [
-      ...jobs.filter(j => isInPeriod(toDateSafe(j.createdAt))),
-      ...archivedJobs.filter(j => isInPeriod(toDateSafe(j.createdAt)))
-    ];
+    const classifyJobAcquisition = (job: Job): keyof typeof acqCounts => {
+      const customer = job.customerId ? customerMap.get(job.customerId) : undefined;
+      const rawSrc = (job.customerAcquisitionSource || customer?.acquisitionSource || "OTHER")
+        .toString()
+        .toUpperCase();
 
-    const uniqueCidsInPeriod = Array.from(new Set(allJobsInPeriod.map(j => j.customerId).filter(Boolean)));
-
-    uniqueCidsInPeriod.forEach(cid => {
-      const customer = customerMap.get(cid);
-      if (!customer) return;
-
-      const customerCreatedAt = toDateSafe(customer.createdAt);
-
-      if (customerCreatedAt && isBefore(startOfDay(customerCreatedAt), periodStart)) {
-        acqCounts.EXISTING++;
-      } else {
-        const representativeJob = allJobsInPeriod.find(j => j.customerId === cid);
-        const rawSrc = (representativeJob?.customerAcquisitionSource || customer.acquisitionSource || 'OTHER').toString().toUpperCase();
-        
-        if (rawSrc === 'REFERRAL') acqCounts.REFERRAL++;
-        else if (rawSrc === 'GOOGLE') acqCounts.GOOGLE++;
-        else if (rawSrc === 'FACEBOOK') acqCounts.FACEBOOK++;
-        else if (rawSrc === 'TIKTOK') acqCounts.TIKTOK++;
-        else if (rawSrc === 'YOUTUBE') acqCounts.YOUTUBE++;
-        else acqCounts.OTHER++;
+      if (job.customerType === "EXISTING" || rawSrc === "EXISTING") {
+        return "EXISTING";
       }
+
+      const customerCreatedAt = customer ? toDateSafe(customer.createdAt) : null;
+      if (customerCreatedAt && isBefore(startOfDay(customerCreatedAt), periodStart)) {
+        return "EXISTING";
+      }
+
+      if (rawSrc === "REFERRAL") return "REFERRAL";
+      if (rawSrc === "GOOGLE") return "GOOGLE";
+      if (rawSrc === "FACEBOOK") return "FACEBOOK";
+      if (rawSrc === "TIKTOK") return "TIKTOK";
+      if (rawSrc === "YOUTUBE") return "YOUTUBE";
+      return "OTHER";
+    };
+
+    currentInflow.forEach((job) => {
+      acqCounts[classifyJobAcquisition(job)]++;
     });
 
     const acquisitionData = [
@@ -529,6 +530,14 @@ function AppDashboardPage() {
       { name: "Youtube", value: acqCounts.YOUTUBE, color: "hsl(var(--chart-5))" },
       { name: "อื่นๆ", value: acqCounts.OTHER, color: "hsl(var(--primary))" },
     ].filter(v => v.value > 0);
+
+    const jobsLink = (metric: "inflow" | "outflow" | "backlog") =>
+      buildJobsPageLink(metric, {
+        fromDashboard: true,
+        preset: datePreset,
+        fromDate: dateRange?.from,
+        toDate: dateRange?.to,
+      });
 
     // 7. Alerts
     const alerts = [
@@ -556,7 +565,7 @@ function AppDashboardPage() {
             const dt = toDateSafe(j.createdAt);
             return dt && differenceInDays(new Date(), dt) > 14;
         }).length, 
-        link: "/app/jobs",
+        link: jobsLink("backlog"),
         icon: AlertCircle,
         variant: "destructive"
       }
@@ -564,9 +573,9 @@ function AppDashboardPage() {
 
     return {
       kpis: [
-        { label: "งานเข้าใหม่", value: currentInflow.length, trend: getTrend(currentInflow.length, prevInflow.length), desc: "งานที่เปิดใหม่ในช่วงเวลานี้", link: "/app/jobs" },
-        { label: "งานซ่อมเสร็จ", value: currentOutflow.length, trend: getTrend(currentOutflow.length, prevOutflow.length), desc: "งานที่ส่งมอบในช่วงเวลานี้", link: "/app/jobs" },
-        { label: "งานคงค้าง", value: backlog.length, desc: "งานที่ยังอยู่ระหว่างดำเนินการ", link: "/app/jobs", isNeutral: true },
+        { label: "งานเข้าใหม่", value: currentInflow.length, trend: getTrend(currentInflow.length, prevInflow.length), desc: "งานที่เปิดใหม่ในช่วงเวลานี้", link: jobsLink("inflow") },
+        { label: "งานซ่อมเสร็จ", value: currentOutflow.length, trend: getTrend(currentOutflow.length, prevOutflow.length), desc: "งานที่ส่งมอบในช่วงเวลานี้", link: jobsLink("outflow") },
+        { label: "งานคงค้าง", value: backlog.length, desc: "งานที่ยังอยู่ระหว่างดำเนินการ", link: jobsLink("backlog"), isNeutral: true },
         { label: "เงินหมุนเวียน", value: currentCashIn - currentCashOut, trend: getTrend(currentCashIn - currentCashOut, prevCashIn - prevCashOut), desc: "รับ-จ่ายสุทธิ (ไม่รวมโอนระหว่างบัญชี)", link: "/app/management/accounting/cashbook", isCurrency: true },
       ],
       fin: [
@@ -583,15 +592,17 @@ function AppDashboardPage() {
       acquisitionData,
       alerts
     };
-  }, [jobs, archivedJobs, documents, vatDocuments, vatPurchaseDocs, entries, obligations, customers, dateRange]);
+  }, [jobs, archivedJobs, documents, vatDocuments, vatPurchaseDocs, entries, obligations, customers, dateRange, datePreset]);
 
-  const handleDatePreset = (preset: string) => {
+  const handleDatePreset = (preset: JobsDatePreset) => {
+    setDatePreset(preset);
     const today = startOfToday();
     switch (preset) {
       case "TODAY": setDateRange({ from: today, to: today }); break;
       case "LAST_7_DAYS": setDateRange({ from: subDays(today, 6), to: today }); break;
       case "THIS_MONTH": setDateRange({ from: startOfMonth(today), to: endOfMonth(today) }); break;
       case "LAST_3_MONTHS": setDateRange({ from: startOfMonth(subMonths(today, 2)), to: endOfMonth(today) }); break;
+      default: break;
     }
   };
 
@@ -623,10 +634,18 @@ function AppDashboardPage() {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="end">
-              <Calendar mode="range" selected={dateRange} onSelect={setDateRange} numberOfMonths={2} />
+              <Calendar
+                mode="range"
+                selected={dateRange}
+                onSelect={(range) => {
+                  setDateRange(range);
+                  setDatePreset("CUSTOM");
+                }}
+                numberOfMonths={2}
+              />
             </PopoverContent>
           </Popover>
-          <Select onValueChange={handleDatePreset} defaultValue="THIS_MONTH">
+          <Select value={datePreset} onValueChange={(v) => handleDatePreset(v as JobsDatePreset)}>
             <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="TODAY">วันนี้</SelectItem>
@@ -803,7 +822,7 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>แหล่งที่มาของลูกค้า</CardTitle>
-            <CardDescription>สัดส่วนลูกค้าที่เปิดงานซ่อมในช่วงเวลานี้</CardDescription>
+            <CardDescription>สัดส่วนงานเปิดใหม่ตามแหล่งที่มาของลูกค้า (รวม {stats.kpis[0].value} งาน)</CardDescription>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col justify-center">
             {!extrasReady ? (
@@ -816,7 +835,7 @@ function AppDashboardPage() {
                   <Pie data={stats.acquisitionData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={70} paddingAngle={5}>
                     {stats.acquisitionData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v: any) => [`${v} ราย`, 'จำนวน']} />
+                  <Tooltip formatter={(v: any) => [`${v} งาน`, 'จำนวน']} />
                 </PieChart>
               </ResponsiveContainer>
             </div>

@@ -83,13 +83,8 @@
   @page {
     size: A4;
     margin: 10mm 12mm 14mm 12mm;
-    /* หมายเลขหน้า: รองรับใน Firefox / Safari — Chrome อาจไม่แสดง counter(pages) */
-    @bottom-center {
-      content: "หน้า " counter(page) " / " counter(pages);
-      font-size: 9pt;
-      color: #333;
-      font-family: system-ui, sans-serif;
-    }
+    /* ไม่ใช้ counter(page/pages) ที่ @bottom-center — นับรวมทุกชุด (6 หน้า) แทนที่จะรีเซ็ตต่อชุด
+       เลขหน้าแสดงในเอกสารโดยตรง (.print-doc-page-number) ต่อชุด 1–2, 1–2, 1–2 */
   }
 
   /* Force scrollbars to hide everywhere in print */
@@ -171,6 +166,51 @@
   }
   .printable-document thead {
       display: table-header-group !important;
+  }
+  .printable-document tfoot {
+      display: table-footer-group !important;
+      background: transparent !important;
+  }
+  .printable-document tfoot tr,
+  .printable-document tfoot td,
+  .printable-document tfoot th {
+      background: transparent !important;
+  }
+  .print-doc-page-break {
+      break-before: page;
+      page-break-before: always;
+  }
+  /* แบ่งหน้าพิมพ์ — เนื้อหาด้านบน + เลขหน้าชิดขอบล่างกระดาษ */
+  .print-page-block {
+    display: flex !important;
+    flex-direction: column !important;
+    /* A4 297mm − margin บน 10mm − margin ล่าง 14mm */
+    min-height: 273mm !important;
+    box-sizing: border-box !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .print-page-block:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+  .print-page-block__content {
+    flex: 1 1 auto !important;
+  }
+  .print-page-block__pagenum {
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+    text-align: center !important;
+    font-size: 9pt !important;
+    color: #333 !important;
+    padding-top: 4mm !important;
+  }
+  .print-doc-set {
+    break-inside: avoid-page;
+  }
+  .print-doc-set + .print-doc-page-break {
+    break-before: page;
+    page-break-before: always;
   }
   /* หัวซ้ำทุกหน้า: ไม่ให้แถวหัวการ์ดถูกตัดครึ่ง */
   .printable-document thead > tr.print-doc-repeat-header > th,

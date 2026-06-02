@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo, Suspense, useState, useEffect, useRef } from "react";
+import { useMemo, Suspense, useState, useEffect, useRef, type ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, type DocumentReference } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
@@ -12,9 +12,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2 } from "lucide-react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
+import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
 import type { Document, AccountingAccount, Customer, Job } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
@@ -31,12 +32,11 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 
-/** ชื่อไฟล์แนะนำตอนบันทึก PDF (Edge/Chrome ใช้ document.title) — ตัดอักขระที่ Windows ไม่อนุญาต */
-function sanitizePrintFilenameBase(raw: string): string {
-  let s = raw.replace(/[/\\?%*:|"<>]/g, "-").replace(/\s+/g, " ").trim();
-  if (!s.length) s = "document";
-  if (s.length > 200) s = s.slice(0, 200);
-  return s;
+/** เปิดหน้าต่างพิมพ์ — ตั้งชื่อไฟล์เป็นเลขที่เอกสารก่อน (Edge/Chrome ใช้ document.title) */
+function triggerPrintWithDocTitle(docNo: string | undefined) {
+    const no = docNo?.trim();
+    if (no) applyPrintDocumentTitle(no);
+    requestAnimationFrame(() => window.print());
 }
 
 function VehicleInfo({ doc, isTaxInvoicePrint }: { doc: Document; isTaxInvoicePrint?: boolean }) {
@@ -184,13 +184,18 @@ function DocumentView({
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
     const itemColCount = isWithdrawal ? 4 : 5;
+    const allItems = document.items;
+    const splitPrintLayout = shouldSplitPrintPages(document.docType, allItems.length);
+    const firstPageItemCount = getPrintFirstPageItemCount(allItems.length);
+    const pagesPerCopy = splitPrintLayout ? 2 : 1;
 
-    return (
-        <div className="printable-document border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+    const renderDocumentTable = (
+        items: typeof allItems,
+        { showFooter, startIndex }: { showFooter: boolean; startIndex: number }
+    ) => (
             <Table
                 className={cn(
                     "mb-4 border-t border-b",
-                    /* เฉพาะ tbody tr h-auto — ช่วยให้ Chrome ซ้ำ thead */
                     (isTaxInvoice || isDeliveryNote) && "[&_tbody_tr]:h-auto"
                 )}
             >
@@ -369,7 +374,7 @@ function DocumentView({
                 </div>
                         </TableHead>
                     </TableRow>
-                    <TableRow className="border-b bg-muted/20 hover:bg-transparent">
+                    <TableRow className="print-doc-repeat-header border-b bg-muted/20 hover:bg-transparent">
                             <TableHead className="h-8 w-12 text-center text-black font-bold">
                                 #
                             </TableHead>
@@ -401,10 +406,10 @@ function DocumentView({
                         </TableRow>
                 </TableHeader>
                     <TableBody>
-                        {document.items.map((item, index) => (
-                            <TableRow key={index} className="border-b hover:bg-transparent">
+                        {items.map((item, index) => (
+                            <TableRow key={startIndex + index} className="border-b hover:bg-transparent">
                                 <TableCell className="h-8 py-1.5 text-center">
-                                    {index + 1}
+                                    {startIndex + index + 1}
                                 </TableCell>
                                 <TableCell className="h-8 py-1.5">
                                     {item.description}
@@ -428,9 +433,12 @@ function DocumentView({
                                 )}
                             </TableRow>
                         ))}
+                    </TableBody>
+                    {showFooter && (
+                    <TableFooter className="border-0 bg-transparent print:border-0 print:bg-transparent">
                         {/*
-                          หมายเหตุ/ยอด/ลายเซ็นต้องอยู่ใน tbody เดียวกับรายการ — ถ้าอยู่นอก table
-                          Chrome/Edge จะตัดหน้าหลังจบตาราง ทำให้หน้า 2 ไม่มี thead ซ้ำ
+                          หมายเหตุ/ยอด/ลายเซ็นอยู่ tfoot — รายการอยู่ tbody เพียงอย่างเดียว
+                          ทำให้ thead (หัวร้าน/ลูกค้า/คอลัมน์) ซ้ำทุกหน้าเมื่อรายการยาว
                         */}
                         <TableRow className="print-doc-footer-row border-0 hover:bg-transparent">
                             <TableCell
@@ -498,8 +506,53 @@ function DocumentView({
                                 )}
                             </TableCell>
                         </TableRow>
-                    </TableBody>
+                    </TableFooter>
+                    )}
                 </Table>
+    );
+
+    const renderPrintPageBlock = (pageNumberLabel: string, table: ReactNode) => (
+        <div className="print-page-block hidden print:flex flex-col">
+            <div className="print-page-block__content">{table}</div>
+            <div className="print-page-block__pagenum">{pageNumberLabel}</div>
+        </div>
+    );
+
+    return (
+        <div className="printable-document print-doc-instance print-doc-set border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+            {splitPrintLayout ? (
+                <>
+                    <div className="print:hidden">
+                        {renderDocumentTable(allItems, { showFooter: true, startIndex: 0 })}
+                    </div>
+                    <div className="hidden print:block">
+                        {renderPrintPageBlock(
+                            `หน้า 1 จาก ${pagesPerCopy}`,
+                            renderDocumentTable(allItems.slice(0, firstPageItemCount), {
+                                showFooter: false,
+                                startIndex: 0,
+                            })
+                        )}
+                        {renderPrintPageBlock(
+                            `หน้า 2 จาก ${pagesPerCopy}`,
+                            renderDocumentTable(allItems.slice(firstPageItemCount), {
+                                showFooter: true,
+                                startIndex: firstPageItemCount,
+                            })
+                        )}
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="print:hidden">
+                        {renderDocumentTable(allItems, { showFooter: true, startIndex: 0 })}
+                    </div>
+                    {renderPrintPageBlock(
+                        `หน้า 1 จาก ${pagesPerCopy}`,
+                        renderDocumentTable(allItems, { showFooter: true, startIndex: 0 })
+                    )}
+                </>
+            )}
         </div>
     );
 }
@@ -579,13 +632,16 @@ function DocumentPageContent() {
 
     useEffect(() => {
         printTitleRef.current.docNo = document?.docNo?.trim() || "";
+        if (document?.docNo?.trim()) {
+            applyPrintDocumentTitle(document.docNo.trim());
+        }
     }, [document?.docNo]);
 
     useEffect(() => {
         const beforePrint = () => {
             printTitleRef.current.titleBeforePrint = document.title;
             const no = printTitleRef.current.docNo;
-            if (no) document.title = sanitizePrintFilenameBase(no);
+            if (no) applyPrintDocumentTitle(no);
         };
         const afterPrint = () => {
             document.title = printTitleRef.current.titleBeforePrint;
@@ -601,7 +657,7 @@ function DocumentPageContent() {
     useEffect(() => {
         if (document && searchParams.get('autoprint') === '1') {
             const timer = setTimeout(() => {
-                window.print();
+                triggerPrintWithDocTitle(document.docNo);
             }, 1000);
             return () => clearTimeout(timer);
         }
@@ -651,6 +707,15 @@ function DocumentPageContent() {
             case 'RECEIPT':
                 router.push('/app/management/accounting/documents/receipt');
                 break;
+            case 'CREDIT_NOTE':
+                router.push('/app/management/accounting/documents/credit-note');
+                break;
+            case 'DEBIT_NOTE':
+                router.push('/app/management/accounting/documents/debit-note');
+                break;
+            case 'WITHHOLDING_TAX':
+                router.push('/app/management/accounting/documents/withholding-tax');
+                break;
             case 'WITHDRAWAL':
                 router.push('/app/office/parts/withdraw');
                 break;
@@ -661,7 +726,7 @@ function DocumentPageContent() {
 
     const handlePrintRequest = () => {
         if (['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document?.docType || '')) setIsPrintOptionsOpen(true);
-        else window.print();
+        else triggerPrintWithDocTitle(document?.docNo);
     };
 
     const handleInformCustomer = async () => {
@@ -769,13 +834,13 @@ function DocumentPageContent() {
                                 <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} />
                                 {printChoice !== "ORIGINAL_ONLY" && (
                                     <>
-                                        <div className="hidden print:block break-before-page" />
+                                        <div className="hidden print:block print-doc-page-break break-before-page" />
                                         <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
                                     </>
                                 )}
                                 {printChoice === "ORIGINAL_PLUS_2_COPIES" && (
                                     <>
-                                        <div className="hidden print:block break-before-page" />
+                                        <div className="hidden print:block print-doc-page-break break-before-page" />
                                         <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
                                     </>
                                 )}
@@ -893,6 +958,12 @@ function DocumentPageContent() {
                             ) : (
                                 <>
                                     <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="ORIGINAL_ONLY" id="c0" />
+                                        <Label htmlFor="c0" className="cursor-pointer">
+                                            ต้นฉบับอย่างเดียว (แนะนำเมื่อบันทึก PDF)
+                                        </Label>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
                                         <RadioGroupItem value="ORIGINAL_PLUS_1_COPY" id="c1" />
                                         <Label htmlFor="c1" className="cursor-pointer">
                                             ต้นฉบับ 1 + สำเนา 1
@@ -908,7 +979,7 @@ function DocumentPageContent() {
                             )}
                         </RadioGroup>
                     </div>
-                    <AlertDialogFooter><AlertDialogCancel>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={() => { setIsPrintOptionsOpen(false); setTimeout(() => window.print(), 300); }}>ยืนยันและเปิดหน้าต่างพิมพ์</AlertDialogAction></AlertDialogFooter>
+                    <AlertDialogFooter><AlertDialogCancel>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={() => { setIsPrintOptionsOpen(false); setTimeout(() => triggerPrintWithDocTitle(document.docNo), 300); }}>ยืนยันและเปิดหน้าต่างพิมพ์</AlertDialogAction></AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
         </div>

@@ -1,18 +1,20 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter, useSearchParams } from "next/navigation";
 import { collection, onSnapshot, query, type FirestoreError } from "firebase/firestore";
+import { format } from "date-fns";
 import { useFirebase } from "@/firebase";
-import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, PlusCircle, Search, FileImage, LayoutGrid, Table as TableIcon, Eye } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowLeft, Loader2, PlusCircle, Search, FileImage, LayoutGrid, Table as TableIcon, Eye } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobStatus } from "@/lib/types";
 import { safeFormat, APP_DATE_FORMAT, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
@@ -22,8 +24,18 @@ import { cn } from "@/lib/utils";
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { jobDisplayRef } from "@/lib/job-display";
+import {
+  buildJobsPageLink,
+  isDateInRange,
+  isJobOutflow,
+  jobsMetricLabel,
+  JOBS_DATE_PRESET_LABELS,
+  parseYmdDate,
+  resolveJobsDateRange,
+  type JobsDatePreset,
+  type JobsPageMetric,
+} from "@/lib/jobs-page-filters";
 
-// Helper for safe timestamp comparison
 const getSafeTime = (val: any): number => {
     if (!val) return 0;
     if (typeof val.toMillis === 'function') return val.toMillis();
@@ -33,8 +45,27 @@ const getSafeTime = (val: any): number => {
     return 0;
 };
 
-const isClosedStatus = (status?: Job['status']) => 
-    ["CLOSED", "DONE", "COMPLETED"].includes(String(status || "").toUpperCase());
+const toDateSafe = (val: any): Date | null => {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val.toDate === "function") return val.toDate();
+  if (val.seconds !== undefined) return new Date(val.seconds * 1000);
+  if (typeof val === "string") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+};
+
+const parseMetric = (raw: string | null): JobsPageMetric => {
+  if (raw === "inflow" || raw === "outflow" || raw === "backlog") return raw;
+  return "backlog";
+};
+
+const parsePreset = (raw: string | null): JobsDatePreset => {
+  const allowed: JobsDatePreset[] = ["ALL", "TODAY", "LAST_7_DAYS", "THIS_MONTH", "LAST_3_MONTHS", "CUSTOM"];
+  return allowed.includes(raw as JobsDatePreset) ? (raw as JobsDatePreset) : "ALL";
+};
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -226,13 +257,99 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
 }
 
 // Main Page Component
-export default function ManagementJobsPage() {
+function ManagementJobsPageContent() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
     const [searchTerm, setSearchTerm] = useState("");
     const [desktopView, setDesktopView] = useState<'table' | 'board'>('table');
     const { db } = useFirebase();
     const { toast } = useToast();
     const [jobs, setJobs] = useState<Job[]>([]);
     const [loading, setLoading] = useState(true);
+
+    const metric = parseMetric(searchParams.get("metric"));
+    const fromDashboard = searchParams.get("from") === "dashboard";
+    const urlFromDate = parseYmdDate(searchParams.get("fromDate"));
+    const urlToDate = parseYmdDate(searchParams.get("toDate"));
+    const urlMonth = searchParams.get("month");
+    const datePreset = parsePreset(searchParams.get("preset"));
+
+    const activeDateRange = useMemo(() => {
+      if (metric === "backlog") return null;
+      if (urlMonth && /^\d{4}-\d{2}$/.test(urlMonth)) {
+        return resolveJobsDateRange("CUSTOM", urlMonth);
+      }
+      if (datePreset === "CUSTOM" && urlFromDate && urlToDate) {
+        return { from: urlFromDate, to: urlToDate };
+      }
+      return resolveJobsDateRange(datePreset);
+    }, [metric, datePreset, urlFromDate, urlToDate, urlMonth]);
+
+    const replaceFilters = useCallback(
+      (next: {
+        metric?: JobsPageMetric;
+        preset?: JobsDatePreset;
+        fromDate?: Date;
+        toDate?: Date;
+        month?: string;
+        fromDashboard?: boolean;
+      }) => {
+        const m = next.metric ?? metric;
+        const preset = next.preset ?? datePreset;
+        const params = new URLSearchParams();
+        params.set("metric", m);
+        if (next.fromDashboard ?? fromDashboard) params.set("from", "dashboard");
+        if (preset !== "ALL") params.set("preset", preset);
+        if (next.month) {
+          params.set("month", next.month);
+          params.set("preset", "CUSTOM");
+        } else if (preset === "CUSTOM" && (next.fromDate ?? urlFromDate) && (next.toDate ?? urlToDate)) {
+          params.set("fromDate", format(next.fromDate ?? urlFromDate!, "yyyy-MM-dd"));
+          params.set("toDate", format(next.toDate ?? urlToDate!, "yyyy-MM-dd"));
+        } else if (m !== "backlog") {
+          const range = resolveJobsDateRange(preset, next.month);
+          if (range) {
+            params.set("fromDate", format(range.from, "yyyy-MM-dd"));
+            params.set("toDate", format(range.to, "yyyy-MM-dd"));
+          }
+        }
+        router.replace(`/app/jobs?${params.toString()}`, { scroll: false });
+      },
+      [metric, datePreset, fromDashboard, urlFromDate, urlToDate, router]
+    );
+
+    const handlePresetChange = (preset: JobsDatePreset) => {
+      if (preset === "ALL") {
+        replaceFilters({ preset: "ALL", month: undefined });
+        return;
+      }
+      const range = resolveJobsDateRange(preset);
+      replaceFilters({
+        preset,
+        fromDate: range?.from,
+        toDate: range?.to,
+        month: undefined,
+      });
+    };
+
+    const handleMonthChange = (monthValue: string) => {
+      if (!monthValue) {
+        handlePresetChange("ALL");
+        return;
+      }
+      replaceFilters({ preset: "CUSTOM", month: monthValue });
+    };
+
+    const pageTitle = metric === "backlog" ? "ภาพรวมงานซ่อม" : jobsMetricLabel(metric);
+    const pageDescription = useMemo(() => {
+      if (metric === "backlog") {
+        return "ติดตามและจัดการงานซ่อมที่ยังอยู่ระหว่างดำเนินการ";
+      }
+      if (activeDateRange) {
+        return `${jobsMetricLabel(metric)} ช่วง ${format(activeDateRange.from, APP_DATE_FORMAT)} – ${format(activeDateRange.to, APP_DATE_FORMAT)}`;
+      }
+      return `${jobsMetricLabel(metric)} — ทุกช่วงเวลา`;
+    }, [metric, activeDateRange]);
 
     useEffect(() => {
         if (!db) return;
@@ -261,10 +378,23 @@ export default function ManagementJobsPage() {
     }, [db, toast]);
 
     const visibleJobs = useMemo(() => {
-        let openJobs = jobs.filter(j => !isClosedStatus(j.status));
+        let result = jobs;
+
+        if (metric === "inflow") {
+          result = jobs.filter((j) => isDateInRange(toDateSafe(j.createdAt), activeDateRange));
+        } else if (metric === "outflow") {
+          result = jobs.filter(
+            (j) =>
+              isJobOutflow(j.status) &&
+              isDateInRange(toDateSafe(j.lastActivityAt), activeDateRange)
+          );
+        } else {
+          result = jobs.filter((j) => !isJobOutflow(j.status));
+        }
+
         const q = searchTerm.trim().toLowerCase();
         if (q) {
-            openJobs = openJobs.filter(j =>
+            result = result.filter(j =>
                 (j.customerSnapshot?.name || "").toLowerCase().includes(q) ||
                 (j.customerSnapshot?.phone || "").includes(q) ||
                 (j.description || "").toLowerCase().includes(q) ||
@@ -275,8 +405,8 @@ export default function ManagementJobsPage() {
                 (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(q)
             );
         }
-        return openJobs;
-    }, [jobs, searchTerm]);
+        return result.sort((a, b) => getSafeTime(b.lastActivityAt) - getSafeTime(a.lastActivityAt));
+    }, [jobs, searchTerm, metric, activeDateRange]);
 
     const renderContent = () => {
         if (loading) {
@@ -291,8 +421,12 @@ export default function ManagementJobsPage() {
             return (
                 <Card className="text-center py-16 bg-muted/20 border-dashed">
                     <CardHeader>
-                        <CardTitle className="text-muted-foreground">{searchTerm ? 'ไม่พบย่านที่ตรงกับการค้นหา' : 'ไม่มีงานที่กำลังดำเนินการ'}</CardTitle>
-                        <CardDescription>งานใหม่จะปรากฏที่นี่ทันทีที่มีการเปิดรับงาน</CardDescription>
+                        <CardTitle className="text-muted-foreground">{searchTerm ? 'ไม่พบรายการที่ตรงกับการค้นหา' : 'ไม่พบงานในช่วงที่เลือก'}</CardTitle>
+                        <CardDescription>
+                          {metric === "backlog"
+                            ? "งานใหม่จะปรากฏที่นี่ทันทีที่มีการเปิดรับงาน"
+                            : "ลองเปลี่ยนช่วงเวลาหรือตัวกรองเดือน"}
+                        </CardDescription>
                     </CardHeader>
                 </Card>
             )
@@ -313,8 +447,39 @@ export default function ManagementJobsPage() {
 
     return (
         <div className="space-y-6">
-            <PageHeader title="ภาพรวมงานซ่อม" description="ติดตามและจัดการงานซ่อมทั้งหมดในระบบ">
-                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            {fromDashboard && (
+              <Button variant="outline" size="sm" className="w-fit" asChild>
+                <Link href="/app/management/dashboard">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  กลับแดชบอร์ด
+                </Link>
+              </Button>
+            )}
+            <PageHeader title={pageTitle} description={pageDescription}>
+                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-wrap">
+                    {metric !== "backlog" && (
+                      <>
+                        <Select value={datePreset} onValueChange={(v) => handlePresetChange(v as JobsDatePreset)}>
+                          <SelectTrigger className="w-full sm:w-[160px] bg-background">
+                            <SelectValue placeholder="ช่วงเวลา" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(Object.keys(JOBS_DATE_PRESET_LABELS) as JobsDatePreset[]).map((p) => (
+                                <SelectItem key={p} value={p}>
+                                  {JOBS_DATE_PRESET_LABELS[p]}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="month"
+                          className="w-full sm:w-[160px] bg-background"
+                          value={urlMonth || ""}
+                          onChange={(e) => handleMonthChange(e.target.value)}
+                          title="เลือกเดือน"
+                        />
+                      </>
+                    )}
                     <div className="relative flex-1 sm:flex-initial">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -325,6 +490,11 @@ export default function ManagementJobsPage() {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
+                    {!loading && (
+                      <Badge variant="secondary" className="h-9 px-3 font-bold shrink-0">
+                        {visibleJobs.length.toLocaleString()} รายการ
+                      </Badge>
+                    )}
                      <div className="hidden lg:flex items-center gap-1 rounded-lg bg-muted p-1 border">
                         <Button variant={desktopView === 'table' ? 'secondary' : 'ghost'} size="sm" className="h-8 px-3" onClick={() => setDesktopView('table')}><TableIcon className="h-3.5 w-3.5 mr-1.5" /> Table</Button>
                         <Button variant={desktopView === 'board' ? 'secondary' : 'ghost'} size="sm" className="h-8 px-3" onClick={() => setDesktopView('board')}><LayoutGrid className="h-3.5 w-3.5 mr-1.5"/> Board</Button>
@@ -342,4 +512,19 @@ export default function ManagementJobsPage() {
             </div>
         </div>
     );
+}
+
+export default function ManagementJobsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-col justify-center items-center h-64 gap-4">
+          <Loader2 className="animate-spin h-10 w-10 text-primary" />
+          <p className="text-sm text-muted-foreground font-medium">กำลังเตรียมข้อมูลภาพรวม...</p>
+        </div>
+      }
+    >
+      <ManagementJobsPageContent />
+    </Suspense>
+  );
 }
