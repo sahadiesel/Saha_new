@@ -123,6 +123,48 @@ function matchesInboxSearch(
   return false;
 }
 
+function matchesReceiveInboxTab(doc: WithId<DocumentType>): boolean {
+  if (doc.docType === "TAX_INVOICE" && doc.status === "APPROVED") return false;
+  if (doc.docType === "RECEIPT") return false;
+  if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
+    return !doc.deliveryInboxCashConfirmed;
+  }
+  return doc.paymentTerms === "CASH" || !doc.paymentTerms;
+}
+
+function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
+  if (doc.docType === "RECEIPT") return false;
+  if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
+    if (doc.arObligationId) return false;
+    const arLeft = doc.deliveryInboxCashConfirmed
+      ? doc.paymentSummary != null
+        ? doc.paymentSummary.balance
+        : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)))
+      : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)));
+    return arLeft > 0.01;
+  }
+  return doc.paymentTerms === "CREDIT";
+}
+
+function matchesReceiptsInboxTab(doc: WithId<DocumentType>): boolean {
+  return doc.docType === "RECEIPT";
+}
+
+function InboxTabCountBadge({ count }: { count: number }) {
+  return (
+    <span
+      className={cn(
+        "ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold tabular-nums",
+        count > 0
+          ? "bg-primary text-primary-foreground"
+          : "bg-muted text-muted-foreground"
+      )}
+    >
+      {count}
+    </span>
+  );
+}
+
 function AccountingInboxPageContent() {
   const { profile, loading: authLoading } = useAuth();
   const { db, app: firebaseApp } = useFirebase();
@@ -247,31 +289,9 @@ function AccountingInboxPageContent() {
 
   const filteredDocs = useMemo(() => {
     let result = documents.filter((doc) => {
-      if (activeTab === 'receive') {
-        // ใบกำกับเงินสด: หลังบัญชียืนยันแล้วเป็น APPROVED → ไปขั้นตอนใบเสร็จ ไม่ให้ค้างในแท็บนี้
-        if (doc.docType === 'TAX_INVOICE' && doc.status === 'APPROVED') return false;
-        if (doc.docType === 'RECEIPT') return false;
-        if (doc.docType === 'DELIVERY_NOTE' && isDeliveryNotePartialCashAndCredit(doc)) {
-          return !doc.deliveryInboxCashConfirmed;
-        }
-        return doc.paymentTerms === 'CASH' || !doc.paymentTerms;
-      }
-      if (activeTab === 'ar') {
-        if (doc.docType === 'RECEIPT') return false;
-        if (doc.docType === 'DELIVERY_NOTE' && isDeliveryNotePartialCashAndCredit(doc)) {
-          if (doc.arObligationId) return false;
-          const arLeft = doc.deliveryInboxCashConfirmed
-            ? doc.paymentSummary != null
-              ? doc.paymentSummary.balance
-              : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)))
-            : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)));
-          return arLeft > 0.01;
-        }
-        return doc.paymentTerms === 'CREDIT';
-      }
-      if (activeTab === 'receipts') {
-        return doc.docType === 'RECEIPT';
-      }
+      if (activeTab === "receive") return matchesReceiveInboxTab(doc);
+      if (activeTab === "ar") return matchesArInboxTab(doc);
+      if (activeTab === "receipts") return matchesReceiptsInboxTab(doc);
       return false;
     });
 
@@ -280,6 +300,15 @@ function AccountingInboxPageContent() {
     }
     return result;
   }, [documents, activeTab, searchTerm]);
+
+  const tabCounts = useMemo(
+    () => ({
+      receive: documents.filter(matchesReceiveInboxTab).length,
+      ar: documents.filter(matchesArInboxTab).length,
+      receipts: approvedDocs.length + documents.filter(matchesReceiptsInboxTab).length,
+    }),
+    [documents, approvedDocs]
+  );
 
   const filteredApprovedDocs = useMemo(() => {
     if (!searchTerm.trim()) return approvedDocs;
@@ -1131,9 +1160,18 @@ function AccountingInboxPageContent() {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
           <TabsList>
-            <TabsTrigger value="receive">รอตรวจสอบ (Cash/Mixed)</TabsTrigger>
-            <TabsTrigger value="ar">รอตั้งลูกหนี้ (Credit)</TabsTrigger>
-            <TabsTrigger value="receipts">ขั้นตอนใบเสร็จ</TabsTrigger>
+            <TabsTrigger value="receive" className="gap-0">
+              รอตรวจสอบ (Cash/Mixed)
+              <InboxTabCountBadge count={tabCounts.receive} />
+            </TabsTrigger>
+            <TabsTrigger value="ar" className="gap-0">
+              รอตั้งลูกหนี้ (Credit)
+              <InboxTabCountBadge count={tabCounts.ar} />
+            </TabsTrigger>
+            <TabsTrigger value="receipts" className="gap-0">
+              ขั้นตอนใบเสร็จ
+              <InboxTabCountBadge count={tabCounts.receipts} />
+            </TabsTrigger>
           </TabsList>
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1333,7 +1371,7 @@ function AccountingInboxPageContent() {
                                 <TableCell className="text-right font-bold">{formatCurrency(docItem.grandTotal)}</TableCell>
                                 <TableCell className="text-right">
                                     <Button asChild size="sm" variant="default" className="h-8">
-                                        <Link href={`/app/management/accounting/documents/receipt?tab=new&customerId=${encodeURIComponent(docItem.customerId || "")}&sourceDocId=${docItem.id}&presetAmount=${encodeURIComponent(String(docItem.paymentSummary?.balance ?? docItem.grandTotal))}`}>
+                                        <Link href={`/app/management/accounting/documents/receipt?tab=new&from=inbox&inboxTab=receipts&customerId=${encodeURIComponent(docItem.customerId || "")}&sourceDocId=${docItem.id}&presetAmount=${encodeURIComponent(String(docItem.paymentSummary?.balance ?? docItem.grandTotal))}`}>
                                             <PlusCircle className="mr-2 h-4 w-4"/> ออกใบเสร็จ
                                         </Link>
                                     </Button>

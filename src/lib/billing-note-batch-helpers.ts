@@ -181,6 +181,18 @@ export function billingTargetBucket(row: BillingTableRow): string {
   return row.billingTargetBucketId ?? row.customer.id;
 }
 
+/** จับคู่แถวเดียวกัน (รวมแถวแยกเล่ม) สำหรับลบ/อัปเดต UI */
+export function billingRowMatchesTarget(
+  row: BillingTableRow,
+  target: Pick<BillingTableRow, "customer" | "splitInvoiceGroupKey" | "billingTargetBucketId">
+): boolean {
+  const targetBucket = target.billingTargetBucketId ?? target.customer.id;
+  const rowBucket = billingTargetBucket(row);
+  const targetSplit = target.splitInvoiceGroupKey ?? "";
+  const rowSplit = row.splitInvoiceGroupKey ?? "";
+  return targetBucket === rowBucket && targetSplit === rowSplit;
+}
+
 /** บิลที่ถูกเลื่อนไปวางเดือน monthId (ดึงเพิ่มจากเอกสาร) */
 export async function fetchDeferredRollInDocuments(db: Firestore, monthId: string): Promise<Document[]> {
   const q = query(collection(db, 'documents'), where('billingDeferUntilMonth', '==', monthId));

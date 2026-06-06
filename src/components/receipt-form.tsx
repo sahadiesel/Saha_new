@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -427,6 +427,19 @@ export function ReceiptForm() {
     return customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
   }, [customers, customerSearch]);
 
+  const handleCancel = () => {
+    const from = searchParams.get("from");
+    if (from === "inbox") {
+      router.push(`/app/management/accounting/inbox?tab=${searchParams.get("inboxTab") || "receipts"}`);
+      return;
+    }
+    if (from === "receivables") {
+      router.push("/app/management/accounting/receivables-payables?tab=debtors");
+      return;
+    }
+    router.replace("/app/management/accounting/documents/receipt");
+  };
+
   const isFormLoading = isLoading || (editDocId && isLoadingDoc);
 
   if (isFormLoading) return <div className="flex justify-center p-12"><Loader2 className="animate-spin h-10 w-10 text-primary" /></div>;
@@ -440,6 +453,16 @@ export function ReceiptForm() {
                 {editDocId ? `แก้ไขใบเสร็จ ${docToEdit?.docNo}` : "เลือกบิลที่ต้องการรวมใบเสร็จ"}
             </h2>
             <div className="flex gap-2 w-full sm:w-auto">
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 sm:flex-none"
+                    disabled={isSubmitting}
+                    onClick={handleCancel}
+                >
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    ยกเลิก
+                </Button>
                 <Button 
                     className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
                     disabled={isSubmitting || watchedSourceDocIds.length === 0}

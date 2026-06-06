@@ -28,6 +28,7 @@ import {
   billingSignedGrandTotal,
   billingRowPreviewItems,
   billingTargetBucket,
+  billingRowMatchesTarget,
   bucketHasAnyCreatedNote,
   explodeSeparateSubRows,
   excludeInvoicesDeferredToFutureMonth,
@@ -528,10 +529,12 @@ export default function BatchBillingNotePage() {
       ...Object.values(data.separateGroups).flat(),
     ];
     const displayName = data.customer.useTax ? (data.customer.taxName || data.customer.name) : data.customer.name;
+    const nextMonthId = format(addMonths(startOfMonth(currentMonth), 1), 'yyyy-MM');
     if (
       !window.confirm(
         `ลบข้อมูลการวางบิลของ “${displayName}” ในเดือน ${monthId} ออกจากรันนี้\n\n` +
           `จะล้าง: การรวมกลุ่ม เลื่อน แยกเล่ม และสถานะสร้างใบวางบิล พร้อมถอดลิงก์จากบิลต้นทางในแถวนี้\n` +
+          `บิลในแถวนี้จะเลื่อนไปเดือน ${nextMonthId} (ไม่แสดงในเดือนนี้อีก)\n` +
           `ไม่ลบไฟล์ใบวางบิลในระบบ — ตรวจจากเมนูเอกสารหากต้องการลบจริง`
       )
     ) {
@@ -573,7 +576,7 @@ export default function BatchBillingNotePage() {
         batch.update(doc(db, 'documents', inv.id), {
           billingNoteId: deleteField(),
           billingNoteNo: deleteField(),
-          billingDeferUntilMonth: deleteField(),
+          billingDeferUntilMonth: nextMonthId,
           updatedAt: serverTimestamp(),
         });
       }
@@ -586,7 +589,11 @@ export default function BatchBillingNotePage() {
       );
       await batch.commit();
 
-      toast({ title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว' });
+      setCustomerData((prev) => prev.filter((row) => !billingRowMatchesTarget(row, data)));
+      toast({
+        title: 'ลบข้อมูลการวางบิลในแถวนี้แล้ว',
+        description: `แถวนี้ถูกนำออกจากเดือน ${monthId} — บิลเลื่อนไปเดือน ${nextMonthId}`,
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: msg });

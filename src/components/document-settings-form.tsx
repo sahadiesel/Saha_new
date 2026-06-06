@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Save, Edit, X } from "lucide-react";
 import { Skeleton } from "./ui/skeleton";
 import { Separator } from "./ui/separator";
+import { sanitizeForFirestore } from "@/lib/utils";
 
 const documentSettingsSchema = z.object({
   jobPrefix: z.string().optional(),
@@ -34,6 +35,36 @@ const documentSettingsSchema = z.object({
   purchasePrefix: z.string().optional(),
   withdrawalPrefix: z.string().optional(),
 });
+
+const emptyDocumentSettings = {
+  jobPrefix: "",
+  quotationPrefix: "",
+  deliveryNotePrefix: "",
+  taxInvoicePrefix: "",
+  receiptPrefix: "",
+  billingNotePrefix: "",
+  creditNotePrefix: "",
+  debitNotePrefix: "",
+  withholdingTaxPrefix: "",
+  purchasePrefix: "",
+  withdrawalPrefix: "",
+} as const;
+
+function documentSettingsToFormValues(settings: DocumentSettings): z.infer<typeof documentSettingsSchema> {
+  return {
+    jobPrefix: settings.jobPrefix ?? "",
+    quotationPrefix: settings.quotationPrefix ?? "",
+    deliveryNotePrefix: settings.deliveryNotePrefix ?? "",
+    taxInvoicePrefix: settings.taxInvoicePrefix ?? "",
+    receiptPrefix: settings.receiptPrefix ?? "",
+    billingNotePrefix: settings.billingNotePrefix ?? "",
+    creditNotePrefix: settings.creditNotePrefix ?? "",
+    debitNotePrefix: settings.debitNotePrefix ?? "",
+    withholdingTaxPrefix: settings.withholdingTaxPrefix ?? "",
+    purchasePrefix: settings.purchasePrefix ?? "",
+    withdrawalPrefix: settings.withdrawalPrefix ?? "",
+  };
+}
 
 const InfoRow = ({ label, value }: { label: string, value: React.ReactNode }) => (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-3">
@@ -59,19 +90,24 @@ export function DocumentSettingsForm() {
 
   const form = useForm<z.infer<typeof documentSettingsSchema>>({
     resolver: zodResolver(documentSettingsSchema),
-    defaultValues: {},
+    defaultValues: { ...emptyDocumentSettings },
   });
 
   useEffect(() => {
     if (settings) {
-      form.reset(settings);
+      form.reset(documentSettingsToFormValues(settings));
     }
   }, [settings, form]);
 
   const onSubmit = async (values: z.infer<typeof documentSettingsSchema>) => {
     if (!settingsDocRef) return;
     try {
-      await setDoc(settingsDocRef, values, { merge: true });
+      const payload = sanitizeForFirestore(
+        Object.fromEntries(
+          Object.entries(values).map(([key, val]) => [key, (val ?? "").trim()])
+        )
+      );
+      await setDoc(settingsDocRef, payload, { merge: true });
       toast({
         title: "Settings Saved",
         description: "Document settings have been updated successfully.",

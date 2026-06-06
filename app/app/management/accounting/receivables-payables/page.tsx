@@ -789,6 +789,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                             const receiptHref = (() => {
                               const q = new URLSearchParams();
                               q.set('tab', 'new');
+                              q.set('from', 'receivables');
                               if (customerIdForReceipt) q.set('customerId', customerIdForReceipt);
                               q.set('sourceDocId', ob.sourceDocId);
                               q.set('presetAmount', String(outstandingBalance));
