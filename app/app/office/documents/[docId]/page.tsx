@@ -686,6 +686,11 @@ function DocumentPageContent() {
             return;
         }
 
+        if (from === 'jobs-by-status') {
+            router.push(`/app/office/jobs/management/by-status?status=${tab || 'waiting-approve'}`);
+            return;
+        }
+
         if (!document) {
             router.back();
             return;

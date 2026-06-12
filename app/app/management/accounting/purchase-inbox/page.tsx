@@ -25,9 +25,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Loader2, Search, MoreHorizontal, CheckCircle, XCircle, Eye, AlertCircle } from "lucide-react";
 import { WithId } from "@/firebase";
-import { PurchaseClaim, AccountingAccount, PurchaseDoc, Part } from "@/lib/types";
+import { PurchaseClaim, AccountingAccount, PurchaseDoc, Part, DocumentSettings, StoreSettings } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import Link from "next/link";
+import { sanitizeForFirestore } from "@/lib/utils";
+import {
+  buildWithholdingTaxDocPayload,
+  nextWithholdingTaxDocNo,
+  purchaseAmountPayable,
+  purchaseWithholdingAmount,
+} from "@/lib/purchase-withholding";
 
 type ClaimStatus = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -198,16 +205,59 @@ function PurchaseInboxPageContent() {
             const purchaseDocRef = doc(db, 'purchaseDocs', approvingClaim.purchaseDocId);
             const purchaseDocSnap = await transaction.get(purchaseDocRef);
             if (!purchaseDocSnap.exists()) throw new Error(`ไม่พบเอกสารจัดซื้อเลขที่ ${approvingClaim.purchaseDocNo}`);
+            const purchaseDocData = purchaseDocSnap.data() as PurchaseDoc;
             
             const claimRef = doc(db, 'purchaseClaims', approvingClaim.id);
             const entryId = `PURCHASE_${approvingClaim.purchaseDocId}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
 
             const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
+            const whtAmount = purchaseWithholdingAmount(purchaseDocData);
+            const cashOutAmount = purchaseAmountPayable(purchaseDocData);
+            let whtDocId = purchaseDocData.withholdingTaxDocId || "";
 
             // Check if entry already exists
             const entrySnap = await transaction.get(entryRef);
             if (entrySnap.exists()) throw new Error("รายการนี้เคยถูกลงบัญชีไปแล้ว");
+
+            if (whtAmount > 0 && !whtDocId) {
+              const year = Number(formData.paidDate.slice(0, 4));
+              const counterRef = doc(db, 'documentCounters', String(year));
+              const settingsRef = doc(db, 'settings', 'documents');
+              const storeSettingsRef = doc(db, 'settings', 'store');
+              const [counterSnap, settingsSnap, storeSettingsSnap] = await Promise.all([
+                transaction.get(counterRef),
+                transaction.get(settingsRef),
+                transaction.get(storeSettingsRef),
+              ]);
+              const settings = (settingsSnap.exists() ? settingsSnap.data() : {}) as DocumentSettings;
+              const storeSettings = (storeSettingsSnap.exists() ? storeSettingsSnap.data() : {}) as StoreSettings;
+              const counters = counterSnap.exists() ? (counterSnap.data() as Record<string, unknown>) : { year };
+              const { docNo, nextCount } = nextWithholdingTaxDocNo(settings, counters, year);
+              const whtRef = doc(collection(db, 'documents'));
+              whtDocId = whtRef.id;
+              const payload = buildWithholdingTaxDocPayload({
+                docNo,
+                docDate: formData.paidDate,
+                storeSettings,
+                purchase: { ...purchaseDocData, id: approvingClaim.purchaseDocId },
+                senderName: profile.displayName,
+              });
+              transaction.set(
+                whtRef,
+                sanitizeForFirestore({
+                  id: whtDocId,
+                  ...payload,
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                })
+              );
+              transaction.set(
+                counterRef,
+                { ...counters, withholdingTax: nextCount, withholdingTaxPrefix: settings.withholdingTaxPrefix || 'WHT' },
+                { merge: true }
+              );
+            }
 
             transaction.update(claimRef, { 
                 status: 'APPROVED', 
@@ -220,7 +270,8 @@ function PurchaseInboxPageContent() {
             transaction.set(entryRef, {
                 entryType: 'CASH_OUT',
                 entryDate: formData.paidDate,
-                amount: approvingClaim.amountTotal,
+                amount: cashOutAmount,
+                grossAmount: approvingClaim.amountTotal,
                 accountId: formData.accountId,
                 paymentMethod: paymentMethod,
                 description: `จ่ายค่าสินค้า/อะไหล่: ${approvingClaim.vendorNameSnapshot} (บิล: ${approvingClaim.invoiceNo})`,
@@ -228,6 +279,12 @@ function PurchaseInboxPageContent() {
                 sourceDocNo: approvingClaim.purchaseDocNo,
                 sourceDocType: 'PURCHASE',
                 vendorNameSnapshot: approvingClaim.vendorNameSnapshot,
+                withholdingEnabled: whtAmount > 0,
+                withholdingPercent: purchaseDocData.withholdingPercent || 0,
+                withholdingAmount: whtAmount,
+                withholdingTaxDocId: whtDocId || undefined,
+                vatAmount: purchaseDocData.vatAmount || 0,
+                netAmount: purchaseDocData.net || 0,
                 createdAt: serverTimestamp(),
             });
 
@@ -237,6 +294,7 @@ function PurchaseInboxPageContent() {
                 approvedByUid: profile.uid, 
                 approvedByName: profile.displayName, 
                 accountingEntryId: entryId,
+                ...(whtDocId ? { withholdingTaxDocId: whtDocId } : {}),
                 updatedAt: serverTimestamp()
             });
         });

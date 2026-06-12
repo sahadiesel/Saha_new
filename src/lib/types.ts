@@ -662,6 +662,9 @@ export interface Document {
   paidAmountGross?: number;
   paidAmountNet?: number;
   withholdingPercent?: number;
+  /** อ้างอิงรายการซื้องานจ้างที่ออกใบหัก ณ ที่จ่าย */
+  sourcePurchaseDocId?: string;
+  sourcePurchaseDocNo?: string;
 }
 
 export interface QuotationTemplate {
@@ -950,6 +953,13 @@ export interface PurchaseDoc {
   isReceived?: boolean;
   suggestedAccountId?: string;
   suggestedPaymentMethod?: 'CASH' | 'TRANSFER';
+  /** งานจ้าง/บริการ — หัก ณ ที่จ่าย */
+  withholdingEnabled?: boolean;
+  withholdingPercent?: 1 | 3 | 5 | number;
+  withholdingAmount?: number;
+  /** ยอดจ่ายสุทธิ = ก่อนภาษี − WHT + VAT */
+  amountPayable?: number;
+  withholdingTaxDocId?: string;
 }
 
 export interface PurchaseClaim {
@@ -964,6 +974,8 @@ export interface PurchaseClaim {
   invoiceNo: string;
   paymentMode: 'CASH' | 'CREDIT';
   amountTotal: number;
+  /** ยอดจ่ายสุทธิหลังหัก WHT (ถ้ามี) */
+  amountPayable?: number;
   suggestedAccountId?: string;
   suggestedPaymentMethod?: 'CASH' | 'TRANSFER';
   /** บัญชีที่คาดว่าจะจ่าย (เครดิต) */

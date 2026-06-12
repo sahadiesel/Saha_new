@@ -42,6 +42,7 @@ import type {
 } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { validateAccountingEntryDate, validateCheckDueDate } from "@/lib/accounting-entry-date";
+import { purchaseWithholdingBase, purchaseWithholdingAmount } from "@/lib/purchase-withholding";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString("th-TH", {
@@ -149,8 +150,12 @@ export function PayCreditorDialog({
     const isPurchase = obligation.sourceDocType === "PURCHASE";
     if (!isPurchase) return { whtBase: watchedAmount, whtAmount: watchedAmount * (watchedWhtPercent / 100) };
     const purchase = sourceDoc as PurchaseDoc;
-    const whtBase = purchase.withTax && purchase.vatAmount > 0 ? purchase.subtotal : purchase.grandTotal;
-    return { whtBase, whtAmount: whtBase * (watchedWhtPercent / 100) };
+    const whtBase = purchaseWithholdingBase(purchase);
+    const whtAmount =
+      purchase.withholdingEnabled && purchase.withholdingAmount != null && purchase.withholdingAmount > 0
+        ? purchase.withholdingAmount
+        : whtBase * (watchedWhtPercent / 100);
+    return { whtBase, whtAmount: Math.round(whtAmount * 100) / 100 };
   }, [sourceDoc, watchedWhtEnabled, watchedWhtPercent, watchedAmount, obligation.sourceDocType]);
 
   const cashOutAmount = watchedAmount - whtInfo.whtAmount;
@@ -172,11 +177,17 @@ export function PayCreditorDialog({
         accountId: preferred,
         paymentInstrument: "TRANSFER",
         checkDueDate: "",
-        withholdingEnabled: false,
-        withholdingPercent: 3,
+        withholdingEnabled:
+          obligation.sourceDocType === "PURCHASE" && sourceDoc
+            ? !!(sourceDoc as PurchaseDoc).withholdingEnabled
+            : false,
+        withholdingPercent:
+          obligation.sourceDocType === "PURCHASE" && sourceDoc
+            ? (sourceDoc as PurchaseDoc).withholdingPercent || 3
+            : 3,
       });
     }
-  }, [obligation, accounts, form, isOpen]);
+  }, [obligation, accounts, form, isOpen, sourceDoc]);
 
   const handleSavePayment = async (data: z.infer<typeof apPaymentSchema>) => {
     if (!db || !profile || !storeSettings) return;
@@ -286,38 +297,48 @@ export function PayCreditorDialog({
         let whtDocId = "";
         if (data.withholdingEnabled && obligation.sourceDocType === "PURCHASE" && sourceDoc) {
           const purchase = sourceDoc as PurchaseDoc;
-          const whtDocNo = `${whtPrefix}${year}-${String(newWhtCount).padStart(4, "0")}`;
-          const whtRef = doc(collection(db, "documents"));
-          whtDocId = whtRef.id;
-          transaction.set(
-            whtRef,
-            sanitizeForFirestore({
-              id: whtDocId,
-              docType: "WITHHOLDING_TAX",
-              docNo: whtDocNo,
-              docDate: payYmd,
-              payerSnapshot: storeSettings,
-              payeeSnapshot: {
-                name: purchase.vendorSnapshot.companyName,
-                taxId: purchase.vendorSnapshot.taxId,
-                address: purchase.vendorSnapshot.address,
-              },
-              vendorId: purchase.vendorId,
-              paidMonth: Number(payYmd.slice(5, 7)),
-              paidYear: year,
-              incomeTypeCode: "ITEM5",
-              paidAmountGross: whtInfo.whtBase,
-              withholdingPercent: data.withholdingPercent,
-              withholdingAmount: whtInfo.whtAmount,
-              paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount,
-              status: "ISSUED",
-              senderName: profile.displayName,
-              receiverName: purchase.vendorSnapshot.companyName,
-              createdAt: serverTimestamp(),
+          if (purchase.withholdingTaxDocId) {
+            whtDocId = purchase.withholdingTaxDocId;
+          } else {
+            const whtDocNo = `${whtPrefix}${year}-${String(newWhtCount).padStart(4, "0")}`;
+            const whtRef = doc(collection(db, "documents"));
+            whtDocId = whtRef.id;
+            transaction.set(
+              whtRef,
+              sanitizeForFirestore({
+                id: whtDocId,
+                docType: "WITHHOLDING_TAX",
+                docNo: whtDocNo,
+                docDate: payYmd,
+                payerSnapshot: storeSettings,
+                payeeSnapshot: {
+                  name: purchase.vendorSnapshot.companyName,
+                  taxId: purchase.vendorSnapshot.taxId,
+                  address: purchase.vendorSnapshot.address,
+                },
+                vendorId: purchase.vendorId,
+                paidMonth: Number(payYmd.slice(5, 7)),
+                paidYear: year,
+                incomeTypeCode: "ITEM5",
+                paidAmountGross: whtInfo.whtBase,
+                withholdingPercent: data.withholdingPercent,
+                withholdingAmount: whtInfo.whtAmount,
+                paidAmountNet: whtInfo.whtBase - whtInfo.whtAmount,
+                status: "ISSUED",
+                senderName: profile.displayName,
+                receiverName: purchase.vendorSnapshot.companyName,
+                sourcePurchaseDocId: purchase.id,
+                sourcePurchaseDocNo: purchase.docNo,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              })
+            );
+            transaction.set(counterRef, { ...currentCounters, withholdingTax: newWhtCount, withholdingTaxPrefix: whtPrefix }, { merge: true });
+            transaction.update(doc(db, "purchaseDocs", purchase.id), {
+              withholdingTaxDocId: whtDocId,
               updatedAt: serverTimestamp(),
-            })
-          );
-          transaction.set(counterRef, { ...currentCounters, withholdingTax: newWhtCount, withholdingTaxPrefix: whtPrefix }, { merge: true });
+            });
+          }
         }
         const entryRef = doc(collection(db, "accountingEntries"));
         transaction.set(
@@ -535,7 +556,7 @@ export function PayCreditorDialog({
                     {sourceDoc?.withTax && (
                       <div className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 p-1 rounded">
                         <Info className="h-3 w-3" />
-                        มี VAT: คำนวณ WHT จากยอดก่อนภาษี ({formatCurrency(sourceDoc.subtotal)})
+                        มี VAT: คำนวณ WHT จากยอดก่อนภาษี ({formatCurrency((sourceDoc as PurchaseDoc).net ?? sourceDoc.subtotal)})
                       </div>
                     )}
                     <div className="flex justify-between text-xs font-medium text-destructive">

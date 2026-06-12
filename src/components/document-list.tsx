@@ -176,6 +176,12 @@ export function DocumentList({
       const extra = Array.from(available).filter((s) => !base.includes(s)).sort();
       return ["ALL", ...ordered, ...extra];
     }
+    if (docType === "WITHHOLDING_TAX") {
+      const available = new Set(allDocuments.map((d) => getDocDisplayStatus(d).key));
+      const ordered = ["ALL", "ISSUED", "DRAFT", "CANCELLED"].filter((s) => s === "ALL" || available.has(s));
+      const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
+      return [...ordered, ...extra.filter((s) => s !== "ALL")];
+    }
     return base;
   }, [docType, allDocuments]);
 
@@ -228,48 +234,52 @@ export function DocumentList({
     listFirstLoadRef.current = true;
   }, [docType]);
 
-  const stableQuery = useMemo(() => {
-    if (!db) return null;
-    if (docType === "QUOTATION") {
-      return query(
-        collection(db, "documents"),
-        where("docType", "==", "QUOTATION"),
-        orderBy("updatedAt", "desc"),
-        limit(quotationFetchLimit)
-      );
-    }
-    return query(
-      collection(db, "documents"),
-      where("docType", "==", docType),
-      orderBy(orderByField, orderByDirection),
-      limit(500)
-    );
-  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit]);
-
   useEffect(() => {
-    if (!stableQuery) return;
+    if (!db) return;
+    const firestoreQuery =
+      docType === "QUOTATION"
+        ? query(
+            collection(db, "documents"),
+            where("docType", "==", "QUOTATION"),
+            orderBy("updatedAt", "desc"),
+            limit(quotationFetchLimit)
+          )
+        : query(
+            collection(db, "documents"),
+            where("docType", "==", docType),
+            orderBy(orderByField, orderByDirection),
+            limit(500)
+          );
+
     if (listFirstLoadRef.current) {
       setLoading(true);
     }
-    const unsubscribe = onSnapshot(stableQuery, (snapshot) => {
-        setAllDocuments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document)));
+    const unsubscribe = onSnapshot(
+      firestoreQuery,
+      (snapshot) => {
+        setAllDocuments(snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
         setLoading(false);
         listFirstLoadRef.current = false;
-    }, (err) => {
-        if (err.message?.includes('requires an index')) {
-            const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-            if (urlMatch) setIndexErrorUrl(urlMatch[0]);
-        } else if (err.code === 'permission-denied') {
-            errorEmitter.emit('permission-error', new FirestorePermissionError({
-                path: 'documents',
-                operation: 'list',
-            }));
+      },
+      (err) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        } else if (err.code === "permission-denied") {
+          errorEmitter.emit(
+            "permission-error",
+            new FirestorePermissionError({
+              path: "documents",
+              operation: "list",
+            })
+          );
         }
         setLoading(false);
         listFirstLoadRef.current = false;
-    });
+      }
+    );
     return () => unsubscribe();
-  }, [stableQuery]);
+  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit]);
 
   const processedDocuments = useMemo(() => {
     let filtered = [...allDocuments];
@@ -281,6 +291,8 @@ export function DocumentList({
       const qCompact = q.replace(/\s|-/g, "");
       filtered = filtered.filter((doc) => {
         const snap = doc.customerSnapshot;
+        const payeeName = (doc.payeeSnapshot?.name || doc.payeeSnapshot?.companyName || doc.receiverName || "").toLowerCase();
+        const payeeTaxId = (doc.payeeSnapshot?.taxId || "").replace(/\s|-/g, "");
         const name = (snap?.name || "").toLowerCase();
         const taxName = (snap?.taxName || "").toLowerCase();
         const phone = (snap?.phone || "").replace(/\s|-/g, "");
@@ -288,8 +300,11 @@ export function DocumentList({
           doc.docNo.toLowerCase().includes(q) ||
           name.includes(q) ||
           taxName.includes(q) ||
+          payeeName.includes(q) ||
+          (doc.sourcePurchaseDocNo || "").toLowerCase().includes(q) ||
           (snap?.phone || "").toLowerCase().includes(q) ||
-          (qCompact.length > 0 && phone.includes(qCompact))
+          (qCompact.length > 0 && phone.includes(qCompact)) ||
+          (qCompact.length > 0 && payeeTaxId.includes(qCompact))
         ) {
           return true;
         }
@@ -578,6 +593,8 @@ export function DocumentList({
                   ? "ค้นหาเลขบิล, ชื่อผู้ติดต่อ, ชื่อบนใบกำกับ, เบอร์โทร, เลขทะเบียน, อะไหล่..."
                   : docType === "QUOTATION"
                     ? "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล, เลขทะเบียน, รหัส/รายการอะไหล่..."
+                    : docType === "WITHHOLDING_TAX"
+                    ? "ค้นหาเลขที่, ชื่อผู้รับเงิน, เลขผู้เสียภาษี, เลขบิลซื้อ..."
                     : "ค้นหาชื่อลูกค้า, เบอร์โทร, เลขบิล, เลขทะเบียน, อะไหล่..."
               }
               value={searchTerm}
@@ -604,11 +621,15 @@ export function DocumentList({
               )}
             </div>
           )}
-          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>ลูกค้า</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
+          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>{docType === "WITHHOLDING_TAX" ? "ผู้รับเงิน" : "ลูกค้า"}</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : docType === "WITHHOLDING_TAX" ? (<><TableHead className="text-right">ฐานหัก</TableHead><TableHead className="text-right">หัก ณ ที่จ่าย</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
-                    const viewPath = docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
+                    const viewPath = docItem.docType === "WITHHOLDING_TAX"
+                      ? `/app/management/accounting/documents/withholding-tax/${docItem.id}/print`
+                      : docItem.docType === 'DELIVERY_NOTE' ? `/app/office/documents/delivery-note/${docItem.id}` : (docItem.docType === 'TAX_INVOICE' ? `/app/office/documents/tax-invoice/${docItem.id}` : `/app/documents/${docItem.id}`);
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office') ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}` : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
-                    const contactName = docItem.customerSnapshot?.name || "—";
+                    const contactName = docItem.docType === "WITHHOLDING_TAX"
+                      ? docItem.payeeSnapshot?.name || docItem.payeeSnapshot?.companyName || docItem.receiverName || "—"
+                      : docItem.customerSnapshot?.name || "—";
                     const taxInvoiceName =
                       docItem.docType === "TAX_INVOICE"
                         ? (docItem.customerSnapshot?.taxName || "").trim()
@@ -617,7 +638,9 @@ export function DocumentList({
                       docItem.docType === "TAX_INVOICE" &&
                       taxInvoiceName &&
                       taxInvoiceName !== (docItem.customerSnapshot?.name || "").trim();
-                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableCell className="text-right font-bold">{(docItem.net ?? Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0))).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.vatAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell></>) : <TableCell className="text-right font-bold">{docItem.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>}<TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</DropdownMenuItem>{docItem.docType === 'QUOTATION' && docItem.status === 'DRAFT' && canManageDocs && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); void handleMarkQuotationOffered(docItem); }}><Send className="mr-2 h-4 w-4"/> เสนอราคาลูกค้าแล้ว</DropdownMenuItem>)}{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={docType === "TAX_INVOICE" || docType === "RECEIPT" ? 8 : 6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
+                    const whtBase = docItem.paidAmountGross ?? docItem.net ?? 0;
+                    const whtAmount = docItem.withholdingAmount ?? 0;
+                    return (<TableRow key={docItem.id}><TableCell className="font-mono text-xs font-bold text-primary">{docItem.docNo}</TableCell><TableCell className="text-xs">{safeFormat(new Date(docItem.docDate), APP_DATE_FORMAT)}</TableCell><TableCell className="text-sm align-top"><div className="font-medium leading-snug">{contactName}</div>{showTaxSubline ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">{taxInvoiceName}</div>) : docItem.docType === "WITHHOLDING_TAX" && docItem.sourcePurchaseDocNo ? (<div className="text-xs text-muted-foreground mt-1 leading-snug">บิลซื้อ: {docItem.sourcePurchaseDocNo}</div>) : null}</TableCell><TableCell><Badge variant={displayStatus.variant} className="text-[10px]">{displayStatus.label}</Badge></TableCell>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableCell className="text-right font-bold">{(docItem.net ?? Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0))).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.vatAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold">{(docItem.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell></>) : docType === "WITHHOLDING_TAX" ? (<><TableCell className="text-right font-bold">{whtBase.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell><TableCell className="text-right font-bold text-amber-700">{whtAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell></>) : <TableCell className="text-right font-bold">{(docItem.grandTotal || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</TableCell>}<TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => router.push(viewPath)}><Eye className="mr-2 h-4 w-4"/> {docItem.docType === "WITHHOLDING_TAX" ? "พิมพ์ 50 ทวิ" : "ดูรายละเอียด"}</DropdownMenuItem>{docItem.docType === 'QUOTATION' && docItem.status === 'DRAFT' && canManageDocs && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); void handleMarkQuotationOffered(docItem); }}><Send className="mr-2 h-4 w-4"/> เสนอราคาลูกค้าแล้ว</DropdownMenuItem>)}{docItem.docType === 'BILLING_NOTE' && baseContext === 'accounting' && docItem.invoiceIds && docItem.invoiceIds.length > 0 && (<DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={() => { void openBillingReceiptPicker(docItem); }}><Receipt className="mr-2 h-4 w-4"/> ออกใบเสร็จ (เลือกบิลย่อย)</DropdownMenuItem>)}{editPath && canManageDocs && (<DropdownMenuItem onSelect={() => router.push(editPath)} disabled={docItem.status === 'PAID' && !isUserAdmin}><Edit className="mr-2 h-4 w-4"/> แก้ไข</DropdownMenuItem>)}{isUserAdmin && docItem.status === 'PAID' && !docItem.receiptDocId && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsRevertAlertOpen(true); }} className="text-amber-600 focus:text-amber-600 font-bold"><RotateCcw className="mr-2 h-4 w-4" /> กู้คืนเพื่อออกใบเสร็จ</DropdownMenuItem>)}{canManageDocs && docType !== 'QUOTATION' && docItem.docType !== 'WITHHOLDING_TAX' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsCancelAlertOpen(true); }} disabled={docItem.status === 'CANCELLED' || (docItem.status === 'PAID' && !isUserAdmin)}><XCircle className="mr-2 h-4 w-4"/> ยกเลิก</DropdownMenuItem>)}{isUserAdmin && docItem.docType !== 'WITHHOLDING_TAX' && (<DropdownMenuItem onSelect={(e) => { e.preventDefault(); setDocToAction(docItem); setIsDeleteAlertOpen(true); }} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> ลบ</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}) : <TableRow><TableCell colSpan={docType === "TAX_INVOICE" || docType === "RECEIPT" ? 8 : docType === "WITHHOLDING_TAX" ? 7 : 6} className="h-24 text-center italic text-muted-foreground">ไม่พบเอกสาร</TableCell></TableRow>}</TableBody></Table></div>)}
         </CardContent>
         {totalPages > 1 && (<CardFooter className="justify-center"><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>

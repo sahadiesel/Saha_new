@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, onSnapshot, query, where, updateDoc, serverTimestamp, addDoc, getDocs, limit, orderBy, runTransaction, Timestamp, getDoc } from "firebase/firestore";
+import { doc, collection, onSnapshot, query, where, serverTimestamp, runTransaction } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useDoc } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -22,7 +22,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { 
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, Camera, X, Send, AlertCircle, ExternalLink, CalendarDays, Search, Box, ImageIcon, PackagePlus, Info } from "lucide-react";
+import { Loader2, PlusCircle, Trash2, Save, ArrowLeft, ChevronsUpDown, X, Send, AlertCircle, ExternalLink, CalendarDays, Info, FileText } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,7 +43,8 @@ import { getNextAvailablePurchaseDocNo, isPurchaseDocServiceLike } from "@/fireb
 import { VENDOR_TYPES } from "@/lib/constants";
 import { vendorTypeLabel } from "@/lib/ui-labels";
 import { buildPurchaseVendorSnapshot } from "@/lib/vendor-form";
-import type { PurchaseDoc, Vendor, AccountingAccount } from "@/lib/types";
+import { computeServicePurchaseAmounts, buildWithholdingTaxDocPayload, nextWithholdingTaxDocNo } from "@/lib/purchase-withholding";
+import type { PurchaseDoc, Vendor, AccountingAccount, StoreSettings, DocumentSettings } from "@/lib/types";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
@@ -116,6 +117,10 @@ const purchaseFormSchema = z.object({
   withTax: z.boolean().default(true),
   vatAmount: z.coerce.number(),
   grandTotal: z.coerce.number(),
+  amountPayable: z.coerce.number().optional(),
+  withholdingEnabled: z.boolean().default(false),
+  withholdingPercent: z.coerce.number().min(0).max(100).default(3),
+  withholdingAmount: z.coerce.number().optional(),
   paymentMode: z.enum(["CASH", "CREDIT"]),
   dueDate: z.string().optional().nullable(),
   expectedPaymentAccountId: z.string().optional(),
@@ -145,6 +150,8 @@ export function PurchaseServiceForm() {
 
   const docToEditRef = useMemo(() => (db && editDocId ? doc(db, "purchaseDocs", editDocId) : null), [db, editDocId]);
   const { data: docToEdit, isLoading: isLoadingDoc } = useDoc<PurchaseDoc>(docToEditRef);
+  const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
+  const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [accounts, setAccounts] = useState<AccountingAccount[]>([]);
@@ -156,6 +163,7 @@ export function PurchaseServiceForm() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCreatingWht, setIsCreatingWht] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [previewDocNo, setPreviewDocNo] = useState<string>("");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
@@ -175,6 +183,10 @@ export function PurchaseServiceForm() {
       net: 0,
       vatAmount: 0,
       grandTotal: 0,
+      amountPayable: 0,
+      withholdingEnabled: false,
+      withholdingPercent: 3,
+      withholdingAmount: 0,
       note: "",
       suggestedAccountId: "",
       suggestedPaymentMethod: "CASH",
@@ -193,6 +205,8 @@ export function PurchaseServiceForm() {
   const watchedItems = useWatch({ control: form.control, name: "items" });
   const watchedDiscount = useWatch({ control: form.control, name: "discountAmount" });
   const watchedIsVat = useWatch({ control: form.control, name: "withTax" });
+  const watchedWhtEnabled = useWatch({ control: form.control, name: "withholdingEnabled" });
+  const watchedWhtPercent = useWatch({ control: form.control, name: "withholdingPercent" });
   const watchedPaymentMode = form.watch("paymentMode");
   const watchedDocDate = form.watch("docDate");
 
@@ -238,6 +252,10 @@ export function PurchaseServiceForm() {
         withTax: docToEdit.withTax ?? true,
         vatAmount: docToEdit.vatAmount || 0,
         grandTotal: docToEdit.grandTotal || 0,
+        amountPayable: docToEdit.amountPayable ?? (docToEdit.grandTotal || 0),
+        withholdingEnabled: docToEdit.withholdingEnabled ?? false,
+        withholdingPercent: docToEdit.withholdingPercent ?? 3,
+        withholdingAmount: docToEdit.withholdingAmount ?? 0,
         paymentMode: docToEdit.paymentMode || "CASH",
         dueDate: toYyyyMmDdOrNull(docToEdit.dueDate) ?? null,
         expectedPaymentAccountId: docToEdit.expectedPaymentAccountId || "",
@@ -270,16 +288,21 @@ export function PurchaseServiceForm() {
 
   useEffect(() => {
     const subtotal = watchedItems.reduce((sum, item) => sum + (item.total || 0), 0);
-    const discount = watchedDiscount || 0;
-    const net = subtotal - discount;
-    const vatAmount = watchedIsVat ? net * 0.07 : 0;
-    const grandTotal = net + vatAmount;
+    const amounts = computeServicePurchaseAmounts({
+      subtotal,
+      discountAmount: watchedDiscount || 0,
+      withTax: watchedIsVat,
+      withholdingEnabled: watchedWhtEnabled,
+      withholdingPercent: watchedWhtPercent || 0,
+    });
 
-    form.setValue("subtotal", subtotal);
-    form.setValue("net", net);
-    form.setValue("vatAmount", vatAmount);
-    form.setValue("grandTotal", grandTotal);
-  }, [watchedItems, watchedDiscount, watchedIsVat, form]);
+    form.setValue("subtotal", amounts.subtotal);
+    form.setValue("net", amounts.net);
+    form.setValue("vatAmount", amounts.vatAmount);
+    form.setValue("grandTotal", amounts.grandTotal);
+    form.setValue("withholdingAmount", amounts.withholdingAmount);
+    form.setValue("amountPayable", amounts.amountPayable);
+  }, [watchedItems, watchedDiscount, watchedIsVat, watchedWhtEnabled, watchedWhtPercent, form]);
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -370,6 +393,7 @@ export function PurchaseServiceForm() {
               invoiceNo: data.invoiceNo,
               paymentMode: data.paymentMode,
               amountTotal: data.grandTotal,
+              amountPayable: data.amountPayable ?? data.grandTotal,
               suggestedAccountId: data.suggestedAccountId || null,
               suggestedPaymentMethod: data.suggestedPaymentMethod || null,
               expectedPaymentAccountId: data.paymentMode === "CREDIT"
@@ -409,6 +433,96 @@ export function PurchaseServiceForm() {
       console.error("Save Purchase Doc Error:", e);
       toast({ variant: "destructive", title: "ผิดพลาด", description: e.message });
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateWithholdingTax = async () => {
+    if (!db || !profile || !storeSettings || !editDocId || !docToEdit) {
+      toast({ variant: "destructive", title: "บันทึกเอกสารก่อน", description: "กรุณาบันทึกรายการซื้อก่อนสร้างใบหัก ณ ที่จ่าย" });
+      return;
+    }
+    if (docToEdit.withholdingTaxDocId) {
+      router.push(`/app/management/accounting/documents/withholding-tax/${docToEdit.withholdingTaxDocId}/print`);
+      return;
+    }
+    if (!form.getValues("withholdingEnabled")) {
+      toast({ variant: "destructive", title: "ไม่ได้เปิดหัก ณ ที่จ่าย" });
+      return;
+    }
+    const vendor = vendors.find((v) => v.id === form.getValues("vendorId"));
+    if (!vendor?.taxId || !vendor?.address) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลร้านค้าไม่ครบ",
+        description: "ต้องมีเลขผู้เสียภาษีและที่อยู่ของร้านค้า",
+      });
+      return;
+    }
+    if (!storeSettings.taxId) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลร้านไม่ครบ",
+        description: "กรุณาตั้งค่าเลขผู้เสียภาษีของร้านในระบบ",
+      });
+      return;
+    }
+
+    setIsCreatingWht(true);
+    try {
+      const docDate = form.getValues("docDate");
+      const purchaseSnapshot: PurchaseDoc = {
+        ...docToEdit,
+        ...form.getValues(),
+        id: editDocId,
+        docNo: docToEdit.docNo,
+        vendorSnapshot: buildPurchaseVendorSnapshot(vendor),
+        purchaseType: "SERVICE",
+        status: docToEdit.status,
+        createdAt: docToEdit.createdAt,
+        updatedAt: docToEdit.updatedAt,
+      };
+
+      let whtDocId = "";
+      await runTransaction(db, async (transaction) => {
+        const year = Number(docDate.slice(0, 4));
+        const counterRef = doc(db, "documentCounters", String(year));
+        const settingsRef = doc(db, "settings", "documents");
+        const purchaseRef = doc(db, "purchaseDocs", editDocId);
+        const [counterSnap, settingsSnap] = await Promise.all([
+          transaction.get(counterRef),
+          transaction.get(settingsRef),
+        ]);
+        const settings = (settingsSnap.exists() ? settingsSnap.data() : {}) as DocumentSettings;
+        const counters = counterSnap.exists() ? (counterSnap.data() as Record<string, unknown>) : { year };
+        const { docNo, nextCount } = nextWithholdingTaxDocNo(settings, counters, year);
+        const whtRef = doc(collection(db, "documents"));
+        whtDocId = whtRef.id;
+        const payload = buildWithholdingTaxDocPayload({
+          docNo,
+          docDate,
+          storeSettings,
+          purchase: purchaseSnapshot,
+          senderName: profile.displayName,
+        });
+        transaction.set(whtRef, sanitizeForFirestore({ id: whtDocId, ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+        transaction.set(
+          counterRef,
+          { ...counters, withholdingTax: nextCount, withholdingTaxPrefix: settings.withholdingTaxPrefix || "WHT" },
+          { merge: true }
+        );
+        transaction.update(purchaseRef, {
+          withholdingTaxDocId: whtDocId,
+          updatedAt: serverTimestamp(),
+        });
+      });
+
+      toast({ title: "สร้างใบหัก ณ ที่จ่ายแล้ว", description: `เลขที่ ${whtDocId}` });
+      router.push(`/app/management/accounting/documents/withholding-tax/${whtDocId}/print`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "สร้างใบหัก ณ ที่จ่ายไม่สำเร็จ", description: msg });
+    } finally {
+      setIsCreatingWht(false);
     }
   };
 
@@ -670,14 +784,66 @@ export function PurchaseServiceForm() {
               <div className="space-y-4 p-6 border rounded-lg bg-muted/30 h-fit">
                   <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">รวมเป็นเงิน</span><span className="font-medium">{(form.watch('subtotal') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                   <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">ส่วนลด (บาท)</span><FormField name="discountAmount" control={form.control} render={({ field }) => (<Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} value={field.value || ''} disabled={isSubmitting || isLocked}/>)} /></div>
+                  <div className="flex justify-between items-center text-sm"><span className="text-muted-foreground">ยอดก่อนภาษี</span><span className="font-medium">{(form.watch('net') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  <div className="space-y-2 py-1 border-y border-dashed">
+                    <FormField name="withholdingEnabled" control={form.control} render={({ field }) => (
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={field.value} onCheckedChange={field.onChange} disabled={isSubmitting || isLocked}/>
+                        <Label className="text-sm font-normal cursor-pointer">หัก ณ ที่จ่าย (WHT)</Label>
+                      </div>
+                    )} />
+                    {watchedWhtEnabled && (
+                      <div className="space-y-2 pl-6 animate-in slide-in-from-top-1">
+                        <FormField name="withholdingPercent" control={form.control} render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">อัตราหัก (%)</FormLabel>
+                            <Select onValueChange={(v) => field.onChange(Number(v))} value={String(field.value ?? 3)} disabled={isSubmitting || isLocked}>
+                              <FormControl><SelectTrigger className="h-8"><SelectValue /></SelectTrigger></FormControl>
+                              <SelectContent>
+                                <SelectItem value="1">1% (ขนส่ง)</SelectItem>
+                                <SelectItem value="3">3% (บริการ/งานจ้าง)</SelectItem>
+                                <SelectItem value="5">5% (ค่าเช่า)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormItem>
+                        )} />
+                        <div className="flex justify-between text-sm text-amber-700">
+                          <span>หัก ณ ที่จ่าย</span>
+                          <span>-{(form.watch('withholdingAmount') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">คำนวณจากยอดก่อนภาษี แล้วบวก VAT กลับเป็นยอดจ่ายสุทธิ</p>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex justify-between items-center py-2"><FormField name="withTax" control={form.control} render={({ field }) => (
                     <div className="flex items-center space-x-2">
                       <Checkbox checked={field.value} onCheckedChange={field.onChange} disabled={isSubmitting || isLocked}/>
                       <Label className="text-sm font-normal cursor-pointer">ภาษีมูลค่าเพิ่ม 7%</Label>
                     </div>
                   )} /><span className="text-sm">{(form.watch('vatAmount') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  {watchedWhtEnabled && (
+                    <div className="flex justify-between items-center text-sm text-muted-foreground">
+                      <span>ยอดรวมบิล (ก่อนหัก WHT)</span>
+                      <span>{(form.watch('grandTotal') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
                   <Separator className="my-2"/>
-                  <div className="flex justify-between items-center text-xl font-bold text-primary"><span>ยอดรวมสุทธิ</span><span>{(form.watch('grandTotal') || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between items-center text-xl font-bold text-primary">
+                    <span>{watchedWhtEnabled ? "ยอดจ่ายสุทธิ" : "ยอดรวมสุทธิ"}</span>
+                    <span>{((watchedWhtEnabled ? form.watch('amountPayable') : form.watch('grandTotal')) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  {watchedWhtEnabled && editDocId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-2"
+                      disabled={isCreatingWht || isSubmitting || isLocked}
+                      onClick={handleCreateWithholdingTax}
+                    >
+                      {isCreatingWht ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileText className="mr-2 h-4 w-4"/>}
+                      {docToEdit?.withholdingTaxDocId ? "เปิดใบหัก ณ ที่จ่าย" : "สร้างใบหัก ณ ที่จ่าย"}
+                    </Button>
+                  )}
               </div>
           </div>
         </form>

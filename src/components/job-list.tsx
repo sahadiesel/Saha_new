@@ -132,6 +132,8 @@ interface JobListProps {
   /** แจ้งเตือนแชตลูกค้ายังไม่อ่าน (เฉพาะ ADMIN / แผนก OFFICE) — ใช้ในหน้าจัดการตามแผนก */
   trackCustomerChatUnread?: boolean;
   onCustomerChatUnreadJobCount?: (count: number) => void;
+  /** แท็บปัจจุบันจากหน้างานตามสถานะ — ส่งต่อให้ปุ่มกลับจากเอกสาร */
+  byStatusTab?: string;
 }
 
 export function JobList({ 
@@ -146,7 +148,12 @@ export function JobList({
   showSystemAgeBadge = false,
   trackCustomerChatUnread = false,
   onCustomerChatUnreadJobCount,
+  byStatusTab,
 }: JobListProps) {
+  const documentFromJobsByStatusQuery = byStatusTab
+    ? `?from=jobs-by-status&status=${encodeURIComponent(byStatusTab)}`
+    : "";
+
   type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
   /** แสดงป้าย "ค้าง X วัน" บนการ์ดเมื่อดูตามแผนก หรือเปิดชัดเจนจากหน้าจัดการ */
@@ -619,7 +626,7 @@ export function JobList({
                   
                   {isMgmtOrOffice && job.status === 'PENDING_CUSTOMER_INFORM' && (
                     <Button asChild className="w-full h-9 bg-pink-600 hover:bg-pink-700 text-white font-bold">
-                      <Link href={`/app/office/documents/${job.salesDocId}`}>
+                      <Link href={`/app/office/documents/${job.salesDocId}${documentFromJobsByStatusQuery}`}>
                         <Send className="mr-2 h-4 w-4" /> แจ้งราคาลูกค้า
                       </Link>
                     </Button>

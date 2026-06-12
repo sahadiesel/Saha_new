@@ -21,6 +21,7 @@ import {
 import { format, parseISO, isBefore, startOfDay } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import type { UserProfile, Customer, Document as SalesDocument, AccountingObligation, DocumentSettings, StoreSettings, PurchaseDoc } from "@/lib/types";
+import { purchaseWithholdingBase } from "@/lib/purchase-withholding";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -427,7 +428,7 @@ export function AccountingChecksTab({ db, accounts, profile }: Props) {
           const sourceSnap = await getDoc(doc(db, "purchaseDocs", obligation.sourceDocId));
           const source = sourceSnap.exists() ? (sourceSnap.data() as PurchaseDoc) : null;
           if (source) {
-            whtBase = source.withTax && (source.vatAmount || 0) > 0 ? source.subtotal : source.grandTotal;
+            whtBase = purchaseWithholdingBase(source);
             whtAmount = Math.round(whtBase * ((ch.withholdingPercent || 0) / 100) * 100) / 100;
             if (whtAmount > ch.amount) whtAmount = ch.amount;
           }

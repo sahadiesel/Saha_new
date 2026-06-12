@@ -2,6 +2,6 @@
 
 import { WithholdingTaxListPage } from "@/components/withholding-tax-list-page";
 
-export default function ManagementWithholdingTaxPage() {
+export default function OfficeWithholdingTaxPage() {
   return <WithholdingTaxListPage />;
 }

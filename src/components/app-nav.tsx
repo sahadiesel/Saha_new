@@ -427,9 +427,9 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                         <SubNavLink href="/app/office/parts/list" label="รายการและสต๊อคสินค้า" onClick={onLinkClick} />
                         <SubNavLink href="/app/office/parts/low-stock" label="รายการที่ต้องเตรียมสั่ง" onClick={onLinkClick} />
                         
-                        <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')}>
+                        <Collapsible defaultOpen={pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation') || pathname.startsWith('/app/office/documents/withholding-tax')}>
                             <CollapsibleTrigger asChild>
-                                <Button variant={(pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
+                                <Button variant={(pathname.startsWith('/app/office/parts/purchases') || pathname.startsWith('/app/office/parts/withdraw') || pathname.startsWith('/app/office/documents/quotation') || pathname.startsWith('/app/office/documents/withholding-tax')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
                                     จัดการเอกสาร
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
@@ -438,6 +438,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                                 <SubNavLink href="/app/office/parts/purchases" label="รายการซื้อสินค้า" onClick={onLinkClick} />
                                 <SubNavLink href="/app/office/parts/withdraw" label="รายการเบิกสินค้า" onClick={onLinkClick} />
                                 <SubNavLink href="/app/office/documents/quotation" label="ใบเสนอราคา" onClick={onLinkClick} />
+                                <SubNavLink href="/app/office/documents/withholding-tax" label="ใบหัก ณ ที่จ่าย" onClick={onLinkClick} />
                             </CollapsibleContent>
                         </Collapsible>
 

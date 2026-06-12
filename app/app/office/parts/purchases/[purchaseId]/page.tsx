@@ -108,8 +108,17 @@ function PurchaseDocView({ document }: { document: PurchaseDoc }) {
                     <div className="flex justify-between text-sm text-destructive"><span>ส่วนลด</span><span>-{formatCurrency(document.discountAmount)}</span></div>
                     <div className="flex justify-between font-medium"><span>ยอดหลังหักส่วนลด</span><span>{formatCurrency(document.net)}</span></div>
                     {document.withTax && <div className="flex justify-between text-sm"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{formatCurrency(document.vatAmount)}</span></div>}
+                    {document.withholdingEnabled && (document.withholdingAmount || 0) > 0 && (
+                      <>
+                        <div className="flex justify-between text-sm text-amber-700"><span>หัก ณ ที่จ่าย ({document.withholdingPercent || 0}%)</span><span>-{formatCurrency(document.withholdingAmount)}</span></div>
+                        <div className="flex justify-between text-sm text-muted-foreground"><span>ยอดรวมบิล</span><span>{formatCurrency(document.grandTotal)}</span></div>
+                      </>
+                    )}
                     <Separator className="my-2" />
-                    <div className="flex justify-between text-lg font-bold text-primary"><span>ยอดสุทธิ</span><span>{formatCurrency(document.grandTotal)}</span></div>
+                    <div className="flex justify-between text-lg font-bold text-primary">
+                      <span>{document.withholdingEnabled ? "ยอดจ่ายสุทธิ" : "ยอดสุทธิ"}</span>
+                      <span>{formatCurrency(document.withholdingEnabled ? (document.amountPayable ?? document.grandTotal - (document.withholdingAmount || 0)) : document.grandTotal)}</span>
+                    </div>
                     <div className="text-[10px] text-muted-foreground text-right mt-2">
                         เงื่อนไข: {document.paymentMode === 'CASH' ? 'เงินสด/โอน' : `เครดิต (ครบกำหนด: ${document.dueDate || 'ไม่ระบุ'})${document.expectedPaymentAccountId ? ' · มีบัญชีคาดจ่าย' : ''}`}
                     </div>

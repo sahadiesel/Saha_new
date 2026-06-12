@@ -126,6 +126,7 @@ function ByStatusContent() {
                         {activeTab === tab && (
                             <JobList 
                                 searchTerm={searchTerm}
+                                byStatusTab={tab}
                                 status={
                                     tab === "waiting-approve" ? ["PENDING_CUSTOMER_INFORM", "WAITING_APPROVE"] :
                                     tab === "quotation" ? "WAITING_QUOTATION" :
