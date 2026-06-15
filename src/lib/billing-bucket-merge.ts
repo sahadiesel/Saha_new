@@ -10,12 +10,49 @@ export function billingBucketId(inv: Document): string {
   );
 }
 
+/** แปลง id แถว UI (เช่น bucket::split::key) เป็น bucket จริงสำหรับรวมกลุ่ม */
+export function normalizeBillingBucketKey(key: string): string {
+  const idx = key.indexOf('::split::');
+  return idx >= 0 ? key.slice(0, idx) : key;
+}
+
+/** ทำความสะอาด map รวมกลุ่ม — ตัด id แถวแยกและ chain ให้ชี้หัวกลุ่มสุดท้าย */
+export function sanitizeBillingMergedBuckets(
+  merged: Record<string, string> | undefined
+): Record<string, string> {
+  const raw: Record<string, string> = {};
+  for (const [rawFollower, rawLeader] of Object.entries(merged || {})) {
+    const follower = normalizeBillingBucketKey(rawFollower);
+    const leader = normalizeBillingBucketKey(rawLeader);
+    if (!follower || !leader || follower === leader) continue;
+    raw[follower] = leader;
+  }
+
+  const resolveLeader = (bucket: string): string => {
+    let cur = bucket;
+    const seen = new Set<string>();
+    while (raw[cur] && raw[cur] !== cur) {
+      if (seen.has(cur)) break;
+      seen.add(cur);
+      cur = raw[cur]!;
+    }
+    return cur;
+  };
+
+  const out: Record<string, string> = {};
+  for (const follower of Object.keys(raw)) {
+    const leader = resolveLeader(follower);
+    if (follower !== leader) out[follower] = leader;
+  }
+  return out;
+}
+
 /** รวมแถวย่อย (follower) เข้าหัวกลุ่ม (leader) ตาม billingMergedBuckets */
 export function collapseBillingBucketMerges(
   grouped: Record<string, { customer: Customer; invoices: Document[] }>,
   merged: Record<string, string> | undefined
 ) {
-  const m = { ...(merged || {}) };
+  const m = sanitizeBillingMergedBuckets(merged);
   let guard = 0;
   let changed = true;
   while (changed && guard++ < 20) {

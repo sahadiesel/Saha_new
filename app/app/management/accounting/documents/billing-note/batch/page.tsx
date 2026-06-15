@@ -67,7 +67,11 @@ import type { WithId } from '@/firebase/firestore/use-collection';
 import { BillingNoteBatchEditDialog } from '@/components/billing-note-batch-edit-dialog';
 import { createDocument } from '@/firebase/documents';
 import { safeFormat } from '@/lib/date-utils';
-import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
+import {
+  billingBucketId,
+  collapseBillingBucketMerges,
+  sanitizeBillingMergedBuckets,
+} from '@/lib/billing-bucket-merge';
 import { fpBillingRunCreatedBucket, fpBillingRunCreatedSeparate } from '@/lib/billing-run-field-paths';
 import {
   getInvoiceableTaxProfiles,
@@ -167,7 +171,7 @@ export default function BatchBillingNotePage() {
       });
 
       collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
-      const mergedMap = billingRun?.billingMergedBuckets || {};
+      const mergedMap = sanitizeBillingMergedBuckets(billingRun?.billingMergedBuckets);
 
       const rowsBeforeExplode: BillingTableRow[] = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
         const includedInvoices: Document[] = [];

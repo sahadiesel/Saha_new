@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft, UserPlus, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -85,6 +85,13 @@ export function ReceiptForm() {
   const [isCustomerPopoverOpen, setIsCustomerPopoverOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [extraSourceDocs, setExtraSourceDocs] = useState<DocumentType[]>([]);
+  /** ลูกค้าเพิ่มเติมสำหรับรวมใบเสร็จข้ามลูกค้า */
+  const [additionalCustomerIds, setAdditionalCustomerIds] = useState<string[]>([]);
+  const [isAddCustomerPopoverOpen, setIsAddCustomerPopoverOpen] = useState(false);
+  const [addCustomerSearch, setAddCustomerSearch] = useState("");
+  /** เลือกออกใบเสร็จตามใบวางบิล — กรองและเลือกอัตโนมัติ */
+  const [selectedBillingNoteId, setSelectedBillingNoteId] = useState("");
+  const urlBillingNoteId = searchParams.get("billingNoteId") || "";
   /** เอกสารแรกจากลิงก์ (sourceDocId) — ใช้ซิงก์ customerId / แสดงชื่อเมื่อไม่มีใน collection customers */
   const [bootstrapSourceDoc, setBootstrapSourceDoc] = useState<DocumentType | null>(null);
 
@@ -116,6 +123,38 @@ export function ReceiptForm() {
   const selectedCustomerId = form.watch('customerId');
   const watchedSourceDocIds = form.watch('sourceDocIds');
 
+  const allCustomerIds = useMemo(() => {
+    if (!selectedCustomerId) return [];
+    return Array.from(new Set([selectedCustomerId, ...additionalCustomerIds]));
+  }, [selectedCustomerId, additionalCustomerIds]);
+
+  const allCustomerIdsKey = allCustomerIds.slice().sort().join("|");
+
+  const resolveDocCustomerId = (d: DocumentType) => d.customerId || d.customerSnapshot?.id || "";
+
+  const customerNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of customers) map.set(c.id, c.name);
+    for (const d of [...sourceDocs, ...extraSourceDocs]) {
+      const cid = resolveDocCustomerId(d);
+      if (cid && !map.has(cid)) {
+        map.set(cid, d.customerSnapshot?.name || d.customerSnapshot?.taxName || "ลูกค้า");
+      }
+    }
+    if (bootstrapSourceDoc) {
+      const cid = resolveDocCustomerId(bootstrapSourceDoc);
+      if (cid && !map.has(cid)) {
+        map.set(
+          cid,
+          bootstrapSourceDoc.customerSnapshot?.name ||
+            bootstrapSourceDoc.customerSnapshot?.taxName ||
+            "ลูกค้า"
+        );
+      }
+    }
+    return map;
+  }, [customers, sourceDocs, extraSourceDocs, bootstrapSourceDoc]);
+
   useEffect(() => {
     if (editDocId || urlSourceDocIds.length === 0) return;
     form.setValue("sourceDocIds", urlSourceDocIds);
@@ -142,6 +181,24 @@ export function ReceiptForm() {
   }, [db, editDocId, urlSourceKey, form]);
 
   useEffect(() => {
+    if (!db || editDocId || !urlBillingNoteId) return;
+    let cancelled = false;
+    (async () => {
+      const s = await getDoc(doc(db, "documents", urlBillingNoteId));
+      if (cancelled || !s.exists()) return;
+      const bn = { id: s.id, ...s.data() } as DocumentType;
+      if (bn.docType !== "BILLING_NOTE") return;
+      const cid = bn.customerId || bn.customerSnapshot?.id;
+      if (cid) form.setValue("customerId", cid);
+      setSelectedBillingNoteId(urlBillingNoteId);
+      form.setValue("sourceDocIds", [urlBillingNoteId], { shouldValidate: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, editDocId, urlBillingNoteId, form]);
+
+  useEffect(() => {
     if (!db) return;
     const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
       setCustomers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer)));
@@ -166,45 +223,154 @@ export function ReceiptForm() {
     }
   }, [docToEdit, form, isSubmitting]);
 
-  const displaySourceDocs = useMemo(() => {
-    const m = new Map<string, DocumentType>();
-    for (const d of sourceDocs) m.set(d.id, d);
-    for (const d of extraSourceDocs) m.set(d.id, d);
-    return Array.from(m.values());
-  }, [sourceDocs, extraSourceDocs]);
+  useEffect(() => {
+    if (!db || !docToEdit || isSubmitting) return;
+    const refs = docToEdit.referencesDocIds || [];
+    if (refs.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const rows = await Promise.all(
+        refs.map((id) =>
+          getDoc(doc(db, "documents", id)).then((s) =>
+            s.exists() ? ({ id: s.id, ...s.data() } as DocumentType) : null
+          )
+        )
+      );
+      if (cancelled) return;
+      const primaryId = docToEdit.customerId || docToEdit.customerSnapshot?.id || "";
+      const others = Array.from(
+        new Set(
+          rows
+            .filter(Boolean)
+            .map((d) => resolveDocCustomerId(d!))
+            .filter((id) => id && id !== primaryId)
+        )
+      ) as string[];
+      setAdditionalCustomerIds(others);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, docToEdit, isSubmitting]);
 
   useEffect(() => {
-    if (!db || !selectedCustomerId) {
+    if (!db || !docToEdit || isSubmitting) return;
+    const refs = docToEdit.referencesDocIds || [];
+    if (refs.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const id of refs) {
+        const s = await getDoc(doc(db, "documents", id));
+        if (cancelled || !s.exists()) continue;
+        if (s.data().docType === "BILLING_NOTE") {
+          setSelectedBillingNoteId(id);
+          break;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, docToEdit, isSubmitting]);
+
+  useEffect(() => {
+    if (!selectedBillingNoteId) return;
+    const ids = watchedSourceDocIds;
+    if (ids.length !== 1 || ids[0] !== selectedBillingNoteId) {
+      setSelectedBillingNoteId("");
+    }
+  }, [watchedSourceDocIds, selectedBillingNoteId]);
+
+  const displaySourceDocs = useMemo(() => {
+    const allowedCustomers = new Set(allCustomerIds);
+    const m = new Map<string, DocumentType>();
+    for (const d of sourceDocs) {
+      if (allowedCustomers.has(resolveDocCustomerId(d))) m.set(d.id, d);
+    }
+    for (const d of extraSourceDocs) m.set(d.id, d);
+    return Array.from(m.values()).sort((a, b) => {
+      const ca = resolveDocCustomerId(a);
+      const cb = resolveDocCustomerId(b);
+      if (ca !== cb) {
+        const na = customerNameById.get(ca) || ca;
+        const nb = customerNameById.get(cb) || cb;
+        return na.localeCompare(nb, "th");
+      }
+      return String(b.docDate || "").localeCompare(String(a.docDate || ""));
+    });
+  }, [sourceDocs, extraSourceDocs, allCustomerIds, customerNameById]);
+
+  const billingNoteOptions = useMemo(
+    () =>
+      displaySourceDocs
+        .filter((d) => d.docType === "BILLING_NOTE")
+        .sort((a, b) => String(b.docDate || "").localeCompare(String(a.docDate || ""))),
+    [displaySourceDocs]
+  );
+
+  const tableDocs = useMemo(() => {
+    if (selectedBillingNoteId) {
+      const bn = displaySourceDocs.find((d) => d.id === selectedBillingNoteId);
+      const invoiceIds = new Set(bn?.invoiceIds || []);
+      return displaySourceDocs.filter(
+        (d) => d.id === selectedBillingNoteId || invoiceIds.has(d.id)
+      );
+    }
+    const billingNoteIds = new Set(billingNoteOptions.map((b) => b.id));
+    return displaySourceDocs.filter((d) => {
+      if (d.docType === "TAX_INVOICE" && d.billingNoteId && billingNoteIds.has(d.billingNoteId)) {
+        return false;
+      }
+      return true;
+    });
+  }, [displaySourceDocs, selectedBillingNoteId, billingNoteOptions]);
+
+  const isBillingNoteMode = !!selectedBillingNoteId;
+
+  const isDocSelectable = (doc: DocumentType) => {
+    if (!isBillingNoteMode) return true;
+    return doc.id === selectedBillingNoteId;
+  };
+
+  useEffect(() => {
+    if (!db || allCustomerIds.length === 0) {
       setSourceDocs([]);
       return;
     }
-    const q = query(
-      collection(db, "documents"),
-      where("customerId", "==", selectedCustomerId),
-      where("docType", "in", ["TAX_INVOICE", "BILLING_NOTE"]),
-      where("status", "in", ["UNPAID", "PARTIAL", "APPROVED"])
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DocumentType));
-      
-      const filtered = allDocs.filter(doc => {
-          if (doc.status === 'CANCELLED' || doc.status === 'PAID') return false;
-          if (doc.receiptStatus === 'CONFIRMED') return false;
-          if (doc.receiptDocId && doc.receiptDocId !== editDocId) return false;
-          
-          if (doc.docType === 'TAX_INVOICE' && doc.billingRequired && !doc.billingNoteId) {
-              return false;
-          }
-          return true;
+
+    const filterEligible = (allDocs: DocumentType[]) =>
+      allDocs.filter((doc) => {
+        if (doc.status === "CANCELLED" || doc.status === "PAID") return false;
+        if (doc.receiptStatus === "CONFIRMED") return false;
+        if (doc.receiptDocId && doc.receiptDocId !== editDocId) return false;
+        if (doc.docType === "TAX_INVOICE" && doc.billingRequired && !doc.billingNoteId) {
+          return false;
+        }
+        return true;
       });
 
-      setSourceDocs(filtered);
+    const unsubs = allCustomerIds.map((customerId) => {
+      const q = query(
+        collection(db, "documents"),
+        where("customerId", "==", customerId),
+        where("docType", "in", ["TAX_INVOICE", "BILLING_NOTE"]),
+        where("status", "in", ["UNPAID", "PARTIAL", "APPROVED"])
+      );
+      return onSnapshot(q, (snapshot) => {
+        const allDocs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as DocumentType));
+        const filtered = filterEligible(allDocs);
+        setSourceDocs((prev) => {
+          const others = prev.filter((d) => resolveDocCustomerId(d) !== customerId);
+          return [...others, ...filtered];
+        });
+      });
     });
-    return unsubscribe;
-  }, [db, selectedCustomerId, editDocId]);
+
+    return () => unsubs.forEach((u) => u());
+  }, [db, allCustomerIdsKey, editDocId]);
 
   useEffect(() => {
-    if (!db || !selectedCustomerId) {
+    if (!db || watchedSourceDocIds.length === 0) {
       setExtraSourceDocs([]);
       return;
     }
@@ -222,12 +388,27 @@ export function ReceiptForm() {
           )
         )
       );
-      if (!cancelled) setExtraSourceDocs(rows.filter(Boolean) as DocumentType[]);
+      if (cancelled) return;
+      const docs = rows.filter(Boolean) as DocumentType[];
+      setExtraSourceDocs(docs);
+      const primaryId = form.getValues("customerId");
+      const extraCustomerIds = Array.from(
+        new Set(
+          docs
+            .map((d) => resolveDocCustomerId(d))
+            .filter((id) => id && id !== primaryId)
+        )
+      ) as string[];
+      if (extraCustomerIds.length > 0) {
+        setAdditionalCustomerIds((prev) =>
+          Array.from(new Set([...prev, ...extraCustomerIds]))
+        );
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [db, selectedCustomerId, watchedSourceDocIds, sourceDocs]);
+  }, [db, watchedSourceDocIds, sourceDocs, form]);
   
   useEffect(() => {
     const selected = displaySourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
@@ -291,12 +472,26 @@ export function ReceiptForm() {
   });
 
   const handleToggleDoc = (docId: string) => {
+    const docRow = tableDocs.find((d) => d.id === docId);
+    if (docRow && !isDocSelectable(docRow)) return;
     const currentIds = form.getValues('sourceDocIds');
     if (currentIds.includes(docId)) {
       form.setValue('sourceDocIds', currentIds.filter((id) => id !== docId), { shouldValidate: true });
     } else {
       form.setValue('sourceDocIds', [...currentIds, docId], { shouldValidate: true });
     }
+    if (selectedBillingNoteId && docId !== selectedBillingNoteId) {
+      setSelectedBillingNoteId("");
+    }
+  };
+
+  const handleBillingNoteSelect = (value: string) => {
+    if (value === "__none__") {
+      setSelectedBillingNoteId("");
+      return;
+    }
+    setSelectedBillingNoteId(value);
+    form.setValue("sourceDocIds", [value], { shouldValidate: true });
   };
 
   const handleProcessSubmission = async (data: ReceiptFormData) => {
@@ -306,7 +501,7 @@ export function ReceiptForm() {
     const account = accounts.find(a => a.id === data.accountId);
 
     const canonicalCustomerId =
-      selectedDocs[0]?.customerId || selectedDocs[0]?.customerSnapshot?.id || data.customerId;
+      data.customerId || selectedDocs[0]?.customerId || selectedDocs[0]?.customerSnapshot?.id || "";
 
     let customer: Customer | undefined = customers.find((c) => c.id === canonicalCustomerId);
     if (!customer && selectedDocs.length > 0) {
@@ -330,12 +525,17 @@ export function ReceiptForm() {
     const payInstrument = account.type === "CASH" ? "CASH" : "TRANSFER";
     const payMethodLegacy = payInstrument === "CASH" ? "CASH" : "TRANSFER";
 
-    const items = selectedDocs.map(doc => ({
-      description: `ชำระค่าสินค้า/บริการ ตาม${doc.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : "ใบวางบิล"} เลขที่ ${doc.docNo}`,
-      quantity: 1,
-      unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
-      total: doc.paymentSummary?.balance ?? doc.grandTotal
-    }));
+    const items = selectedDocs.map(doc => {
+      const docCustomerId = resolveDocCustomerId(doc);
+      const docCustomerName = customerNameById.get(docCustomerId) || doc.customerSnapshot?.name || "";
+      const customerLabel = allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
+      return {
+        description: `ชำระค่าสินค้า/บริการ${customerLabel} ตาม${doc.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : "ใบวางบิล"} เลขที่ ${doc.docNo}`,
+        quantity: 1,
+        unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
+        total: doc.paymentSummary?.balance ?? doc.grandTotal,
+      };
+    });
 
     try {
       const docData = {
@@ -427,6 +627,57 @@ export function ReceiptForm() {
     return customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch));
   }, [customers, customerSearch]);
 
+  const filteredAddCustomers = useMemo(() => {
+    const excluded = new Set([selectedCustomerId, ...additionalCustomerIds]);
+    const q = addCustomerSearch.trim().toLowerCase();
+    return customers.filter((c) => {
+      if (excluded.has(c.id)) return false;
+      if (!q) return true;
+      return c.name.toLowerCase().includes(q) || c.phone.includes(q);
+    });
+  }, [customers, selectedCustomerId, additionalCustomerIds, addCustomerSearch]);
+
+  const showCustomerColumn = allCustomerIds.length > 1;
+
+  const handleAddCustomer = (customerId: string) => {
+    if (!customerId || customerId === selectedCustomerId || additionalCustomerIds.includes(customerId)) return;
+    setAdditionalCustomerIds((prev) => [...prev, customerId]);
+    setIsAddCustomerPopoverOpen(false);
+    setAddCustomerSearch("");
+  };
+
+  const handleRemoveAdditionalCustomer = (customerId: string) => {
+    setAdditionalCustomerIds((prev) => prev.filter((id) => id !== customerId));
+    const currentIds = form.getValues("sourceDocIds");
+    form.setValue(
+      "sourceDocIds",
+      currentIds.filter((id) => {
+        const docRow = displaySourceDocs.find((d) => d.id === id);
+        if (!docRow) return true;
+        return resolveDocCustomerId(docRow) !== customerId;
+      }),
+      { shouldValidate: true }
+    );
+  };
+
+  const handlePrimaryCustomerChange = (newCustomerId: string) => {
+    const prevCustomerId = form.getValues("customerId");
+    form.setValue("customerId", newCustomerId);
+    setSelectedBillingNoteId("");
+    if (prevCustomerId && prevCustomerId !== newCustomerId) {
+      form.setValue(
+        "sourceDocIds",
+        form.getValues("sourceDocIds").filter((id) => {
+          const docRow = displaySourceDocs.find((d) => d.id === id);
+          return !docRow || resolveDocCustomerId(docRow) !== prevCustomerId;
+        }),
+        { shouldValidate: true }
+      );
+      setAdditionalCustomerIds((prev) => prev.filter((id) => id !== newCustomerId));
+    }
+    setIsCustomerPopoverOpen(false);
+  };
+
   const handleCancel = () => {
     const from = searchParams.get("from");
     if (from === "inbox") {
@@ -477,13 +728,15 @@ export function ReceiptForm() {
         <Card>
             <CardHeader><CardTitle className="text-base">1. ข้อมูลลูกค้าและบิลที่ต้องการรวม</CardTitle></CardHeader>
             <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField name="customerId" render={({ field }) => (
                 <FormItem>
                     <FormLabel>ชื่อลูกค้า</FormLabel>
+                    <div className="flex flex-wrap items-start gap-2">
                     <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
                     <PopoverTrigger asChild>
                         <FormControl>
-                        <Button variant="outline" role="combobox" className="w-full md:w-[400px] justify-between font-normal" disabled={!!editDocId || isSubmitting}>
+                        <Button variant="outline" role="combobox" className="w-full justify-between font-normal" disabled={!!editDocId || isSubmitting}>
                             <span className="truncate text-left">
                               {!field.value
                                 ? "ค้นหาชื่อลูกค้า..."
@@ -502,7 +755,7 @@ export function ReceiptForm() {
                         <ScrollArea className="h-60">
                         {filteredCustomers.length > 0 ? (
                             filteredCustomers.map(c => (
-                                <Button variant="ghost" key={c.id} onClick={() => { field.onChange(c.id); setIsCustomerPopoverOpen(false); form.setValue('sourceDocIds', []); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 px-3 text-left">
+                                <Button variant="ghost" key={c.id} onClick={() => { handlePrimaryCustomerChange(c.id); setIsCustomerPopoverOpen(false); }} className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 px-3 text-left">
                                     <div className="flex flex-col">
                                         <span>{c.name}</span>
                                         <span className="text-xs text-muted-foreground">{c.phone}</span>
@@ -513,33 +766,158 @@ export function ReceiptForm() {
                         </ScrollArea>
                     </PopoverContent>
                     </Popover>
+                    {!editDocId && selectedCustomerId && (
+                      <Popover open={isAddCustomerPopoverOpen} onOpenChange={setIsAddCustomerPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={isSubmitting}
+                            className="shrink-0"
+                          >
+                            <UserPlus className="mr-2 h-4 w-4" />
+                            เพิ่มลูกค้า
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[400px] p-0" align="start">
+                          <div className="p-2 border-b">
+                            <Input
+                              placeholder="ค้นหาลูกค้าที่จะเพิ่ม..."
+                              value={addCustomerSearch}
+                              onChange={(e) => setAddCustomerSearch(e.target.value)}
+                            />
+                          </div>
+                          <ScrollArea className="h-60">
+                            {filteredAddCustomers.length > 0 ? (
+                              filteredAddCustomers.map((c) => (
+                                <Button
+                                  variant="ghost"
+                                  key={c.id}
+                                  onClick={() => handleAddCustomer(c.id)}
+                                  className="w-full justify-start rounded-none border-b last:border-0 h-auto py-2 px-3 text-left"
+                                >
+                                  <div className="flex flex-col">
+                                    <span>{c.name}</span>
+                                    <span className="text-xs text-muted-foreground">{c.phone}</span>
+                                  </div>
+                                </Button>
+                              ))
+                            ) : (
+                              <div className="p-4 text-center text-sm text-muted-foreground">
+                                ไม่มีลูกค้าที่เพิ่มได้
+                              </div>
+                            )}
+                          </ScrollArea>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    </div>
+                    {additionalCustomerIds.length > 0 && (
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        {additionalCustomerIds.map((id) => (
+                          <Badge key={id} variant="secondary" className="gap-1 pr-1">
+                            {customerNameById.get(id) || "ลูกค้า"}
+                            {!editDocId && (
+                              <button
+                                type="button"
+                                className="ml-1 rounded-full p-0.5 hover:bg-muted"
+                                onClick={() => handleRemoveAdditionalCustomer(id)}
+                                aria-label={`ลบ ${customerNameById.get(id) || "ลูกค้า"}`}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {showCustomerColumn && (
+                      <FormDescription>
+                        รวมบิลจาก {allCustomerIds.length} ลูกค้าในใบเสร็จเดียว — ชื่อบนหัวใบเสร็จใช้ลูกค้าหลักที่เลือกด้านบน
+                      </FormDescription>
+                    )}
                     <FormMessage />
                 </FormItem>
             )} />
 
             {selectedCustomerId && (
+              <FormItem>
+                <FormLabel>ออกใบเสร็จตามใบวางบิล</FormLabel>
+                <Select
+                  value={selectedBillingNoteId || "__none__"}
+                  onValueChange={handleBillingNoteSelect}
+                  disabled={!!editDocId || isSubmitting || billingNoteOptions.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={
+                        billingNoteOptions.length === 0
+                          ? "ไม่มีใบวางบิลค้างชำระ"
+                          : "เลือกเลขที่ใบวางบิล..."
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— เลือกเองจากตาราง —</SelectItem>
+                    {billingNoteOptions.map((bn) => (
+                      <SelectItem key={bn.id} value={bn.id}>
+                        {bn.docNo} · ฿{formatCurrency(bn.paymentSummary?.balance ?? bn.grandTotal)}
+                        {bn.docDate ? ` (${safeFormat(new Date(bn.docDate), "dd/MM/yy")})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {selectedBillingNoteId
+                    ? "เลือกใบวางบิลแล้ว — ระบบเลือกใบวางบิลให้อัตโนมัติ (แสดงใบกำกับในใบวางบิลด้านล่าง)"
+                    : "เลือกใบวางบิลเพื่อออกใบเสร็จตามยอดรวมใบวางบิล หรือเลือกบิลเองจากตาราง"}
+                </FormDescription>
+              </FormItem>
+            )}
+            </div>
+
+            {selectedCustomerId && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
-                    <FormLabel>เลือกเอกสารที่ต้องการออกใบเสร็จ (ใบกำกับภาษี / ใบวางบิล — ไม่รวมใบส่งของ)</FormLabel>
+                    <FormLabel>
+                      {isBillingNoteMode
+                        ? "รายการในใบวางบิลที่เลือก"
+                        : "เลือกเอกสารที่ต้องการออกใบเสร็จ (ใบกำกับภาษี / ใบวางบิล — ไม่รวมใบส่งของ)"}
+                    </FormLabel>
                     <div className="border rounded-md">
                         <Table>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead className="w-12 text-center">เลือก</TableHead>
+                                    {showCustomerColumn && <TableHead>ลูกค้า</TableHead>}
                                     <TableHead>เลขที่เอกสาร</TableHead>
                                     <TableHead>วันที่</TableHead>
                                     <TableHead className="text-right">ยอดคงค้าง</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {displaySourceDocs.length > 0 ? displaySourceDocs.map(doc => (
-                                    <TableRow key={doc.id} className={cn("hover:bg-muted/30 cursor-pointer", watchedSourceDocIds.includes(doc.id) && "bg-primary/5")} onClick={() => !isSubmitting && handleToggleDoc(doc.id)}>
+                                {tableDocs.length > 0 ? tableDocs.map(doc => {
+                                    const selectable = isDocSelectable(doc);
+                                    return (
+                                    <TableRow
+                                      key={doc.id}
+                                      className={cn(
+                                        selectable ? "hover:bg-muted/30 cursor-pointer" : "opacity-70",
+                                        watchedSourceDocIds.includes(doc.id) && "bg-primary/5"
+                                      )}
+                                      onClick={() => !isSubmitting && selectable && handleToggleDoc(doc.id)}
+                                    >
                                         <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                                             <Checkbox 
                                                 checked={watchedSourceDocIds.includes(doc.id)} 
-                                                onCheckedChange={() => !isSubmitting && handleToggleDoc(doc.id)} 
-                                                disabled={isSubmitting}
+                                                onCheckedChange={() => !isSubmitting && selectable && handleToggleDoc(doc.id)} 
+                                                disabled={isSubmitting || !selectable}
                                             />
                                         </TableCell>
+                                        {showCustomerColumn && (
+                                          <TableCell className="text-xs max-w-[140px] truncate">
+                                            {customerNameById.get(resolveDocCustomerId(doc)) || doc.customerSnapshot?.name || "—"}
+                                          </TableCell>
+                                        )}
                                         <TableCell>
                                             <div className="flex items-center gap-2">
                                                 <span className="font-mono text-xs">{doc.docNo}</span>
@@ -551,10 +929,13 @@ export function ReceiptForm() {
                                             {formatCurrency(doc.paymentSummary?.balance ?? doc.grandTotal)}
                                         </TableCell>
                                     </TableRow>
-                                )) : (
+                                    );
+                                }) : (
                                     <TableRow>
-                                        <TableCell colSpan={4} className="h-24 text-sm text-muted-foreground text-center italic">
-                                            ไม่พบเอกสารค้างชำระที่สามารถออกใบเสร็จได้
+                                        <TableCell colSpan={showCustomerColumn ? 5 : 4} className="h-24 text-sm text-muted-foreground text-center italic">
+                                            {isBillingNoteMode
+                                              ? "ไม่พบรายการในใบวางบิลนี้"
+                                              : "ไม่พบเอกสารค้างชำระที่สามารถออกใบเสร็จได้"}
                                         </TableCell>
                                     </TableRow>
                                 )}

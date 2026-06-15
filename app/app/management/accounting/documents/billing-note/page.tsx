@@ -80,7 +80,12 @@ import { DocumentList } from '@/components/document-list';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
-import { billingBucketId, collapseBillingBucketMerges } from '@/lib/billing-bucket-merge';
+import {
+  billingBucketId,
+  collapseBillingBucketMerges,
+  normalizeBillingBucketKey,
+  sanitizeBillingMergedBuckets,
+} from '@/lib/billing-bucket-merge';
 import { fpBillingRunCreatedBucket, fpBillingRunCreatedSeparate } from '@/lib/billing-run-field-paths';
 import {
   getInvoiceableTaxProfiles,
@@ -186,7 +191,7 @@ function BillingNoteBatchTab() {
 
       collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
 
-      const mergedMap = billingRun?.billingMergedBuckets || {};
+      const mergedMap = sanitizeBillingMergedBuckets(billingRun?.billingMergedBuckets);
       const rowsBeforeExplode: BillingTableRow[] = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
         const includedInvoices: Document[] = [];
         const deferredInvoices: Document[] = [];
@@ -318,9 +323,22 @@ function BillingNoteBatchTab() {
       });
       return;
     }
-    for (const id of ids) {
-      const row = customerData.find((d) => d.customer.id === id);
-      if (row && bucketHasAnyCreatedNote(row.parentBillingNotesSnapshot)) {
+
+    const rowById = new Map(customerData.map((d) => [d.customer.id, d]));
+    const rows = ids
+      .map((id) => rowById.get(id))
+      .filter((row): row is GroupedCustomerData => !!row);
+    if (rows.length < 2) {
+      toast({
+        variant: "destructive",
+        title: "ไม่พบแถวที่เลือก",
+        description: "กรุณาเลือกแถวในตารางแล้วลองใหม่",
+      });
+      return;
+    }
+
+    for (const row of rows) {
+      if (bucketHasAnyCreatedNote(row.parentBillingNotesSnapshot)) {
         toast({
           variant: "destructive",
           title: "ไม่สามารถรวมกลุ่ม",
@@ -329,21 +347,62 @@ function BillingNoteBatchTab() {
         return;
       }
     }
+
     const order = new Map(customerData.map((d, i) => [d.customer.id, i]));
-    ids.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-    const leader = ids[0]!;
-    const followers = ids.slice(1);
-    const existing = { ...(billingRun?.billingMergedBuckets || {}) };
-    for (const f of followers) {
-      existing[f] = leader;
+    rows.sort((a, b) => (order.get(a.customer.id) ?? 0) - (order.get(b.customer.id) ?? 0));
+    const leaderRow = rows[0]!;
+    const followerRows = rows.slice(1);
+    const leaderBucket = billingTargetBucket(leaderRow);
+
+    const existing = sanitizeBillingMergedBuckets(billingRun?.billingMergedBuckets);
+    const newSeparate = { ...(billingRun?.separateInvoiceGroups || {}) };
+    let crossBucketCount = 0;
+    let sameBucketSplitCount = 0;
+
+    for (const followerRow of followerRows) {
+      const followerBucket = billingTargetBucket(followerRow);
+
+      if (followerBucket === leaderBucket) {
+        if (followerRow.splitInvoiceGroupKey) {
+          for (const inv of followerRow.includedInvoices) {
+            delete newSeparate[inv.id];
+            if (leaderRow.splitInvoiceGroupKey) {
+              newSeparate[inv.id] = leaderRow.splitInvoiceGroupKey;
+            }
+          }
+          sameBucketSplitCount++;
+        }
+        continue;
+      }
+
+      existing[followerBucket] = leaderBucket;
+      crossBucketCount++;
+      for (const key of Object.keys(existing)) {
+        if (existing[key] === followerBucket) {
+          existing[key] = leaderBucket;
+        }
+      }
     }
+
+    const mergedBuckets = sanitizeBillingMergedBuckets(existing);
+
+    if (crossBucketCount === 0 && sameBucketSplitCount === 0) {
+      toast({
+        variant: "destructive",
+        title: "ไม่มีรายการที่รวมได้",
+        description: "เลือกแถวจากคนละกลุ่มลูกค้า หรือแถวแยกเล่มที่จะรวมเข้าแถวหลัก",
+      });
+      return;
+    }
+
     setIsSavingMerge(true);
     try {
       await setDoc(
         billingRunRef,
         {
           monthId,
-          billingMergedBuckets: existing,
+          billingMergedBuckets: mergedBuckets,
+          separateInvoiceGroups: newSeparate,
           updatedAt: serverTimestamp(),
           updatedByUid: profile.uid,
           updatedByName: profile.displayName,
@@ -351,9 +410,10 @@ function BillingNoteBatchTab() {
         { merge: true }
       );
       setSelectedBucketIds([]);
+      const mergedRowCount = crossBucketCount + sameBucketSplitCount;
       toast({
         title: "รวมกลุ่มแล้ว",
-        description: `ใช้แถวบนสุดของรายการที่เลือกเป็นหัวกลุ่ม — รวมอีก ${followers.length} แถว`,
+        description: `ใช้แถวบนสุดของรายการที่เลือกเป็นหัวกลุ่ม — รวมอีก ${mergedRowCount} แถว`,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -365,10 +425,11 @@ function BillingNoteBatchTab() {
 
   const handleUnmergeBucketLeader = async (leaderId: string) => {
     if (!profile || !billingRunRef) return;
-    const existing = { ...(billingRun?.billingMergedBuckets || {}) };
+    const leaderBucket = normalizeBillingBucketKey(leaderId);
+    const existing = sanitizeBillingMergedBuckets(billingRun?.billingMergedBuckets);
     let n = 0;
     for (const k of Object.keys(existing)) {
-      if (existing[k] === leaderId) {
+      if (existing[k] === leaderBucket) {
         delete existing[k];
         n++;
       }
