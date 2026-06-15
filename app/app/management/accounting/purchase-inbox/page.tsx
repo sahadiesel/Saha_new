@@ -267,7 +267,7 @@ function PurchaseInboxPageContent() {
                 updatedAt: serverTimestamp()
             });
 
-            transaction.set(entryRef, {
+            transaction.set(entryRef, sanitizeForFirestore({
                 entryType: 'CASH_OUT',
                 entryDate: formData.paidDate,
                 amount: cashOutAmount,
@@ -286,7 +286,7 @@ function PurchaseInboxPageContent() {
                 vatAmount: purchaseDocData.vatAmount || 0,
                 netAmount: purchaseDocData.net || 0,
                 createdAt: serverTimestamp(),
-            });
+            }));
 
             transaction.update(purchaseDocRef, { 
                 status: 'PAID', 
