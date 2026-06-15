@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
 import { useFirebase, useDoc } from '@/firebase';
@@ -29,7 +29,11 @@ import {
   billingRowPreviewItems,
   billingTargetBucket,
   billingRowMatchesTarget,
-  bucketHasAnyCreatedNote,
+  billingRowCanCreateNote,
+  billingRowCanEditGrouping,
+  billingRowCollectBucketInvoices,
+  billingInvoicesForNoteCreate,
+  billingRowFallbackCustomer,
   explodeSeparateSubRows,
   excludeInvoicesDeferredToFutureMonth,
   fetchDeferredRollInDocuments,
@@ -72,6 +76,11 @@ import {
   collapseBillingBucketMerges,
   sanitizeBillingMergedBuckets,
 } from '@/lib/billing-bucket-merge';
+import {
+  billingPersistRunOverrides,
+  billingResolveOverrideScopeIds,
+  billingFetchRunFromServer,
+} from '@/lib/billing-run-overrides';
 import { fpBillingRunCreatedBucket, fpBillingRunCreatedSeparate } from '@/lib/billing-run-field-paths';
 import {
   getInvoiceableTaxProfiles,
@@ -106,6 +115,7 @@ export default function BatchBillingNotePage() {
     selectedProfileId: string;
   } | null>(null);
   const [billingTaxPickBusy, setBillingTaxPickBusy] = useState(false);
+  const billingRunSuppressSnapshotUntil = useRef(0);
 
   const isAdminUser = profile?.role === 'ADMIN';
   
@@ -120,6 +130,7 @@ export default function BatchBillingNotePage() {
     if (!db || !billingRunRef) return;
     
     return onSnapshot(billingRunRef, (snap) => {
+      if (Date.now() < billingRunSuppressSnapshotUntil.current) return;
       if (snap.exists()) {
         setBillingRun({ id: snap.id, ...snap.data() } as WithId<BillingRun>);
       } else {
@@ -128,8 +139,10 @@ export default function BatchBillingNotePage() {
     });
   }, [db, billingRunRef]);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (overrideBillingRun?: WithId<BillingRun> | null) => {
     if (!db) return;
+    const activeBillingRun =
+      overrideBillingRun !== undefined ? overrideBillingRun : billingRun;
     setIsLoading(true);
 
     try {
@@ -170,8 +183,8 @@ export default function BatchBillingNotePage() {
         groupedByCustomer[bucket].invoices.push(inv);
       });
 
-      collapseBillingBucketMerges(groupedByCustomer, billingRun?.billingMergedBuckets);
-      const mergedMap = sanitizeBillingMergedBuckets(billingRun?.billingMergedBuckets);
+      collapseBillingBucketMerges(groupedByCustomer, activeBillingRun?.billingMergedBuckets);
+      const mergedMap = sanitizeBillingMergedBuckets(activeBillingRun?.billingMergedBuckets);
 
       const rowsBeforeExplode: BillingTableRow[] = Object.values(groupedByCustomer).map(({ customer, invoices }) => {
         const includedInvoices: Document[] = [];
@@ -179,10 +192,10 @@ export default function BatchBillingNotePage() {
         const separateGroups: Record<string, Document[]> = {};
 
         invoices.forEach(inv => {
-          if (billingRun?.deferredInvoices?.[inv.id]) {
+          if (activeBillingRun?.deferredInvoices?.[inv.id]) {
             deferredInvoices.push(inv);
-          } else if (billingRun?.separateInvoiceGroups?.[inv.id]) {
-            const groupKey = billingRun.separateInvoiceGroups[inv.id];
+          } else if (activeBillingRun?.separateInvoiceGroups?.[inv.id]) {
+            const groupKey = activeBillingRun.separateInvoiceGroups[inv.id];
             if (!separateGroups[groupKey]) separateGroups[groupKey] = [];
             separateGroups[groupKey].push(inv);
           } else {
@@ -190,7 +203,7 @@ export default function BatchBillingNotePage() {
           }
         });
 
-        const createdNoteIds = billingRun?.createdBillingNotes?.[customer.id];
+        const createdNoteIds = activeBillingRun?.createdBillingNotes?.[customer.id];
         const mergedFollowerCount = Object.entries(mergedMap).filter(([, leader]) => leader === customer.id).length;
         return {
           customer,
@@ -216,29 +229,47 @@ export default function BatchBillingNotePage() {
     fetchData();
   }, [fetchData]);
 
+  const editDialogInvoices = useMemo(() => {
+    if (!editingCustomerData) return [];
+    const bucket = billingTargetBucket(editingCustomerData);
+    return billingRowCollectBucketInvoices(bucket, customerData);
+  }, [editingCustomerData, customerData]);
+
+  const refreshBillingRunAfterWrite = useCallback(async () => {
+    if (!db) return null;
+    billingRunSuppressSnapshotUntil.current = Date.now() + 3000;
+    const fresh = await billingFetchRunFromServer(db, monthId);
+    setBillingRun(fresh);
+    await fetchData(fresh);
+    return fresh;
+  }, [db, monthId, fetchData]);
+
   const handleSaveOverrides = async (
+    bucketId: string,
     touchedInvoiceIds: string[],
     deferred: Record<string, boolean>,
-    separate: Record<string, string>
+    separate: Record<string, string>,
+    selectedRows?: GroupedCustomerData[]
   ) => {
     if (!profile || !billingRunRef || !db) return;
 
     const nextMonthId = format(addMonths(startOfMonth(currentMonth), 1), 'yyyy-MM');
     const prevDef = billingRun?.deferredInvoices || {};
     const prevSep = billingRun?.separateInvoiceGroups || {};
-    const newDeferred = { ...prevDef };
-    const newSeparate = { ...prevSep };
 
+    const scopeIds = billingResolveOverrideScopeIds({
+      anchorBucket: bucketId,
+      customerData,
+      merged: billingRun?.billingMergedBuckets,
+      selectedRows,
+      existingSeparate: prevSep,
+    });
     for (const id of touchedInvoiceIds) {
-      delete newDeferred[id];
-      delete newSeparate[id];
-    }
-    for (const [id, key] of Object.entries(separate)) {
-      newSeparate[id] = key;
+      if (!scopeIds.includes(id)) scopeIds.push(id);
     }
 
     const docBatch = writeBatch(db);
-    for (const id of touchedInvoiceIds) {
+    for (const id of scopeIds) {
       const ref = doc(db, 'documents', id);
       if (deferred[id]) {
         docBatch.update(ref, { billingDeferUntilMonth: nextMonthId, updatedAt: serverTimestamp() });
@@ -248,38 +279,52 @@ export default function BatchBillingNotePage() {
     }
     await docBatch.commit();
 
-    await setDoc(
-      billingRunRef,
-      {
-        monthId,
-        deferredInvoices: newDeferred,
-        separateInvoiceGroups: newSeparate,
-        updatedAt: serverTimestamp(),
-        updatedByUid: profile.uid,
-        updatedByName: profile.displayName,
-      },
-      { merge: true }
-    );
+    await billingPersistRunOverrides(billingRunRef, {
+      monthId,
+      profile,
+      scopeIds,
+      prevDeferred: prevDef,
+      prevSeparate: prevSep,
+      deferred,
+      separate,
+    });
+
+    await refreshBillingRunAfterWrite();
 
     const nDefer = Object.keys(deferred).length;
+    const nSeparate = Object.keys(separate).length;
+    const nIncluded = scopeIds.length - nDefer - nSeparate;
     toast({
       title: 'บันทึกการตั้งค่าแล้ว',
       description:
-        nDefer > 0 ? `บิลที่เลื่อน ${nDefer} ใบ จะแสดงในเดือน ${nextMonthId}` : undefined,
+        nDefer > 0
+          ? `บิลที่เลื่อน ${nDefer} ใบ จะแสดงในเดือน ${nextMonthId} · รวม ${nIncluded} ใบ · แยก ${nSeparate} ใบ`
+          : nSeparate > 0
+            ? `รวม ${nIncluded} ใบ · แยก ${nSeparate} ใบ`
+            : `รวมบิล ${nIncluded} ใบในชุดเดียว — แสดงเป็นแถวเดียวในตาราง`,
     });
   };
   
   const createBillingNotesForCustomer = async (
     targetCustomerData: GroupedCustomerData,
-    headerTaxProfile?: CustomerTaxProfile
+    headerTaxProfile?: CustomerTaxProfile,
+    resolvedCustomer?: Customer
   ) => {
     if (!profile || !storeSettings || !db || !billingRunRef) return { success: false, error: "Required data missing." };
 
-    const { customer, includedInvoices, splitInvoiceGroupKey } = targetCustomerData;
+    const { splitInvoiceGroupKey } = targetCustomerData;
+    const customer = resolvedCustomer ?? targetCustomerData.customer;
     const targetBucket = billingTargetBucket(targetCustomerData);
 
     const freshSnap = await getDoc(billingRunRef);
-    const freshCreated = freshSnap.exists() ? freshSnap.data().createdBillingNotes?.[targetBucket] : null;
+    const freshRun = freshSnap.exists() ? freshSnap.data() : null;
+    const freshCreated = freshRun?.createdBillingNotes?.[targetBucket] ?? null;
+
+    const groupInvoicesForCreate = billingInvoicesForNoteCreate(
+      targetCustomerData,
+      customerData,
+      freshRun as BillingRun | null
+    );
 
     let hasError = false;
 
@@ -349,9 +394,9 @@ export default function BatchBillingNotePage() {
     };
 
     if (splitInvoiceGroupKey) {
-      if (includedInvoices.length === 0) return { success: false, error: "No invoices" };
+      if (groupInvoicesForCreate.length === 0) return { success: false, error: "No invoices" };
       if (freshCreated?.separate?.[splitInvoiceGroupKey]) return { success: true, error: "Already created" };
-      const sid = await createNote(includedInvoices, splitInvoiceGroupKey);
+      const sid = await createNote(groupInvoicesForCreate, splitInvoiceGroupKey);
       if (!hasError && sid) {
         if (!freshSnap.exists()) {
           await setDoc(
@@ -376,13 +421,13 @@ export default function BatchBillingNotePage() {
       return { success: !hasError, error: hasError ? "Some notes failed." : "" };
     }
 
-    if (includedInvoices.length === 0) {
-      return { success: true, error: "" };
+    if (groupInvoicesForCreate.length === 0) {
+      return { success: false, error: "ไม่มีบิลในแถวนี้ — ให้สร้างจากแถวย่อยที่แยกเล่ม" };
     }
     if (freshCreated?.main) {
       return { success: true, error: "Already created" };
     }
-    const mainId = await createNote(includedInvoices, "MAIN");
+    const mainId = await createNote(groupInvoicesForCreate, "MAIN");
     if (!hasError && mainId) {
       if (!freshSnap.exists()) {
         await setDoc(billingRunRef, {
@@ -401,20 +446,36 @@ export default function BatchBillingNotePage() {
     return { success: !hasError, error: hasError ? "Some notes failed." : "" };
   };
 
+  const resolveBillingRowCustomer = async (data: GroupedCustomerData): Promise<Customer | null> => {
+    if (!db) return null;
+    const bucketId = billingTargetBucket(data);
+    const custSnap = await getDoc(doc(db, "customers", bucketId));
+    if (custSnap.exists()) {
+      return { id: custSnap.id, ...custSnap.data() } as Customer;
+    }
+    return billingRowFallbackCustomer(data);
+  };
+
   const beginCreateBillingNotesForCustomer = async (data: GroupedCustomerData) => {
     if (!db || !profile || !storeSettings || !billingRunRef) return;
-    const bucketId = billingTargetBucket(data);
+    if (!billingRowCanCreateNote(data)) {
+      toast({
+        variant: "destructive",
+        title: "ไม่สามารถสร้างใบวางบิล",
+        description: "แถวนี้ไม่มีบิลรอสร้าง — ให้สร้างจากแถวย่อยที่มีรายการ",
+      });
+      return;
+    }
     try {
-      const custSnap = await getDoc(doc(db, "customers", bucketId));
-      if (!custSnap.exists()) {
+      const full = await resolveBillingRowCustomer(data);
+      if (!full) {
         toast({
           variant: "destructive",
           title: "ไม่พบลูกค้า",
-          description: "ไม่สามารถโหลดข้อมูลลูกค้าจากระบบสำหรับแถวนี้",
+          description: "ไม่สามารถโหลดข้อมูลลูกค้าจากระบบหรือจากบิลต้นทางสำหรับแถวนี้",
         });
         return;
       }
-      const full = { id: custSnap.id, ...custSnap.data() } as Customer;
       const profiles = getInvoiceableTaxProfiles(full);
       if (full.useTax && profiles.length > 1) {
         const guess =
@@ -426,7 +487,12 @@ export default function BatchBillingNotePage() {
         });
         return;
       }
-      await createBillingNotesForCustomer(data);
+      const result = await createBillingNotesForCustomer(data, undefined, full);
+      if (result.success) {
+        toast({ title: "สร้างใบวางบิลแล้ว" });
+      } else if (result.error) {
+        toast({ variant: "destructive", title: "สร้างใบวางบิลไม่สำเร็จ", description: result.error });
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ variant: "destructive", title: "ผิดพลาด", description: msg });
@@ -439,8 +505,18 @@ export default function BatchBillingNotePage() {
     if (!profile) return;
     setBillingTaxPickBusy(true);
     try {
-      await createBillingNotesForCustomer(billingTaxPick.row, profile);
-      setBillingTaxPick(null);
+      const full = await resolveBillingRowCustomer(billingTaxPick.row);
+      const result = await createBillingNotesForCustomer(
+        billingTaxPick.row,
+        profile,
+        full ?? undefined
+      );
+      if (result.success) {
+        toast({ title: "สร้างใบวางบิลแล้ว" });
+        setBillingTaxPick(null);
+      } else if (result.error) {
+        toast({ variant: "destructive", title: "สร้างใบวางบิลไม่สำเร็จ", description: result.error });
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ variant: "destructive", title: "สร้างใบวางบิลไม่สำเร็จ", description: msg });
@@ -462,18 +538,13 @@ export default function BatchBillingNotePage() {
         continue;
       }
       if (st === "empty") continue;
-      if (db) {
-        const bucketId = billingTargetBucket(data);
-        const custSnap = await getDoc(doc(db, "customers", bucketId));
-        if (custSnap.exists()) {
-          const full = { id: custSnap.id, ...custSnap.data() } as Customer;
-          if (full.useTax && getInvoiceableTaxProfiles(full).length > 1) {
-            skippedMultiTaxProfile++;
-            continue;
-          }
-        }
+      if (!billingRowCanCreateNote(data)) continue;
+      const resolved = db ? await resolveBillingRowCustomer(data) : null;
+      if (resolved?.useTax && getInvoiceableTaxProfiles(resolved).length > 1) {
+        skippedMultiTaxProfile++;
+        continue;
       }
-      const result = await createBillingNotesForCustomer(data);
+      const result = await createBillingNotesForCustomer(data, undefined, resolved ?? undefined);
       if (result.success) successCount++;
     }
 
@@ -654,7 +725,8 @@ export default function BatchBillingNotePage() {
               ) : customerData.length > 0 ? (
                 customerData.map((data) => {
                   const rowStatus = billingRowUiStatus(data);
-                  const noteLock = bucketHasAnyCreatedNote(data.parentBillingNotesSnapshot);
+                  const canEditGrouping = billingRowCanEditGrouping(data, customerData);
+                  const canCreate = billingRowCanCreateNote(data);
                   const previewItems = billingRowPreviewItems(data);
                   return (
                   <Fragment key={data.customer.id}>
@@ -682,10 +754,10 @@ export default function BatchBillingNotePage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 flex-wrap">
-                        <Button variant="outline" size="sm" className="mr-2" onClick={() => setEditingCustomerData(data)} disabled={noteLock}><Edit className="mr-2 h-3 w-3"/> แก้ไข</Button>
+                        <Button variant="outline" size="sm" className="mr-2" onClick={() => setEditingCustomerData(data)} disabled={!canEditGrouping}><Edit className="mr-2 h-3 w-3"/> แก้ไข</Button>
                         {rowStatus !== "created" ? (
                             <>
-                            <Button size="sm" onClick={() => void beginCreateBillingNotesForCustomer(data)} disabled={rowStatus === "empty"}>สร้างใบวางบิล</Button>
+                            <Button size="sm" onClick={() => void beginCreateBillingNotesForCustomer(data)} disabled={!canCreate}>สร้างใบวางบิล</Button>
                             {isAdminUser && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -783,13 +855,14 @@ export default function BatchBillingNotePage() {
           isOpen={!!editingCustomerData}
           onClose={() => setEditingCustomerData(null)}
           customer={editingCustomerData.customer}
-          invoices={
-            editingCustomerData.splitInvoiceGroupKey
-              ? [...editingCustomerData.includedInvoices]
-              : [...editingCustomerData.includedInvoices, ...editingCustomerData.deferredInvoices]
-          }
+          invoices={editDialogInvoices}
           initialOverrides={{ deferred: billingRun?.deferredInvoices || {}, separate: billingRun?.separateInvoiceGroups || {} }}
-          onSave={(_customerId, deferred, separate, touchedIds) => void handleSaveOverrides(touchedIds, deferred, separate)}
+          onSave={(_customerId, deferred, separate, touchedIds) => {
+            if (!editingCustomerData) return;
+            const bucket = billingTargetBucket(editingCustomerData);
+            const relatedRows = customerData.filter((r) => billingTargetBucket(r) === bucket);
+            void handleSaveOverrides(bucket, touchedIds, deferred, separate, relatedRows);
+          }}
         />
       )}
     </>

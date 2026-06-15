@@ -51,7 +51,7 @@ export function SsoDecisionDialog({ isOpen, onClose, onConfirm, batchDecision, c
   const form = useForm<z.infer<typeof decisionSchema>>({
     resolver: zodResolver(decisionSchema),
     defaultValues: {
-      choice: "previous",
+      choice: "current",
       custom: { 
         employeePercent: currentSettings.employeePercent || 0,
         monthlyMinBase: currentSettings.monthlyMinBase || 0,
@@ -77,10 +77,10 @@ export function SsoDecisionDialog({ isOpen, onClose, onConfirm, batchDecision, c
       finalDecision = { 
         ...data.custom, 
         employerPercent: currentSettings.employerPercent || 0,
-        source: 'HR_OVERRIDE' 
+        source: 'CUSTOM' 
       } as SsoDecision;
     } else { // 'previous'
-      finalDecision = { ...batchDecision }; 
+      finalDecision = { ...batchDecision, source: 'MONTH_LOCKED_PREVIOUS' }; 
     }
     onConfirm(finalDecision);
   };
@@ -94,7 +94,7 @@ export function SsoDecisionDialog({ isOpen, onClose, onConfirm, batchDecision, c
             ตรวจพบการเปลี่ยนแปลงการตั้งค่าประกันสังคม
           </DialogTitle>
           <DialogDescription>
-            การตั้งค่าประกันสังคมมีการเปลี่ยนแปลงหลังจากงวดที่ 1 ได้ถูกประมวลผลไปแล้ว กรุณาเลือกวิธีคำนวณสำหรับเดือนนี้
+            การตั้งค่าประกันสังคมใน HR Settings เปลี่ยนจากค่าที่ล็อกไว้ในเดือนนี้ กรุณาเลือกวิธีคำนวณสำหรับเดือนนี้
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4 py-4">

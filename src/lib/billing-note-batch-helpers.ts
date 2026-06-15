@@ -1,5 +1,5 @@
 import { collection, getDocs, query, where, type Firestore } from 'firebase/firestore';
-import type { Customer, Document } from '@/lib/types';
+import type { BillingRun, Customer, Document } from '@/lib/types';
 
 /** ยอดมีทิศทาง: ใบลดหนี้เป็นค่าลบ (หักจากยอดเก็บ) ใบอื่นเป็นบวก */
 export function billingSignedGrandTotal(doc: Document): number {
@@ -158,6 +158,92 @@ export function billingRowUiStatus(row: BillingTableRow): 'created' | 'pending' 
   return anyCreated ? 'created' : 'pending';
 }
 
+/** ล็อกรวมกลุ่ม / เลือกแถว — เฉพาะแถวที่สร้างใบวางบิลครบแล้ว */
+export function billingRowIsMergeLocked(row: BillingTableRow): boolean {
+  return billingRowUiStatus(row) === "created";
+}
+
+/** เลือกแถวเพื่อรวมกลุ่มได้ (รอดำเนินการ / ไม่มีรายการในแถวแต่ยังไม่ปิดงาน) */
+export function billingRowIsMergeSelectable(row: BillingTableRow): boolean {
+  const st = billingRowUiStatus(row);
+  return st === "pending" || st === "empty";
+}
+
+/** แก้ไขการรวบรวม/แยกบิลได้เมื่อ bucket ยังมีแถวที่ไม่ปิดงาน */
+export function billingRowCanEditGrouping(
+  row: BillingTableRow,
+  allRows: BillingTableRow[]
+): boolean {
+  const bucket = billingTargetBucket(row);
+  return allRows
+    .filter((r) => billingTargetBucket(r) === bucket)
+    .some((r) => billingRowUiStatus(r) !== "created");
+}
+
+/** รวบรวมบิลทั้งหมดใน bucket (รวมแถวแยก) สำหรับ dialog แก้ไข */
+export function billingRowCollectBucketInvoices(
+  bucketId: string,
+  rows: BillingTableRow[]
+): Document[] {
+  const m = new Map<string, Document>();
+  for (const row of rows) {
+    if (billingTargetBucket(row) !== bucketId) continue;
+    for (const inv of row.includedInvoices) m.set(inv.id, inv);
+    for (const inv of row.deferredInvoices) m.set(inv.id, inv);
+    for (const group of Object.values(row.separateGroups)) {
+      for (const inv of group) m.set(inv.id, inv);
+    }
+  }
+  return Array.from(m.values()).sort((a, b) =>
+    String(a.docDate || "").localeCompare(String(b.docDate || ""))
+  );
+}
+
+/** บิลที่จะใส่ในใบวางบิลเมื่อกดสร้าง — รวมทุกใบใน bucket (หลังรวมกลุ่ม) */
+export function billingInvoicesForNoteCreate(
+  targetRow: BillingTableRow,
+  allRows: BillingTableRow[],
+  billingRun?: Pick<BillingRun, 'deferredInvoices' | 'separateInvoiceGroups'> | null
+): Document[] {
+  const deferred = billingRun?.deferredInvoices || {};
+  const separate = billingRun?.separateInvoiceGroups || {};
+
+  if (targetRow.splitInvoiceGroupKey) {
+    return targetRow.includedInvoices.filter((inv) => !deferred[inv.id]);
+  }
+
+  const bucket = billingTargetBucket(targetRow);
+  return billingRowCollectBucketInvoices(bucket, allRows).filter(
+    (inv) => !deferred[inv.id] && !separate[inv.id]
+  );
+}
+
+/** ล้าง separateInvoiceGroups ของทุกบิลใน bucket ที่เลือก (หลังรวมกลุ่มให้เหลือแถวเดียว) */
+export function billingClearSeparateForBuckets(
+  separate: Record<string, string>,
+  bucketIds: string[],
+  rows: BillingTableRow[]
+): Record<string, string> {
+  const next = { ...separate };
+  for (const bucketId of bucketIds) {
+    for (const inv of billingRowCollectBucketInvoices(bucketId, rows)) {
+      delete next[inv.id];
+    }
+  }
+  return next;
+}
+
+/** แถวนี้กดสร้างใบวางบิลได้หรือไม่ */
+export function billingRowCanCreateNote(row: BillingTableRow): boolean {
+  const status = billingRowUiStatus(row);
+  if (status !== "pending") return false;
+  if (row.splitInvoiceGroupKey) {
+    return row.includedInvoices.length > 0;
+  }
+  if (row.includedInvoices.length > 0) return true;
+  return false;
+}
+
 /**
  * รายการพรีวิวใบวางบิลต่อแถว — แถวแยกชื่อเห็นแค่ใบของแถวนั้น
  * (ไม่ใช้ parent snapshot ที่รวมทุกใบแยกในบัคเก็ต)
@@ -179,6 +265,17 @@ export function billingRowPreviewItems(row: BillingTableRow): { docId: string; l
 
 export function billingTargetBucket(row: BillingTableRow): string {
   return row.billingTargetBucketId ?? row.customer.id;
+}
+
+/** ลูกค้าจากแถว batch เมื่อไม่มีใน collection customers */
+export function billingRowFallbackCustomer(row: BillingTableRow): Customer | null {
+  const bucketId = billingTargetBucket(row);
+  const base =
+    row.includedInvoices.length > 0
+      ? customerForBillingNoteDocument(row.includedInvoices, row.customer)
+      : row.customer;
+  if (!base?.name && !base?.taxName) return null;
+  return { ...base, id: bucketId } as Customer;
 }
 
 /** จับคู่แถวเดียวกัน (รวมแถวแยกเล่ม) สำหรับลบ/อัปเดต UI */

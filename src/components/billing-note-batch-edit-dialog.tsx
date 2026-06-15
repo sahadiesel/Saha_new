@@ -152,7 +152,14 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                             onValueChange={(value) =>
                               setInvoiceStates(prev => ({
                                 ...prev,
-                                [invoice.id]: { ...prev[invoice.id], group: value as any },
+                                [invoice.id]: {
+                                  ...prev[invoice.id],
+                                  group: value as 'include' | 'defer' | 'separate',
+                                  separateKey:
+                                    value === 'separate'
+                                      ? prev[invoice.id]?.separateKey || 'SINGLE'
+                                      : prev[invoice.id]?.separateKey || '',
+                                },
                               }))
                             }
                             className="flex space-x-2"

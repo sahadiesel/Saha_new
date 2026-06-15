@@ -60,8 +60,15 @@ export function collapseBillingBucketMerges(
     for (const [follower, leader] of Object.entries(m)) {
       if (!follower || !leader || follower === leader) continue;
       const f = grouped[follower];
-      const L = grouped[leader];
-      if (!f || !L) continue;
+      if (!f) continue;
+      let L = grouped[leader];
+      if (!L) {
+        grouped[leader] = {
+          customer: { ...f.customer, id: leader } as Customer,
+          invoices: [],
+        };
+        L = grouped[leader];
+      }
       L.invoices.push(...f.invoices);
       delete grouped[follower];
       changed = true;

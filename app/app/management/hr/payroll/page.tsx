@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { doc, collection, query, where, orderBy, getDocs, getDoc, Timestamp, setDoc, serverTimestamp, updateDoc, addDoc } from "firebase/firestore";
+import { doc, collection, query, where, orderBy, getDocs, getDoc, Timestamp, setDoc, serverTimestamp, updateDoc, addDoc, type Firestore } from "firebase/firestore";
 import { useFirebase, useDoc, type WithId } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { addMonths, subMonths, format, startOfMonth, endOfMonth, isAfter, startOfToday, set, startOfYear, eachDayOfInterval, isSaturday, isSunday, parseISO, differenceInCalendarDays, getYear } from "date-fns";
@@ -26,7 +26,7 @@ import { PayslipSlipDrawer } from "@/components/payroll/PayslipSlipDrawer";
 import { PayslipSlipView, calcTotals } from "@/components/payroll/PayslipSlipView";
 import { computePeriodMetrics, PeriodMetrics } from "@/lib/payroll/payslip-period-metrics";
 import { SsoDecisionDialog } from "@/components/payroll/SsoDecisionDialog";
-import { round2, calcSsoMonthly, splitSsoHalf } from "@/lib/payroll/sso";
+import { round2, calcSsoMonthly, splitSsoHalf, ssoSettingsFromHr, ssoDecisionDiffers, resolveSsoRatesForPayslip } from "@/lib/payroll/sso";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AttendanceAdjustmentDialog } from "@/components/attendance-adjustment-dialog";
@@ -165,6 +165,20 @@ function LeaveManageDialog({
   );
 }
 
+const LOCKED_PAYSLIP_STATUSES: PayslipStatusNew[] = ['SENT_TO_EMPLOYEE', 'READY_TO_PAY', 'PAID'];
+
+async function monthHasLockedPayslips(db: Firestore, monthId: string): Promise<boolean> {
+  for (const periodNo of [1, 2] as const) {
+    const snap = await getDocs(collection(db, 'payrollBatches', `${monthId}-${periodNo}`, 'payslips'));
+    if (
+      snap.docs.some((d) => LOCKED_PAYSLIP_STATUSES.includes(d.data().status as PayslipStatusNew))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export default function HRGeneratePayslipsPage() {
     const { db, firebaseApp } = useFirebase();
     const { toast } = useToast();
@@ -189,6 +203,7 @@ export default function HRGeneratePayslipsPage() {
     const [isDaySelectOpen, setIsDaySelectOpen] = useState(false);
     const [selectedDayToAdjust, setSelectedDayToAdjust] = useState<any>(null);
     const [isLeaveManageOpen, setIsLeaveManageOpen] = useState(false);
+    const [isRecalculating, setIsRecalculating] = useState(false);
     
     const settingsDocRef = useMemo(() => db ? doc(db, 'settings', 'hr') : null, [db]);
     const { data: hrSettings } = useDoc<HRSettings>(settingsDocRef);
@@ -242,31 +257,41 @@ export default function HRGeneratePayslipsPage() {
             const monthBatchId = `${format(currentMonth, 'yyyy-MM')}`;
             const batchDocRef = doc(db, 'payrollBatches', monthBatchId);
             const batchDocSnap = await getDoc(batchDocRef);
+            const hrSso = ssoSettingsFromHr(hrSettings.sso);
             let finalSsoDecision = batchDocSnap.exists() ? batchDocSnap.data().ssoDecision : null;
-            
-            if (!finalSsoDecision && period === 1) {
-                finalSsoDecision = { 
-                    employeePercent: Number(hrSettings.sso?.employeePercent ?? 0),
-                    employerPercent: Number(hrSettings.sso?.employerPercent ?? 0),
-                    monthlyMinBase: Number(hrSettings.sso?.monthlyMinBase ?? 0),
-                    monthlyCap: Number(hrSettings.sso?.monthlyCap ?? 0),
-                    source: 'AUTO_LOCK',
-                    decidedAt: Timestamp.now(),
-                    decidedByUid: adminProfile.uid,
-                    decidedByName: adminProfile.displayName
+
+            const ssoDecisionMeta = {
+              decidedAt: Timestamp.now(),
+              decidedByUid: adminProfile.uid,
+              decidedByName: adminProfile.displayName,
+            };
+
+            if (!finalSsoDecision) {
+              finalSsoDecision = {
+                ...hrSso,
+                source: 'AUTO_LOCK',
+                ...ssoDecisionMeta,
+              };
+              await setDoc(batchDocRef, { ssoDecision: finalSsoDecision }, { merge: true });
+            } else if (ssoDecisionDiffers(hrSettings.sso, finalSsoDecision)) {
+              const hasLocked = await monthHasLockedPayslips(db, monthBatchId);
+              const userChoseMonthRate = ['HR_OVERRIDE', 'MONTH_LOCKED_PREVIOUS', 'CUSTOM'].includes(
+                String(finalSsoDecision.source || '')
+              );
+              if (!hasLocked && !userChoseMonthRate) {
+                finalSsoDecision = {
+                  ...hrSso,
+                  source: 'HR_SETTINGS_SYNC',
+                  ...ssoDecisionMeta,
                 };
                 await setDoc(batchDocRef, { ssoDecision: finalSsoDecision }, { merge: true });
-            } else if (period === 2 && finalSsoDecision) {
-                const checkDiff = (v1: any, v2: any) => Math.abs(Number(v1 || 0) - Number(v2 || 0)) > 0.01;
-                const hasChanged = 
-                    checkDiff(finalSsoDecision.employeePercent, hrSettings.sso?.employeePercent) ||
-                    checkDiff(finalSsoDecision.employerPercent, hrSettings.sso?.employerPercent) ||
-                    checkDiff(finalSsoDecision.monthlyMinBase, hrSettings.sso?.monthlyMinBase) ||
-                    checkDiff(finalSsoDecision.monthlyCap, hrSettings.sso?.monthlyCap);
-                
-                if (hasChanged) {
-                    setIsSsoDecisionDialogOpen(true);
-                }
+                toast({
+                  title: 'อัปเดตเรทประกันสังคมแล้ว',
+                  description: 'ใช้ค่าจาก HR Settings สำหรับเดือนนี้ — เปิดสลิปอีกครั้งเพื่อคำนวณใหม่',
+                });
+              } else if (!userChoseMonthRate) {
+                setIsSsoDecisionDialogOpen(true);
+              }
             }
             setSsoDecision(finalSsoDecision);
 
@@ -362,17 +387,32 @@ export default function HRGeneratePayslipsPage() {
         await setDoc(batchRef, { ssoDecision: finalDecision }, { merge: true });
         setSsoDecision(decision);
         setIsSsoDecisionDialogOpen(false);
-        toast({ title: 'อัปเดตการตั้งค่า SSO สำหรับเดือนนี้แล้ว', description: 'กรุณากดดึงข้อมูลอีกครั้งเพื่อใช้ค่าใหม่นี้ค่ะ' });
+        toast({ title: 'อัปเดตการตั้งค่า SSO สำหรับเดือนนี้แล้ว', description: 'กรุณาเปิดสลิปอีกครั้งเพื่อคำนวณประกันสังคมใหม่' });
+        await handleFetchEmployees();
     };
 
     const handleOpenDrawer = async (user: EmployeeRowData, forceRecalculate: boolean = false) => {
-        if (!db || !currentMonth || !period) return;
+        if (!db || !currentMonth || !period || !hrSettings) return;
+        if (forceRecalculate) setIsRecalculating(true);
         setEditingPayslip(user);
         const { periodMetrics, periodMetricsYtd, snapshot: existingSnapshot, hr } = user;
 
-        if (!hr?.payType || hr.payType === 'NOPAY') return;
-        if (!periodMetrics || !periodMetricsYtd) { toast({variant: 'destructive', title: 'คำนวณไม่สำเร็จ'}); setEditingPayslip(null); return; }
+        if (!hr?.payType || hr.payType === 'NOPAY') {
+            if (forceRecalculate) setIsRecalculating(false);
+            return;
+        }
+        if (!periodMetrics || !periodMetricsYtd) {
+            toast({variant: 'destructive', title: 'คำนวณไม่สำเร็จ'});
+            setEditingPayslip(null);
+            if (forceRecalculate) setIsRecalculating(false);
+            return;
+        }
         
+        const payslipLocked =
+          !!existingSnapshot &&
+          !!user.payslipStatus &&
+          LOCKED_PAYSLIP_STATUSES.includes(user.payslipStatus as PayslipStatusNew);
+
         const otherPeriodNo = period === 1 ? 2 : 1;
         const otherBatchId = `${format(currentMonth, 'yyyy-MM')}-${otherPeriodNo}`;
         const otherPayslipRef = doc(db, 'payrollBatches', otherBatchId, 'payslips', user.id);
@@ -380,9 +420,50 @@ export default function HRGeneratePayslipsPage() {
         const otherSnapshot = otherPayslipSnap.exists() ? (otherPayslipSnap.data().snapshot as PayslipSnapshot) : null;
         setOtherPeriodSnapshot(otherSnapshot);
 
-        if (existingSnapshot && !forceRecalculate) {
+        if (payslipLocked && !forceRecalculate) {
             setDrawerSnapshot(existingSnapshot);
+            if (forceRecalculate) setIsRecalculating(false);
             return;
+        }
+
+        const monthBatchId = `${format(currentMonth, 'yyyy-MM')}`;
+        const preferHrRates = forceRecalculate || !payslipLocked;
+        let ratesForCalc = resolveSsoRatesForPayslip({
+          hrSettings: hrSettings.sso,
+          batchDecision: ssoDecision,
+          preferHrSettings: preferHrRates,
+        });
+
+        if (preferHrRates && ssoDecisionDiffers(hrSettings.sso, ssoDecision)) {
+            const hasLocked = await monthHasLockedPayslips(db, monthBatchId);
+            if (!hasLocked) {
+                const synced = {
+                  ...ssoSettingsFromHr(hrSettings.sso),
+                  source: 'HR_SETTINGS_SYNC' as const,
+                  decidedAt: Timestamp.now(),
+                  decidedByUid: adminProfile?.uid,
+                  decidedByName: adminProfile?.displayName,
+                };
+                await setDoc(doc(db, 'payrollBatches', monthBatchId), { ssoDecision: synced }, { merge: true });
+                setSsoDecision(synced);
+                ratesForCalc = synced;
+                if (forceRecalculate) {
+                  toast({
+                    title: 'คำนวณประกันสังคมใหม่แล้ว',
+                    description: `ใช้เรท ${synced.employeePercent}% จาก HR Settings`,
+                  });
+                }
+            } else if (forceRecalculate) {
+                ratesForCalc = resolveSsoRatesForPayslip({
+                  hrSettings: hrSettings.sso,
+                  batchDecision: null,
+                  preferHrSettings: true,
+                });
+                toast({
+                  title: 'ใช้เรท HR Settings สำหรับสลิปนี้',
+                  description: 'เดือนนี้มีสลิปที่ส่งแล้ว — เรทรายเดือนยังล็อก แต่สลิปร่างคำนวณตาม HR Settings',
+                });
+            }
         }
 
         let basePay = 0;
@@ -407,13 +488,13 @@ export default function HRGeneratePayslipsPage() {
             calcNotes: periodMetrics.calcNotes,
         };
         
-        if (user.hr?.ssoRegistered !== false && ssoDecision && (hr.payType === 'MONTHLY' || hr.payType === 'DAILY' || hr.payType === 'MONTHLY_NOSCAN')) {
-            const { employeePercent = 0, monthlyMinBase = 0, monthlyCap = Infinity } = ssoDecision;
+        if (user.hr?.ssoRegistered !== false && (hr.payType === 'MONTHLY' || hr.payType === 'DAILY' || hr.payType === 'MONTHLY_NOSCAN')) {
+            const { employeePercent = 0, monthlyMinBase = 0, monthlyCap = Infinity } = ratesForCalc;
             let ssoAmountThisPeriod = 0;
 
             if ((hr.payType === 'MONTHLY' || hr.payType === 'MONTHLY_NOSCAN') && hr.salaryMonthly) {
                 const ssoMonthly = calcSsoMonthly(hr.salaryMonthly, employeePercent, monthlyMinBase, monthlyCap);
-                const { p1, p2 } = splitSsoHalf(ssoMonthly);
+                const { p1 } = splitSsoHalf(ssoMonthly);
                 if (period === 1) ssoAmountThisPeriod = p1;
                 else { 
                     const p1Deducted = otherSnapshot?.deductions?.find((d:any) => d.name === '[AUTO] ประกันสังคม')?.amount ?? 0;
@@ -441,6 +522,7 @@ export default function HRGeneratePayslipsPage() {
 
         const totals = calcTotals(initialSnapshot);
         setDrawerSnapshot({ ...initialSnapshot, netPay: Math.round(totals.netPay) });
+        if (forceRecalculate) setIsRecalculating(false);
     };
     
     const handleSaveDraft = async () => {
@@ -692,7 +774,10 @@ export default function HRGeneratePayslipsPage() {
                     onPrint={handlePrintInDrawer}
                     footerActions={ (editingPayslip.payslipStatus !== 'PAID') && (
                         <>
-                          <Button variant="ghost" onClick={() => handleOpenDrawer(editingPayslip, true)} disabled={isActing === editingPayslip.id} className="text-amber-600"><RefreshCw className="mr-2 h-4 w-4"/>คำนวณใหม่ตามโปรไฟล์</Button>
+                          <Button variant="ghost" onClick={() => void handleOpenDrawer(editingPayslip, true)} disabled={isActing === editingPayslip.id || isRecalculating} className="text-amber-600">
+                            {isRecalculating ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>}
+                            คำนวณใหม่ตามโปรไฟล์
+                          </Button>
                           <Button variant="outline" onClick={() => setEditingPayslip(null)} disabled={isActing === editingPayslip.id}>ยกเลิก</Button>
                           <Button onClick={handleSaveDraft} disabled={isActing === editingPayslip.id} variant="secondary">บันทึกร่าง</Button>
                           <Button onClick={handleSaveAndSend} disabled={isActing === editingPayslip.id} className="bg-primary">{isActing === editingPayslip.id ? <Loader2 className="mr-2 animate-spin h-4 w-4"/> : <Send className="mr-2 h-4 w-4"/>}ส่งให้พนักงาน</Button>
