@@ -36,6 +36,7 @@ import type { Customer, CustomerTaxProfile } from "@/lib/types";
 import {
   normalizeCustomerPhones,
   normalizeCustomerTaxProfiles,
+  customerMatchesSearchTerm,
   dedupePhoneList,
   findCustomerPhoneConflict,
   getPortalRegistrationTaxDefaults,
@@ -276,22 +277,7 @@ function CustomersContent() {
     }
 
     if (searchTerm.trim()) {
-      const lowercasedFilter = searchTerm.toLowerCase();
-      const qDigits = searchTerm.replace(/\D/g, "");
-      result = result.filter((customer) => {
-        const phones = normalizeCustomerPhones(customer);
-        const taxLabels = normalizeCustomerTaxProfiles(customer)
-          .map((p) => `${p.label || ""} ${p.taxName} ${p.taxId}`)
-          .join(" ")
-          .toLowerCase();
-        return (
-          customer.name.toLowerCase().includes(lowercasedFilter) ||
-          phones.some((p) => p.includes(searchTerm.trim()) || (qDigits && p.replace(/\D/g, "").includes(qDigits))) ||
-          (customer.taxName || "").toLowerCase().includes(lowercasedFilter) ||
-          taxLabels.includes(lowercasedFilter) ||
-          (customer.detail || "").toLowerCase().includes(lowercasedFilter)
-        );
-      });
+      result = result.filter((customer) => customerMatchesSearchTerm(customer, searchTerm));
     }
     return result;
   }, [customers, searchTerm, taxFilter]);

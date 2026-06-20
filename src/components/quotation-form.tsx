@@ -33,6 +33,7 @@ import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { DATA_LIMITS } from "@/lib/constants";
+import { customerMatchesSearchTerm } from "@/lib/customer-utils";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "ต้องกรอกรายละเอียดรายการ"),
@@ -447,7 +448,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
   const markQuotationOfferedToCustomer = async () => {
     if (!db || !profile || !editDocId || !docToEdit) return;
-    if (!["DRAFT", "FINAL"].includes(docToEdit.status) || isCancelled) return;
+    if (!docToEdit || docToEdit.status !== "FINAL" || isCancelled) return;
     setIsProcessing(true);
     try {
       await updateDoc(doc(db, "documents", editDocId), {
@@ -489,13 +490,8 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     ? "บันทึกการแก้ไข"
     : "บันทึกราคาฉบับจริง";
   const filteredCustomers = useMemo(() => {
-    if (!customerSearch) return customers;
-    const lowercasedFilter = customerSearch.toLowerCase();
-    return customers.filter(
-      (c) =>
-        c.name.toLowerCase().includes(lowercasedFilter) ||
-        c.phone.includes(customerSearch)
-    );
+    if (!customerSearch.trim()) return customers;
+    return customers.filter((c) => customerMatchesSearchTerm(c, customerSearch));
   }, [customers, customerSearch]);
 
   if (isLoadingJob || isLoadingStore || isLoadingCustomers || isLoadingDocToEdit) return <div className="p-8 space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-64 w-full" /></div>;
@@ -740,7 +736,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
           <div className="flex flex-wrap justify-end gap-2 sm:gap-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
-            {isEditing && docToEdit && ["DRAFT", "FINAL"].includes(docToEdit.status) && !isCancelled && (
+            {isEditing && docToEdit?.status === "FINAL" && !isCancelled && (
               <Button
                 type="button"
                 variant="secondary"

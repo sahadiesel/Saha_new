@@ -50,6 +50,7 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { restoreJobFromArchive, JOB_RESTORE_STATUS_OPTIONS } from "@/firebase/jobs-archive";
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 import { jobDisplayRef } from "@/lib/job-display";
+import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
@@ -238,18 +239,22 @@ function JobDetailsPageContent() {
   }, [job]);
 
   /** ส่งต่อได้เฉพาะตอนอยู่ที่แผนกหลัก — พอส่งไปแผนกย่อยแล้วให้ใช้แต่ปุ่มส่งกลับ */
+  /** ส่งงานต่อแผนกอื่น — เฉพาะตอนกำลังตรวจสอบ (ยังไม่เคยส่งข้ามแผนก) */
   const canSubTransfer =
     !!job &&
     !isSubTask &&
-    subTransferTargets.length > 0 &&
-    ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS"].includes(job.status);
+    !job.subTaskHandoffSource &&
+    job.status === "IN_PROGRESS" &&
+    subTransferTargets.length > 0;
 
+  /** หลังส่งงานข้ามแผนกแล้ว — ส่งกลับแผนกที่ส่งมาเท่านั้น */
   const showReturnToHandoff =
     !!job &&
     isSubTask &&
-    job.subTaskHandoffSource &&
-    job.subTaskHandoffSource !== job.mainDepartment &&
-    ["RECEIVED", "IN_PROGRESS", "WAITING_QUOTATION", "WAITING_APPROVE", "PENDING_PARTS", "IN_REPAIR_PROCESS"].includes(job.status);
+    !!job.subTaskHandoffSource &&
+    job.subTaskHandoffSource !== job.mainDepartment;
+
+  const hasQuotation = !!job?.salesDocId && job?.salesDocType === "QUOTATION";
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
@@ -748,6 +753,22 @@ function JobDetailsPageContent() {
 
   const handleSubTransfer = async () => {
     if (!db || !profile || !job || !subTransferDept) return;
+    if (job.status !== "IN_PROGRESS") {
+      toast({
+        variant: "destructive",
+        title: "ส่งงานต่อไม่ได้",
+        description: "ส่งงานให้แผนกอื่นได้เฉพาะตอนสถานะ «กำลังตรวจสอบ» เท่านั้น",
+      });
+      return;
+    }
+    if (isSubTask || job.subTaskHandoffSource) {
+      toast({
+        variant: "destructive",
+        title: "ส่งงานต่อไม่ได้",
+        description: "งานนี้ถูกส่งข้ามแผนกแล้ว — ใช้ปุ่ม «ส่งงานกลับแผนกก่อนหน้า» เท่านั้น",
+      });
+      return;
+    }
     if (subTransferDept === job.department) {
       toast({ variant: "destructive", title: "เลือกแผนกปลายทางต่างจากแผนกปัจจุบัน" });
       return;
@@ -833,6 +854,7 @@ function JobDetailsPageContent() {
 
   const handleFinishJob = async () => {
     if (!db || !profile || !job) return;
+    if (job.status === "WAITING_APPROVE" || job.status === "PENDING_CUSTOMER_INFORM" || job.status === "WAITING_QUOTATION") return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -951,6 +973,7 @@ function JobDetailsPageContent() {
     const batch = writeBatch(db);
     batch.update(jobDocRef, { 
       status: 'PENDING_PARTS', 
+      salesDocStatus: 'APPROVED',
       lastActivityAt: serverTimestamp(), 
       updatedAt: serverTimestamp() 
     });
@@ -1524,6 +1547,25 @@ function JobDetailsPageContent() {
                         </Button>
                     )}
 
+                    {/* Create / edit quotation while waiting for quote */}
+                    {job.status === "WAITING_QUOTATION" && !isAlreadyBilled && isMgmtOrOffice && (
+                      hasQuotation ? (
+                        <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold">
+                          <Link href={`/app/office/documents/quotation/new?editDocId=${job.salesDocId}`}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            แก้ไขใบเสนอราคา
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold">
+                          <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            สร้างใบเสนอราคา
+                          </Link>
+                        </Button>
+                      )
+                    )}
+
                     {/* Request Quotation */}
                     {job.status === 'IN_PROGRESS' && (
                         <Button 
@@ -1538,7 +1580,7 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Finish / Return to Main */}
-                    {(['IN_PROGRESS', 'WAITING_QUOTATION', 'WAITING_APPROVE', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) ||
+                    {(['IN_PROGRESS', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) ||
                       (isSubTask && job.status === 'RECEIVED')) && (
                         <Button 
                           onClick={() => setStatusConfirmAction(isSubTask ? 'RETURN_TO_MAIN' : 'FINISH_JOB')} 
@@ -1563,18 +1605,35 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Withdraw Parts - Logic Split */}
-                    {job.status === 'PENDING_PARTS' && (
+                    {job.status === 'PENDING_PARTS' && (() => {
+                      const withdrawBlocked = jobWithdrawPartsBlockedReason(job);
+                      if (withdrawBlocked) {
+                        return (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full border-blue-600/40 text-blue-600/60 cursor-not-allowed font-bold"
+                            disabled
+                            title={withdrawBlocked}
+                          >
+                            <ClipboardList className="mr-2 h-4 w-4" />
+                            เบิกอะไหล่
+                          </Button>
+                        );
+                      }
+                      return (
                         <Button 
                           asChild
                           variant="outline"
                           className="w-full border-blue-600 text-blue-600 hover:bg-blue-50 font-bold"
                         >
-                            <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
-                              <ClipboardList className="mr-2 h-4 w-4" /> 
-                              เบิกอะไหล่
-                            </Link>
+                          <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
+                            <ClipboardList className="mr-2 h-4 w-4" /> 
+                            เบิกอะไหล่
+                          </Link>
                         </Button>
-                    )}
+                      );
+                    })()}
 
                     {/* Request More Parts (Only when In Repair) */}
                     {job.status === 'IN_REPAIR_PROCESS' && (
@@ -1589,7 +1648,7 @@ function JobDetailsPageContent() {
                         </Button>
                     )}
 
-                    {/* Sub-Transfer (งานหลักหรืองานย่อยส่งต่อแผนกถัดไปได้) */}
+                    {/* Sub-Transfer — เฉพาะกำลังตรวจสอบ ที่แผนกหลัก */}
                     {canSubTransfer && (
                         <Button
                           variant="outline"

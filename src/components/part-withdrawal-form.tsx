@@ -46,6 +46,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Customer, Job, Part, Document as DocumentType, StoreSettings, UserProfile } from "@/lib/types";
+import { canJobWithdrawParts, jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 
 function tsMs(t: unknown): number {
   if (t && typeof t === "object" && "toMillis" in t && typeof (t as { toMillis: () => number }).toMillis === "function") {
@@ -135,6 +136,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const [previewDocNo, setPreviewDocNo] = useState<string>("");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   const [quotationDoc, setQuotationDoc] = useState<DocumentType | null>(null);
+  const [linkedJob, setLinkedJob] = useState<Job | null>(null);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -178,11 +180,13 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const watchedCustomerId = form.watch("customerId");
   const watchedRefId = form.watch("refId");
   const watchedDocDate = form.watch("docDate");
+  const jobWithdrawBlockedReason = linkedJob ? jobWithdrawPartsBlockedReason(linkedJob) : null;
 
   // โหลดใบเสนอราคาที่ผูกกับงาน (แสดงรายการอ้างอิงด้านบน)
   useEffect(() => {
     if (!db || watchedRefType !== "JOB" || !watchedRefId) {
       setQuotationDoc(null);
+      setLinkedJob(null);
       setLoadingQuotation(false);
       return;
     }
@@ -196,11 +200,13 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
           if (cancelled) return;
           if (!js.exists()) {
             setQuotationDoc(null);
+            setLinkedJob(null);
             setLoadingQuotation(false);
             return;
           }
           job = { id: js.id, ...js.data() } as Job;
         }
+        setLinkedJob(job);
         if (job.salesDocId && job.salesDocType === "QUOTATION") {
           const d = await getDoc(doc(db, "documents", job.salesDocId));
           if (cancelled) return;
@@ -426,6 +432,22 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         return;
     }
 
+    if (data.refType === "JOB" && data.refId) {
+      let jobForCheck = linkedJob?.id === data.refId ? linkedJob : activeJobs.find((j) => j.id === data.refId);
+      if (!jobForCheck && db) {
+        const js = await getDoc(doc(db, "jobs", data.refId));
+        if (js.exists()) jobForCheck = { id: js.id, ...js.data() } as Job;
+      }
+      if (jobForCheck && !canJobWithdrawParts(jobForCheck)) {
+        toast({
+          variant: "destructive",
+          title: "ยังเบิกอะไหล่ไม่ได้",
+          description: jobWithdrawPartsBlockedReason(jobForCheck) ?? "ต้องมีใบเสนอราคาที่ลูกค้าอนุมัติแล้ว",
+        });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       if (!isDraft) {
@@ -634,6 +656,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   };
 
   const filteredEntities = availableEntities.filter(e => e.name.toLowerCase().includes(customerSearch.toLowerCase()) || e.phone.includes(customerSearch));
+  const jobWithdrawSaveBlocked = watchedRefType === "JOB" && !!watchedRefId && !!jobWithdrawBlockedReason;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
@@ -646,7 +669,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     type="button" 
                     variant="secondary" 
                     className="flex-1 sm:flex-none"
-                    disabled={isSubmitting} 
+                    disabled={isSubmitting || jobWithdrawSaveBlocked} 
                     onClick={form.handleSubmit(d => handleSave(d, true))} 
                 >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -657,7 +680,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     <Button
                       type="button"
                       onClick={form.handleSubmit((d) => handleSave(d, false, "PARTIAL"))}
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || jobWithdrawSaveBlocked}
                       variant="outline"
                       className="flex-1 sm:flex-none border-green-600 text-green-700 hover:bg-green-50 font-bold"
                     >
@@ -667,7 +690,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     <Button
                       type="button"
                       onClick={form.handleSubmit((d) => handleSave(d, false, "COMPLETE"))}
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || jobWithdrawSaveBlocked}
                       className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
                     >
                       {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PackageCheck className="mr-2 h-4 w-4" />}
@@ -847,10 +870,16 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     </div>
                   </>
                 ) : (
-                  <p className="text-sm text-muted-foreground py-4 text-center">
-                    ไม่พบใบเสนอราคาที่ผูกกับงานนี้ — ยังเบิกอะไหล่ได้ตามรายการด้านล่าง
+                  <p className="text-sm text-destructive py-4 text-center font-medium">
+                    ไม่พบใบเสนอราคาที่ผูกกับงานนี้ — ต้องออกใบเสนอราคา เสนอลูกค้า และรออนุมัติก่อนเบิกอะไหล่
                   </p>
                 )}
+                {jobWithdrawBlockedReason ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive flex gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{jobWithdrawBlockedReason}</span>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           )}

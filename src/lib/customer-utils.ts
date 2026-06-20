@@ -70,6 +70,28 @@ export function normalizeCustomerTaxProfiles(c: Customer): CustomerTaxProfile[] 
   return [];
 }
 
+/** ค้นหาลูกค้า — ชื่อ, เบอร์, ชื่อใบกำกับ, โปรไฟล์ภาษี, รายละเอียด (เดียวกับหน้าจัดการรายชื่อ) */
+export function customerMatchesSearchTerm(customer: Customer, searchTerm: string): boolean {
+  const trimmed = searchTerm.trim();
+  if (!trimmed) return true;
+
+  const lowercasedFilter = trimmed.toLowerCase();
+  const qDigits = trimmed.replace(/\D/g, "");
+  const phones = normalizeCustomerPhones(customer);
+  const taxLabels = normalizeCustomerTaxProfiles(customer)
+    .map((p) => `${p.label || ""} ${p.taxName} ${p.taxId}`)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    customer.name.toLowerCase().includes(lowercasedFilter) ||
+    phones.some((p) => p.includes(trimmed) || (qDigits.length > 0 && p.replace(/\D/g, "").includes(qDigits))) ||
+    (customer.taxName || "").toLowerCase().includes(lowercasedFilter) ||
+    taxLabels.includes(lowercasedFilter) ||
+    (customer.detail || "").toLowerCase().includes(lowercasedFilter)
+  );
+}
+
 /** ข้อมูลจากการลงทะเบียนพอร์ทัล — ใช้เติมฟิลด์ใบกำกับภาษี (ชื่อ / เลขผู้เสียภาษี = เลขบัตรประชาชน / ที่อยู่ตามบัตร) */
 export function getPortalRegistrationTaxDefaults(c: Customer): {
   taxName: string;

@@ -120,6 +120,7 @@ export const customerPortalQuotationDecision = onCall(
     if (decision === "APPROVE") {
       batch.update(jobRef, {
         status: "PENDING_PARTS",
+        salesDocStatus: "APPROVED",
         quotationAwaitingOfficeResubmit: false,
         lastActivityAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),

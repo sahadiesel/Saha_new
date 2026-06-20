@@ -98,6 +98,7 @@ import {
   customerPortalJobAgeDays,
   customerPortalStaleAgeBadgeClass,
 } from "@/lib/customer-job-portal-ui";
+import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -337,13 +338,13 @@ export function JobList({
     return () => unsubscribe();
   }, [db, canSeeAccounts]);
 
-  const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string) => {
+  const handleUpdateStatus = async (jobId: string, nextStatus: JobStatus, activityText: string, extraPatch?: Record<string, unknown>) => {
     if (!db || !profile || isProcessing) return;
     setIsProcessing(jobId);
     try {
       const batch = writeBatch(db);
       const jobRef = doc(db, "jobs", jobId);
-      batch.update(jobRef, { status: nextStatus, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      batch.update(jobRef, { status: nextStatus, lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp(), ...extraPatch });
       batch.set(doc(collection(jobRef, "activities")), { text: activityText, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
       toast({ title: "อัปเดตสถานะสำเร็จ" });
@@ -547,7 +548,9 @@ export function JobList({
     if (!statusConfirmAction) return;
     const { type, job } = statusConfirmAction;
     if (type === 'APPROVE_JOB') {
-      await handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว');
+      await handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว', {
+        salesDocStatus: 'APPROVED',
+      });
     } else if (type === 'REJECT_JOB') {
       await handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"');
     } else if (type === 'FINISH_JOB') {
@@ -639,9 +642,30 @@ export function JobList({
                     </div>
                   )}
                   
-                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
-                    <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]"><Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}><ClipboardList className="mr-2 h-4 w-4" />เบิกอะไหล่</Link></Button>
-                  )}
+                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (() => {
+                    const withdrawBlocked = jobWithdrawPartsBlockedReason(job);
+                    if (withdrawBlocked) {
+                      return (
+                        <Button
+                          type="button"
+                          className="w-full h-9 bg-blue-600/50 text-white font-bold text-[11px] cursor-not-allowed"
+                          disabled
+                          title={withdrawBlocked}
+                        >
+                          <ClipboardList className="mr-2 h-4 w-4" />
+                          เบิกอะไหล่
+                        </Button>
+                      );
+                    }
+                    return (
+                      <Button asChild className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px]">
+                        <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
+                          <ClipboardList className="mr-2 h-4 w-4" />
+                          เบิกอะไหล่
+                        </Link>
+                      </Button>
+                    );
+                  })()}
 
                   {job.status === 'IN_REPAIR_PROCESS' && (
                     <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'FINISH_JOB', job })} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>

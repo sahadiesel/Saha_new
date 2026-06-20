@@ -149,6 +149,7 @@ export default function CustomerDocumentPage({ params }: { params: Promise<{ doc
 
         batch.update(liveRef, {
           status: "PENDING_PARTS",
+          salesDocStatus: "APPROVED",
           lastActivityAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
