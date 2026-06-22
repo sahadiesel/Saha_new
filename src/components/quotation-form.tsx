@@ -222,6 +222,32 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     });
   }, [job, docToEdit, customers, jobId, form]);
 
+  /** ถ้ามีฉบับร่างอยู่แล้ว — เปิดแก้ไขแทนการสร้างใหม่ */
+  useEffect(() => {
+    if (!db || isEditing || !jobId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const q = query(
+          collection(db, "documents"),
+          where("jobId", "==", jobId),
+          where("docType", "==", "QUOTATION"),
+          limit(5)
+        );
+        const snap = await getDocs(q);
+        const draft = snap.docs.find((d) => d.data().status === "DRAFT");
+        if (draft && !cancelled) {
+          router.replace(`/app/office/documents/quotation/new?editDocId=${draft.id}`);
+        }
+      } catch {
+        /* index / permission — ปล่อยให้กรอกฟอร์มตามปกติ */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, isEditing, jobId, router]);
+
   const watchedItems = useWatch({ control: form.control, name: "items" });
   const watchedDiscount = useWatch({ control: form.control, name: "discountAmount" });
   const watchedIsVat = useWatch({ control: form.control, name: "isVat" });
@@ -356,6 +382,19 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                 patch.status = "FINAL";
               }
               await updateDoc(doc(db, "documents", editDocId), sanitizeForFirestore(patch));
+              if (docToEdit?.jobId) {
+                await updateDoc(
+                  doc(db, "jobs", docToEdit.jobId),
+                  sanitizeForFirestore({
+                    salesDocId: editDocId,
+                    salesDocNo: docToEdit.docNo,
+                    salesDocType: "QUOTATION",
+                    salesDocStatus: mode === "draft" ? "DRAFT" : patch.status ?? docToEdit.status,
+                    lastActivityAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                  })
+                );
+              }
               toast({
                 title: mode === "draft" ? "บันทึกฉบับร่างแล้ว" : "อัปเดตสำเร็จ",
                 description:
@@ -369,7 +408,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             if (mode === "draft") {
               const { docId } = await createDocument(db, "QUOTATION", documentData, profile, undefined, {
                 initialStatus: "DRAFT",
-                skipJobAttachment: true,
+                linkJobWithoutStatusChange: !!data.jobId,
               });
               toast({
                 title: "บันทึกฉบับร่างแล้ว",

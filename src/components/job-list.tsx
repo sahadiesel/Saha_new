@@ -99,6 +99,7 @@ import {
   customerPortalStaleAgeBadgeClass,
 } from "@/lib/customer-job-portal-ui";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
+import { jobHasEditableQuotation, resolveJobQuotationEditId } from "@/lib/job-quotation";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -188,6 +189,8 @@ export function JobList({
   const [submitDueDate, setSubmitDueDate] = useState('');
   const [statusConfirmAction, setStatusConfirmAction] = useState<{ type: QuickStatusAction; job: Job } | null>(null);
   const [officeCustomerChatReads, setOfficeCustomerChatReads] = useState<Record<string, unknown>>({});
+  /** ใบเสนอราคาฉบับร่างที่ยังไม่ผูก salesDocId กับงาน (ข้อมูลเก่า) */
+  const [draftQuotationByJobId, setDraftQuotationByJobId] = useState<Record<string, string>>({});
 
   const showOfficeCustomerChatUnread =
     trackCustomerChatUnread &&
@@ -219,6 +222,32 @@ export function JobList({
     if (!trackCustomerChatUnread) return;
     onCustomerChatUnreadJobCount?.(officeChatUnreadJobCount);
   }, [trackCustomerChatUnread, officeChatUnreadJobCount, onCustomerChatUnreadJobCount]);
+
+  useEffect(() => {
+    if (!db) return;
+    const q = query(
+      collection(db, "documents"),
+      where("docType", "==", "QUOTATION"),
+      orderBy("updatedAt", "desc"),
+      limit(300)
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const map: Record<string, string> = {};
+        for (const d of snap.docs) {
+          const data = d.data();
+          if (data.status !== "DRAFT") continue;
+          const jid = data.jobId;
+          if (!jid || typeof jid !== "string" || map[jid]) continue;
+          map[jid] = d.id;
+        }
+        setDraftQuotationByJobId(map);
+      },
+      () => setDraftQuotationByJobId({})
+    );
+    return () => unsubscribe();
+  }, [db]);
 
   const statusConfig = useMemo(() => {
     const statusArray = status ? (Array.isArray(status) ? status : [status]) : [];
@@ -587,7 +616,8 @@ export function JobList({
         {jobs.map((job) => {
           const isOwnDept = profile?.department === job.department;
           const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
-          const hasQuotation = !!job.salesDocId && job.salesDocType === 'QUOTATION';
+          const quotationEditId = resolveJobQuotationEditId(job, { draftQuotationByJobId });
+          const hasQuotation = jobHasEditableQuotation(job, { draftQuotationByJobId });
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
           const ageDays = customerPortalJobAgeDays(job);
           const thumbUrl = job.photos?.find(Boolean);
@@ -646,15 +676,17 @@ export function JobList({
                     const withdrawBlocked = jobWithdrawPartsBlockedReason(job);
                     if (withdrawBlocked) {
                       return (
-                        <Button
-                          type="button"
-                          className="w-full h-9 bg-blue-600/50 text-white font-bold text-[11px] cursor-not-allowed"
-                          disabled
-                          title={withdrawBlocked}
-                        >
-                          <ClipboardList className="mr-2 h-4 w-4" />
-                          เบิกอะไหล่
-                        </Button>
+                        <div className="space-y-1">
+                          <Button
+                            type="button"
+                            className="w-full h-9 bg-blue-600/50 text-white font-bold text-[11px] cursor-not-allowed"
+                            disabled
+                          >
+                            <ClipboardList className="mr-2 h-4 w-4" />
+                            เบิกอะไหล่
+                          </Button>
+                          <p className="text-[10px] text-destructive leading-snug px-0.5">{withdrawBlocked}</p>
+                        </div>
                       );
                     }
                     return (
@@ -675,7 +707,7 @@ export function JobList({
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (
                     hasQuotation ? (
                       <Button asChild className="w-full h-9 font-bold" variant="default">
-                        <Link href={`/app/office/documents/quotation/new?editDocId=${job.salesDocId}`}>
+                        <Link href={`/app/office/documents/quotation/new?editDocId=${quotationEditId}`}>
                           <FileText className="mr-2 h-4 w-4" />แก้ไขใบเสนอราคา
                         </Link>
                       </Button>
@@ -711,7 +743,7 @@ export function JobList({
                       ) : (
                         <>
                           {job.status === 'DONE' && canDoBilling && (<Button className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold" variant="outline" onClick={() => setBillingJob(job)}><Receipt className="mr-2 h-4 w-4" />ออกบิล</Button>)}
-                          {hasQuotation && (<Button asChild variant="ghost" className="w-full h-8 text-primary hover:text-primary hover:bg-primary/5 text-[10px] font-bold border border-dashed border-primary/20"><Link href={`/app/office/documents/quotation/${job.salesDocId}`}><Eye className="mr-1 h-3 w-3" /> ดูใบเสนอราคา {job.salesDocNo}</Link></Button>)}
+                          {hasQuotation && quotationEditId && (<Button asChild variant="ghost" className="w-full h-8 text-primary hover:text-primary hover:bg-primary/5 text-[10px] font-bold border border-dashed border-primary/20"><Link href={`/app/office/documents/quotation/${quotationEditId}`}><Eye className="mr-1 h-3 w-3" /> ดูใบเสนอราคา {job.salesDocNo}</Link></Button>)}
                         </>
                       )}
                     </div>

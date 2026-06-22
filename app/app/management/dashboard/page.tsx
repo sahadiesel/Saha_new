@@ -76,26 +76,32 @@ const formatCurrency = (value: number) => {
   return (value || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 };
 
-/** อ่าน YYYY-MM-DD ในกราฟภาษี — คืน null ถ้า parse ไม่ได้ */
+/** เอกสารที่ใช้คำนวณภาษีขายในกราฟ */
+const SALES_VAT_DOC_TYPES = ["TAX_INVOICE", "DEBIT_NOTE", "CREDIT_NOTE"] as const;
+
+/** อ่าน YYYY-MM-DD ในกราฟภาษี — ใช้ local date เพื่อไม่ให้เดือนเพี้ยนจาก timezone */
 const parseDocDateYmd = (s: string | undefined): Date | null => {
-  if (!s || typeof s !== "string") return null;
-  try {
-    const d = parseISO(s);
-    if (isNaN(d.getTime())) return null;
-    return d;
-  } catch {
-    return null;
-  }
+  if (!s || typeof s !== "string" || s.length < 10) return null;
+  const [y, m, day] = s.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !day) return null;
+  const d = new Date(y, m - 1, day);
+  return isNaN(d.getTime()) ? null : d;
 };
 
-/** ภาษีขายสุทธิในงวด: ใบกำกับ + ใบเพิ่มหนี้ − ใบลดหนี้ (เฉพาะ withTax, ยังไม่นับฉบับร่าง/รออนุมัติ) */
+const documentVatAmount = (d: Document): number => {
+  if (d.vatAmount != null && d.vatAmount !== 0) return d.vatAmount;
+  if (d.grandTotal != null && d.net != null) return Math.max(0, d.grandTotal - d.net);
+  return 0;
+};
+
+/** ภาษีขายสุทธิในงวด: ใบกำกับ + ใบเพิ่มหนี้ − ใบลดหนี้ (ยังไม่นับฉบับร่าง/รออนุมัติ) */
 const documentSalesVatSigned = (d: Document, interval: { start: Date; end: Date }): number => {
+  if (!SALES_VAT_DOC_TYPES.includes(d.docType as (typeof SALES_VAT_DOC_TYPES)[number])) return 0;
   const s = d.status;
   if (s === "CANCELLED" || s === "REJECTED" || s === "DRAFT" || s === "PENDING_REVIEW") return 0;
-  if (!d.withTax) return 0;
   const dt = parseDocDateYmd(d.docDate);
   if (!dt || !isWithinInterval(dt, interval)) return 0;
-  const vat = d.vatAmount || 0;
+  const vat = documentVatAmount(d);
   if (d.docType === "TAX_INVOICE" || d.docType === "DEBIT_NOTE") return vat;
   if (d.docType === "CREDIT_NOTE") return -vat;
   return 0;
@@ -268,12 +274,15 @@ function AppDashboardPage() {
     );
 
     const vatLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 14)), "yyyy-MM-dd");
+    // กรองเฉพาะเอกสารภาษีขาย — ก่อนหน้านี้ดึงเอกสารทุกประเภท limit(800)
+    // ทำให้ใบกำกับเดือนเก่าถูกตัดออกเมื่อมีใบเสนอราคา/ใบส่งของ/ใบเสร็จล่าสุดเยอะ
     const unsubVatDocs = onSnapshot(
       query(
         collection(db, "documents"),
+        where("docType", "in", [...SALES_VAT_DOC_TYPES]),
         where("docDate", ">=", vatLookbackYmd),
         orderBy("docDate", "desc"),
-        limit(800)
+        limit(2000)
       ),
       (snap) => {
         setVatDocuments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));

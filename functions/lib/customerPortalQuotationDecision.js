@@ -96,6 +96,7 @@ exports.customerPortalQuotationDecision = (0, https_1.onCall)({ region: "us-cent
     if (decision === "APPROVE") {
         batch.update(jobRef, {
             status: "PENDING_PARTS",
+            salesDocStatus: "APPROVED",
             quotationAwaitingOfficeResubmit: false,
             lastActivityAt: firestore_1.FieldValue.serverTimestamp(),
             updatedAt: firestore_1.FieldValue.serverTimestamp(),
