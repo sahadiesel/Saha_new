@@ -45,6 +45,59 @@ import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** เอกสารขายที่ Inbox ต้องโหลด — ไม่รวมใบเสนอราคา/อื่นๆ ที่แย่ง limit */
+const INBOX_SALES_DOC_TYPES = [
+  "TAX_INVOICE",
+  "DELIVERY_NOTE",
+  "CREDIT_NOTE",
+  "DEBIT_NOTE",
+  "RECEIPT",
+] as const;
+
+const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
+  all.filter((d) => {
+    if (
+      (d.docType === "DELIVERY_NOTE" ||
+        d.docType === "TAX_INVOICE" ||
+        d.docType === "CREDIT_NOTE" ||
+        d.docType === "DEBIT_NOTE") &&
+      d.arObligationId
+    ) {
+      return false;
+    }
+    if (d.docType === "DELIVERY_NOTE")
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+    if (d.docType === "TAX_INVOICE")
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+    if (d.docType === "CREDIT_NOTE" || d.docType === "DEBIT_NOTE")
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+    if (d.docType === "RECEIPT") return d.status !== "CANCELLED" && d.receiptStatus !== "CONFIRMED";
+    return false;
+  });
+
+const inboxUpdatedAtMs = (d: WithId<DocumentType>) => {
+  const u = d.updatedAt as { toMillis?: () => number; seconds?: number } | Date | undefined;
+  if (!u) return 0;
+  if (typeof (u as { toMillis?: () => number }).toMillis === "function") {
+    return (u as { toMillis: () => number }).toMillis();
+  }
+  if (typeof (u as { seconds?: number }).seconds === "number") {
+    return (u as { seconds: number }).seconds * 1000;
+  }
+  if (u instanceof Date) return u.getTime();
+  return 0;
+};
+
+const mergeInboxDocuments = (chunks: WithId<DocumentType>[][]) => {
+  const byId = new Map<string, WithId<DocumentType>>();
+  for (const chunk of chunks) {
+    for (const doc of chunk) {
+      byId.set(doc.id, doc);
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => inboxUpdatedAtMs(b) - inboxUpdatedAtMs(a));
+};
+
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
 /** รวมยอดรับตาม suggestedPayments บนเอกสาร */
@@ -203,13 +256,26 @@ function AccountingInboxPageContent() {
   }, [profile]);
 
   // STABILIZE QUERIES TO PREVENT ASSERTION ERRORS
-  const docsQuery = useMemo(() => {
+  /** รอบัญชีตรวจสอบ — query แยก เพื่อไม่ให้ถูกตัดเมื่อมีใบอนุมัติ/รอใบเสร็จล่าสุดเยอะ */
+  const pendingReviewQuery = useMemo(() => {
     if (!db || !hasPermission) return null;
     return query(
-      collection(db, "documents"), 
-      where("status", "in", ["PENDING_REVIEW", "APPROVED", "ISSUED", "UNPAID", "PARTIAL"]),
+      collection(db, "documents"),
+      where("status", "==", "PENDING_REVIEW"),
+      where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
       orderBy("updatedAt", "desc"),
-      limit(200)
+      limit(500)
+    );
+  }, [db, hasPermission]);
+
+  const inboxActiveQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
+      collection(db, "documents"),
+      where("status", "in", ["APPROVED", "UNPAID", "PARTIAL", "ISSUED"]),
+      where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
+      orderBy("updatedAt", "desc"),
+      limit(500)
     );
   }, [db, hasPermission]);
 
@@ -228,44 +294,60 @@ function AccountingInboxPageContent() {
     return query(collection(db, "accountingAccounts"), where("isActive", "==", true));
   }, [db, hasPermission]);
 
-  // DATA LISTENERS - Optimized to handle loading only on first success/failure
+  // DATA LISTENERS - รวมรายการรอตรวจสอบ + รายการที่กำลังดำเนินการ (แยก query กัน)
   useEffect(() => {
-    if (!docsQuery || !db) return;
-    
-    const unsubscribe = onSnapshot(docsQuery, (snap) => {
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
-      const needingReview = all.filter(d => {
-          // ตั้งลูกหนี้ / ผูก AR แล้ว → ไม่แสดงใน Inbox (ติดตามที่หน้าลูกหนี้-เจ้าหนี้ รวมใบลดหนี้ที่หักยอดเข้าใบกำกับแล้ว)
-          if (
-            (d.docType === 'DELIVERY_NOTE' ||
-              d.docType === 'TAX_INVOICE' ||
-              d.docType === 'CREDIT_NOTE' ||
-              d.docType === 'DEBIT_NOTE') &&
-            d.arObligationId
-          ) {
-            return false;
-          }
-          if (d.docType === 'DELIVERY_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
-          if (d.docType === 'TAX_INVOICE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
-          if (d.docType === 'CREDIT_NOTE' || d.docType === 'DEBIT_NOTE') return ['PENDING_REVIEW', 'APPROVED', 'UNPAID', 'PARTIAL'].includes(d.status);
-          if (d.docType === 'RECEIPT') return d.status !== 'CANCELLED' && d.receiptStatus !== 'CONFIRMED';
-          return false;
-      });
-      setDocuments(needingReview);
+    if (!db || !pendingReviewQuery || !inboxActiveQuery) return;
+
+    let pendingRows: WithId<DocumentType>[] = [];
+    let activeRows: WithId<DocumentType>[] = [];
+    let pendingReady = false;
+    let activeReady = false;
+
+    const publish = () => {
+      if (!pendingReady || !activeReady) return;
+      setDocuments(filterDocumentsNeedingReview(mergeInboxDocuments([pendingRows, activeRows])));
       setLoading(false);
       setIndexErrorUrl(null);
-    }, (err: FirestoreError) => {
-      if (err.code === 'permission-denied') {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({ path: 'documents', operation: 'list' }));
-      } else if (err.message?.includes('requires an index')) {
+    };
+
+    const onQueryError = (err: FirestoreError) => {
+      if (err.code === "permission-denied") {
+        errorEmitter.emit(
+          "permission-error",
+          new FirestorePermissionError({ path: "documents", operation: "list" })
+        );
+      } else if (err.message?.includes("requires an index")) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) setIndexErrorUrl(urlMatch[0]);
       }
       setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
-  }, [docsQuery, db]);
+    const unsubPending = onSnapshot(
+      pendingReviewQuery,
+      (snap) => {
+        pendingRows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
+        pendingReady = true;
+        publish();
+      },
+      onQueryError
+    );
+
+    const unsubActive = onSnapshot(
+      inboxActiveQuery,
+      (snap) => {
+        activeRows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
+        activeReady = true;
+        publish();
+      },
+      onQueryError
+    );
+
+    return () => {
+      unsubPending();
+      unsubActive();
+    };
+  }, [pendingReviewQuery, inboxActiveQuery, db]);
 
   useEffect(() => {
     if (!approvedQuery || !db) return;
