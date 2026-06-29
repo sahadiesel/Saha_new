@@ -62,6 +62,15 @@
       "collectionGroup": "documents",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "docType", "order": "ASCENDING" },
+        { "fieldPath": "docDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "documents",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "docType", "order": "ASCENDING" },
         { "fieldPath": "docDate", "order": "DESCENDING" }
       ]

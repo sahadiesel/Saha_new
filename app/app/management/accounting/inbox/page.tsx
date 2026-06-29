@@ -56,21 +56,32 @@ const INBOX_SALES_DOC_TYPES = [
 
 const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
   all.filter((d) => {
+    /** ออกใบวางบิลแล้ว — ไม่ให้กลับมารอ Inbox (แม้ status ยังเป็น PENDING_REVIEW จากข้อมูลเก่า) */
+    if (
+      (d.docType === "TAX_INVOICE" ||
+        d.docType === "DELIVERY_NOTE" ||
+        d.docType === "DEBIT_NOTE") &&
+      d.billingNoteId
+    ) {
+      return false;
+    }
     if (
       (d.docType === "DELIVERY_NOTE" ||
         d.docType === "TAX_INVOICE" ||
         d.docType === "CREDIT_NOTE" ||
         d.docType === "DEBIT_NOTE") &&
-      d.arObligationId
+      d.arObligationId &&
+      String(d.status ?? "").toUpperCase() !== "PENDING_REVIEW"
     ) {
       return false;
     }
+    const statusKey = String(d.status ?? "").toUpperCase();
     if (d.docType === "DELIVERY_NOTE")
-      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
     if (d.docType === "TAX_INVOICE")
-      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
     if (d.docType === "CREDIT_NOTE" || d.docType === "DEBIT_NOTE")
-      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(d.status);
+      return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
     if (d.docType === "RECEIPT") return d.status !== "CANCELLED" && d.receiptStatus !== "CONFIRMED";
     return false;
   });
@@ -182,7 +193,8 @@ function matchesReceiveInboxTab(doc: WithId<DocumentType>): boolean {
   if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
     return !doc.deliveryInboxCashConfirmed;
   }
-  return doc.paymentTerms === "CASH" || !doc.paymentTerms;
+  const terms = String(doc.paymentTerms ?? "").toUpperCase();
+  return terms === "CASH" || terms === "";
 }
 
 function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
@@ -196,7 +208,7 @@ function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
       : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)));
     return arLeft > 0.01;
   }
-  return doc.paymentTerms === "CREDIT";
+  return String(doc.paymentTerms ?? "").toUpperCase() === "CREDIT";
 }
 
 function matchesReceiptsInboxTab(doc: WithId<DocumentType>): boolean {
@@ -256,15 +268,27 @@ function AccountingInboxPageContent() {
   }, [profile]);
 
   // STABILIZE QUERIES TO PREVENT ASSERTION ERRORS
-  /** รอบัญชีตรวจสอบ — query แยก เพื่อไม่ให้ถูกตัดเมื่อมีใบอนุมัติ/รอใบเสร็จล่าสุดเยอะ */
-  const pendingReviewQuery = useMemo(() => {
+  /** รอบัญชีตรวจสอบ — เรียงตามวันที่เอกสาร (ใบใหม่อยู่ด้านบน) */
+  const pendingReviewByDocDateQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
+      collection(db, "documents"),
+      where("status", "==", "PENDING_REVIEW"),
+      where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
+      orderBy("docDate", "desc"),
+      limit(1000)
+    );
+  }, [db, hasPermission]);
+
+  /** fallback — ใช้ index status+docType+updatedAt ที่มีอยู่แล้ว จนกว่า index docDate จะพร้อม */
+  const pendingReviewByUpdatedQuery = useMemo(() => {
     if (!db || !hasPermission) return null;
     return query(
       collection(db, "documents"),
       where("status", "==", "PENDING_REVIEW"),
       where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
       orderBy("updatedAt", "desc"),
-      limit(500)
+      limit(1000)
     );
   }, [db, hasPermission]);
 
@@ -296,21 +320,47 @@ function AccountingInboxPageContent() {
 
   // DATA LISTENERS - รวมรายการรอตรวจสอบ + รายการที่กำลังดำเนินการ (แยก query กัน)
   useEffect(() => {
-    if (!db || !pendingReviewQuery || !inboxActiveQuery) return;
+    if (!db || !pendingReviewByDocDateQuery || !pendingReviewByUpdatedQuery || !inboxActiveQuery) return;
 
-    let pendingRows: WithId<DocumentType>[] = [];
+    const pendingById = new Map<string, WithId<DocumentType>>();
+    let pendingDocDateReady = false;
+    let pendingUpdatedReady = false;
     let activeRows: WithId<DocumentType>[] = [];
-    let pendingReady = false;
     let activeReady = false;
 
     const publish = () => {
-      if (!pendingReady || !activeReady) return;
+      if (!pendingDocDateReady || !pendingUpdatedReady || !activeReady) return;
+      const pendingRows = Array.from(pendingById.values());
       setDocuments(filterDocumentsNeedingReview(mergeInboxDocuments([pendingRows, activeRows])));
       setLoading(false);
       setIndexErrorUrl(null);
     };
 
-    const onQueryError = (err: FirestoreError) => {
+    const mergePending = (rows: WithId<DocumentType>[]) => {
+      for (const row of rows) pendingById.set(row.id, row);
+    };
+
+    const onPendingDocDateError = (err: FirestoreError) => {
+      if (err.message?.includes("requires an index")) {
+        const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+      }
+      pendingDocDateReady = true;
+      publish();
+    };
+
+    const onPendingUpdatedError = (err: FirestoreError) => {
+      if (err.code === "permission-denied") {
+        errorEmitter.emit(
+          "permission-error",
+          new FirestorePermissionError({ path: "documents", operation: "list" })
+        );
+      }
+      pendingUpdatedReady = true;
+      publish();
+    };
+
+    const onActiveError = (err: FirestoreError) => {
       if (err.code === "permission-denied") {
         errorEmitter.emit(
           "permission-error",
@@ -320,17 +370,29 @@ function AccountingInboxPageContent() {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) setIndexErrorUrl(urlMatch[0]);
       }
-      setLoading(false);
+      activeRows = [];
+      activeReady = true;
+      publish();
     };
 
-    const unsubPending = onSnapshot(
-      pendingReviewQuery,
+    const unsubPendingDocDate = onSnapshot(
+      pendingReviewByDocDateQuery,
       (snap) => {
-        pendingRows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
-        pendingReady = true;
+        mergePending(snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>)));
+        pendingDocDateReady = true;
         publish();
       },
-      onQueryError
+      onPendingDocDateError
+    );
+
+    const unsubPendingUpdated = onSnapshot(
+      pendingReviewByUpdatedQuery,
+      (snap) => {
+        mergePending(snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>)));
+        pendingUpdatedReady = true;
+        publish();
+      },
+      onPendingUpdatedError
     );
 
     const unsubActive = onSnapshot(
@@ -340,14 +402,15 @@ function AccountingInboxPageContent() {
         activeReady = true;
         publish();
       },
-      onQueryError
+      onActiveError
     );
 
     return () => {
-      unsubPending();
+      unsubPendingDocDate();
+      unsubPendingUpdated();
       unsubActive();
     };
-  }, [pendingReviewQuery, inboxActiveQuery, db]);
+  }, [pendingReviewByDocDateQuery, pendingReviewByUpdatedQuery, inboxActiveQuery, db]);
 
   useEffect(() => {
     if (!approvedQuery || !db) return;

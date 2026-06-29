@@ -1,5 +1,16 @@
-import { collection, getDocs, query, where, type Firestore } from 'firebase/firestore';
+import {
+  collection,
+  deleteField,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  where,
+  type Firestore,
+  type WriteBatch,
+} from 'firebase/firestore';
 import type { BillingRun, Customer, Document } from '@/lib/types';
+import { sanitizeForFirestore } from '@/lib/utils';
 
 /** ยอดมีทิศทาง: ใบลดหนี้เป็นค่าลบ (หักจากยอดเก็บ) ใบอื่นเป็นบวก */
 export function billingSignedGrandTotal(doc: Document): number {
@@ -309,4 +320,77 @@ export function excludeInvoicesDeferredToFutureMonth(
     if (d && d > monthId) return false;
     return true;
   });
+}
+
+/** บิลเครดิตที่ควรผูกลูกหนี้เมื่อออกใบวางบิล */
+export function billingCreditDocNeedsAr(inv: Document): boolean {
+  if (inv.arObligationId) return false;
+  if (["PAID", "CANCELLED", "REJECTED", "DRAFT"].includes(inv.status)) return false;
+  if (inv.docType === "TAX_INVOICE" || inv.docType === "DELIVERY_NOTE") {
+    return inv.paymentTerms === "CREDIT";
+  }
+  if (inv.docType === "DEBIT_NOTE") return inv.paymentTerms !== "CASH";
+  return false;
+}
+
+/** อัปเดตบิลต้นทางเมื่อสร้างใบวางบิล — ผูกเลขที่ + อนุมัติ/ตั้งลูกหนี้ถ้ายังรอบัญชี */
+export function appendBillingNoteLinkToInvoiceBatch(
+  batch: WriteBatch,
+  db: Firestore,
+  inv: Document,
+  billingNoteId: string,
+  billingNoteNo: string
+): void {
+  const updates: Record<string, unknown> = {
+    billingNoteId,
+    billingNoteNo,
+    billingDeferUntilMonth: deleteField(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const creditSalesDoc =
+    inv.docType === "TAX_INVOICE" ||
+    inv.docType === "DELIVERY_NOTE" ||
+    inv.docType === "DEBIT_NOTE";
+
+  if (creditSalesDoc && inv.status === "PENDING_REVIEW") {
+    updates.status = inv.docType === "DEBIT_NOTE" ? "UNPAID" : "APPROVED";
+    updates.arStatus = "UNPAID";
+    updates.paymentSummary = {
+      paidTotal: 0,
+      balance: inv.grandTotal || 0,
+      paymentStatus: "UNPAID",
+    };
+  }
+
+  if (billingCreditDocNeedsAr(inv)) {
+    const arId = `AR_${inv.id}`;
+    const customerName =
+      inv.customerSnapshot?.name || inv.customerSnapshot?.taxName || "Unknown";
+    updates.arObligationId = arId;
+    batch.set(
+      doc(db, "accountingObligations", arId),
+      sanitizeForFirestore({
+        id: arId,
+        type: "AR",
+        status: "UNPAID",
+        sourceDocType: inv.docType,
+        sourceDocId: inv.id,
+        sourceDocNo: inv.docNo,
+        amountTotal: inv.grandTotal || 0,
+        amountPaid: 0,
+        balance: inv.grandTotal || 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        customerId: inv.customerId || inv.customerSnapshot?.id || null,
+        customerNameSnapshot: customerName,
+        jobId: inv.jobId || null,
+        dueDate: inv.dueDate || null,
+        docDate: inv.docDate || null,
+      }),
+      { merge: true }
+    );
+  }
+
+  batch.update(doc(db, "documents", inv.id), sanitizeForFirestore(updates));
 }

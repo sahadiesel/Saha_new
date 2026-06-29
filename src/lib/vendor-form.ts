@@ -52,13 +52,6 @@ export const vendorFormSchema = z
     }
 
     if (data.vendorType === "CONTRACTOR") {
-      if (!data.hasTax) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'ผู้รับเหมาต้องเลือก "มีภาษี" และกรอกข้อมูลภาษีให้ครบ',
-          path: ["hasTax"],
-        });
-      }
       if (!data.address || data.address.trim() === "") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

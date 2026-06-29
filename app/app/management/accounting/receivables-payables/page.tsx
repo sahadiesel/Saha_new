@@ -605,6 +605,41 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                     await batchBalance.commit();
                     toast({ title: "ซิงก์ยอดลูกหนี้", description: `อัปเดตยอดคงค้างให้ตรงกับใบกำกับ ${nBalance} รายการ` });
                 }
+
+                // ใบที่ออกใบวางบิลแล้วแต่ status ยัง PENDING_REVIEW (ข้อมูลเก่า) → อนุมัติ + ผูก AR
+                if (cancelled) return;
+                const batchBillingFix = writeBatch(db);
+                let nBillingFix = 0;
+                for (const d of arAll.docs) {
+                    const ob = { id: d.id, ...d.data() } as WithId<AccountingObligation>;
+                    if (!ob.sourceDocId || ob.sourceDocType === "CREDIT_NOTE") continue;
+                    const src = await getDoc(doc(db, "documents", ob.sourceDocId));
+                    if (!src.exists()) continue;
+                    const dd = src.data() as DocumentType;
+                    if (!dd.billingNoteId || dd.status !== "PENDING_REVIEW") continue;
+                    const targetStatus: DocumentType["status"] =
+                      dd.docType === "DEBIT_NOTE" ? "UNPAID" : "APPROVED";
+                    batchBillingFix.update(doc(db, "documents", ob.sourceDocId), {
+                      status: targetStatus,
+                      arStatus: "UNPAID",
+                      arObligationId: ob.id,
+                      paymentSummary: {
+                        paidTotal: 0,
+                        balance: dd.grandTotal ?? ob.amountTotal ?? ob.balance,
+                        paymentStatus: "UNPAID",
+                      },
+                      updatedAt: serverTimestamp(),
+                    });
+                    nBillingFix++;
+                    if (nBillingFix >= 200) break;
+                }
+                if (nBillingFix > 0 && !cancelled) {
+                    await batchBillingFix.commit();
+                    toast({
+                      title: "ซิงก์สถานะใบวางบิล",
+                      description: `อัปเดตใบกำกับที่ออกใบวางบิลแล้ว ${nBillingFix} รายการ`,
+                    });
+                }
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : String(e);
                 toast({ variant: 'destructive', title: 'ซ่อมข้อมูลลูกหนี้ไม่สำเร็จ', description: msg });
@@ -654,8 +689,14 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                 const data = docSnap.data() as Record<string, any>;
                 const snap = data.customerSnapshot as { name?: string; taxName?: string } | undefined;
                 const grandTotal = Number(data.grandTotal ?? ob?.amountTotal ?? 0);
-                const vatAmount = Number(data.vatAmount ?? 0);
-                const netAmount = Number(data.net ?? data.subtotal ?? Math.max(0, grandTotal - vatAmount));
+                let vatAmount = Number(data.vatAmount ?? 0);
+                let netAmount = Number(data.net ?? data.subtotal ?? NaN);
+                if (!Number.isFinite(netAmount) || netAmount <= 0.009) {
+                  netAmount = Math.max(0, grandTotal - (Number.isFinite(vatAmount) ? vatAmount : 0));
+                }
+                if ((!Number.isFinite(vatAmount) || vatAmount <= 0.009) && netAmount > 0.009 && grandTotal > netAmount) {
+                  vatAmount = Math.max(0, grandTotal - netAmount);
+                }
                 setDocDetails((prev) => ({
                   ...prev,
                   [sourceId!]: {

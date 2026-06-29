@@ -39,6 +39,7 @@ import {
   fetchDeferredRollInDocuments,
   isUnpaidBillingCandidate,
   customerForBillingNoteDocument,
+  appendBillingNoteLinkToInvoiceBatch,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -376,12 +377,7 @@ export default function BatchBillingNotePage() {
 
         const batch = writeBatch(db);
         groupInvoices.forEach((inv) => {
-          batch.update(doc(db, 'documents', inv.id), {
-            billingNoteId: docId,
-            billingNoteNo: docNo,
-            billingDeferUntilMonth: deleteField(),
-            updatedAt: serverTimestamp(),
-          });
+          appendBillingNoteLinkToInvoiceBatch(batch, db, inv, docId, docNo);
         });
         await batch.commit();
 

@@ -51,11 +51,24 @@ export function sanitizeArDocAmounts(
 ): { net: number; vat: number; grand: number } {
   const grand = roundMoney(Number(doc?.grandTotal ?? ob.amountTotal ?? 0));
   let vat = roundMoney(Number(doc?.vatAmount ?? 0));
-  if (!Number.isFinite(vat) || vat < 0 || vat > grand + 0.01) vat = 0;
   let net = roundMoney(Number(doc?.netAmount ?? 0));
-  if (!Number.isFinite(net) || net < 0 || net > grand + 0.01) {
-    net = roundMoney(Math.max(0, grand - vat));
+
+  if (grand > 0.009) {
+    if (!Number.isFinite(vat) || vat < 0 || vat > grand + 0.01) vat = 0;
+    if (!Number.isFinite(net) || net <= 0.009 || net > grand + 0.01) {
+      net = roundMoney(Math.max(0, grand - vat));
+    }
+    if (vat <= 0.009 && net > 0.009 && net < grand - 0.009) {
+      vat = roundMoney(grand - net);
+    }
+    if (net + vat > grand + 0.02) {
+      net = roundMoney(Math.max(0, grand - vat));
+    }
+  } else {
+    if (!Number.isFinite(vat) || vat < 0) vat = 0;
+    if (!Number.isFinite(net) || net < 0) net = 0;
   }
+
   return { net, vat, grand };
 }
 
