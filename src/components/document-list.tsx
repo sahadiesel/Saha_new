@@ -35,6 +35,24 @@ interface DocumentListProps {
   baseContext?: 'office' | 'accounting';
 }
 
+const MONTH_SCOPED_DOC_TYPES: DocType[] = ["TAX_INVOICE", "DELIVERY_NOTE", "RECEIPT"];
+const RECENT_DOCUMENTS_LIMIT = 2500;
+
+/** docDate เป็น YYYY-MM-DD — คืนวันแรก/วันสุดท้ายของเดือน YYYY-MM */
+function documentMonthBounds(yyyyMm: string): { start: string; end: string } {
+  const [yStr, mStr] = yyyyMm.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr);
+  if (!y || !m || m < 1 || m > 12) {
+    return { start: `${yyyyMm}-01`, end: `${yyyyMm}-31` };
+  }
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    start: `${yyyyMm}-01`,
+    end: `${yyyyMm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 const getDocDisplayStatus = (doc: Document): { key: string; label: string; description: string; variant: "default" | "secondary" | "destructive" | "outline" } => {
     const statusKey = String(doc.status ?? "").toUpperCase();
     const label = docStatusLabel(doc.status, doc.docType);
@@ -96,12 +114,16 @@ export function DocumentList({
   const { profile } = useAuth();
 
   const [allDocuments, setAllDocuments] = useState<Document[]>([]);
+  const [monthScopedDocuments, setMonthScopedDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  const [monthScopedLoading, setMonthScopedLoading] = useState(true);
+  const usesMonthScopedLoad = MONTH_SCOPED_DOC_TYPES.includes(docType);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [prefixFilter, setPrefixFilter] = useState("ALL");
   const [monthFilter, setMonthFilter] = useState(() => {
-    if (docType !== "TAX_INVOICE" && docType !== "DELIVERY_NOTE" && docType !== "RECEIPT") return "ALL";
+    if (docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE") return "ALL";
+    if (docType !== "RECEIPT") return "ALL";
     const now = new Date();
     const month = String(now.getMonth() + 1).padStart(2, "0");
     return `${now.getFullYear()}-${month}`;
@@ -161,6 +183,14 @@ export function DocumentList({
     }
   };
 
+  const listDocuments = useMemo(() => {
+    if (usesMonthScopedLoad && monthFilter !== "ALL") return monthScopedDocuments;
+    return allDocuments;
+  }, [usesMonthScopedLoad, monthFilter, monthScopedDocuments, allDocuments]);
+
+  const listLoading =
+    usesMonthScopedLoad && monthFilter !== "ALL" ? monthScopedLoading : loading;
+
   const uniqueStatuses = useMemo(() => {
     let base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
     if (docType === 'QUOTATION') {
@@ -175,19 +205,19 @@ export function DocumentList({
     }
     if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");
     if (docType === "RECEIPT") {
-      const available = new Set(allDocuments.map((d) => getDocDisplayStatus(d).key));
+      const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
       const ordered = base.filter((s) => s !== "ALL" && available.has(s));
       const extra = Array.from(available).filter((s) => !base.includes(s)).sort();
       return ["ALL", ...ordered, ...extra];
     }
     if (docType === "WITHHOLDING_TAX") {
-      const available = new Set(allDocuments.map((d) => getDocDisplayStatus(d).key));
+      const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
       const ordered = ["ALL", "ISSUED", "DRAFT", "CANCELLED"].filter((s) => s === "ALL" || available.has(s));
       const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
       return [...ordered, ...extra.filter((s) => s !== "ALL")];
     }
     return base;
-  }, [docType, allDocuments]);
+  }, [docType, listDocuments]);
 
   useEffect(() => {
     if (!uniqueStatuses.includes(statusFilter)) {
@@ -197,12 +227,12 @@ export function DocumentList({
 
   const availablePrefixes = useMemo(() => {
     const prefixes = new Set<string>();
-    allDocuments.forEach(doc => {
+    listDocuments.forEach(doc => {
       const match = doc.docNo.match(/^[A-Za-z]+/);
       if (match) prefixes.add(match[0]);
     });
     return Array.from(prefixes).sort();
-  }, [allDocuments]);
+  }, [listDocuments]);
 
   const availableMonths = useMemo(() => {
     const months = new Set<string>();
@@ -211,13 +241,16 @@ export function DocumentList({
         months.add(d.docDate.slice(0, 7));
       }
     });
+    if (monthFilter !== "ALL") {
+      months.add(monthFilter);
+    }
     return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [allDocuments]);
+  }, [allDocuments, monthFilter]);
 
   /** รวมข้อความจากรายการอะไหล่เป็นสตริงเดียว — ค้นหาไม่ต้องวน items ทุกครั้ง */
   const lineItemSearchBlobByDocId = useMemo(() => {
     const m = new Map<string, string>();
-    for (const d of allDocuments) {
+    for (const d of listDocuments) {
       const items = d.items;
       if (!items?.length) {
         m.set(d.id, "");
@@ -231,7 +264,7 @@ export function DocumentList({
       m.set(d.id, parts.join("\0"));
     }
     return m;
-  }, [allDocuments]);
+  }, [listDocuments]);
 
   useEffect(() => {
     setQuotationFetchLimit(200);
@@ -248,12 +281,19 @@ export function DocumentList({
             orderBy("updatedAt", "desc"),
             limit(quotationFetchLimit)
           )
-        : query(
-            collection(db, "documents"),
-            where("docType", "==", docType),
-            orderBy(orderByField, orderByDirection),
-            limit(500)
-          );
+        : usesMonthScopedLoad
+          ? query(
+              collection(db, "documents"),
+              where("docType", "==", docType),
+              orderBy("docDate", "desc"),
+              limit(RECENT_DOCUMENTS_LIMIT)
+            )
+          : query(
+              collection(db, "documents"),
+              where("docType", "==", docType),
+              orderBy(orderByField, orderByDirection),
+              limit(500)
+            );
 
     if (listFirstLoadRef.current) {
       setLoading(true);
@@ -277,18 +317,65 @@ export function DocumentList({
               operation: "list",
             })
           );
+        } else {
+          toast({
+            variant: "destructive",
+            title: "เกิดข้อผิดพลาด",
+            description: "ไม่สามารถโหลดรายการเอกสารได้",
+          });
         }
         setLoading(false);
         listFirstLoadRef.current = false;
       }
     );
     return () => unsubscribe();
-  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit]);
+  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, usesMonthScopedLoad, toast]);
+
+  useEffect(() => {
+    if (!db || !usesMonthScopedLoad || monthFilter === "ALL") {
+      setMonthScopedDocuments([]);
+      setMonthScopedLoading(false);
+      return;
+    }
+    const { start, end } = documentMonthBounds(monthFilter);
+    setMonthScopedLoading(true);
+    const monthQuery = query(
+      collection(db, "documents"),
+      where("docType", "==", docType),
+      where("docDate", ">=", start),
+      where("docDate", "<=", end),
+      orderBy("docDate", "desc")
+    );
+    const unsubscribe = onSnapshot(
+      monthQuery,
+      (snapshot) => {
+        setMonthScopedDocuments(snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+        setMonthScopedLoading(false);
+      },
+      (err) => {
+        if (err.message?.includes("requires an index")) {
+          const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        } else {
+          toast({
+            variant: "destructive",
+            title: "เกิดข้อผิดพลาด",
+            description: "ไม่สามารถโหลดรายการตามเดือนที่เลือกได้",
+          });
+        }
+        setMonthScopedDocuments([]);
+        setMonthScopedLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [db, docType, monthFilter, usesMonthScopedLoad, toast]);
 
   const processedDocuments = useMemo(() => {
-    let filtered = [...allDocuments];
+    let filtered = [...listDocuments];
     if (prefixFilter !== "ALL") filtered = filtered.filter(doc => doc.docNo.startsWith(prefixFilter));
-    if (monthFilter !== "ALL") filtered = filtered.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
+    if (monthFilter !== "ALL" && !usesMonthScopedLoad) {
+      filtered = filtered.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
+    }
     if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
     const q = deferredSearchTerm.toLowerCase();
     if (q) {
@@ -343,7 +430,7 @@ export function DocumentList({
       filtered.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
     }
     return filtered;
-  }, [allDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId, docType]);
+  }, [listDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId, docType, usesMonthScopedLoad]);
 
   const taxInvoiceTotals = useMemo(() => {
     if (docType !== "TAX_INVOICE" && docType !== "RECEIPT") return null;
@@ -625,7 +712,7 @@ export function DocumentList({
               )}
             </div>
           )}
-          {loading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>{docType === "WITHHOLDING_TAX" ? "ผู้รับเงิน" : "ลูกค้า"}</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : docType === "WITHHOLDING_TAX" ? (<><TableHead className="text-right">ฐานหัก</TableHead><TableHead className="text-right">หัก ณ ที่จ่าย</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
+          {listLoading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>{docType === "WITHHOLDING_TAX" ? "ผู้รับเงิน" : "ลูกค้า"}</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : docType === "WITHHOLDING_TAX" ? (<><TableHead className="text-right">ฐานหัก</TableHead><TableHead className="text-right">หัก ณ ที่จ่าย</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === "WITHHOLDING_TAX"
                       ? `/app/management/accounting/documents/withholding-tax/${docItem.id}/print`
