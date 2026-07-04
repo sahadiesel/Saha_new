@@ -26,6 +26,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Checkbox } from "@/components/ui/checkbox";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import {
+  searchQuotationsByDocNo,
+  isQuotationDocNoSearch,
+  docNoMatchesQuotationSearch,
+} from "@/lib/quotation-picker";
 
 interface DocumentListProps {
   docType: DocType;
@@ -139,7 +144,9 @@ export function DocumentList({
   const [currentPage, setCurrentPage] = useState(0);
 
   /** ใบเสนอราคา: โหลดเป็นชุดเล็กก่อน (เรียงตามแก้ไขล่าสุด) เพื่อลดเวลาเปิดหน้า — กดโหลดเพิ่มได้ */
-  const [quotationFetchLimit, setQuotationFetchLimit] = useState(200);
+  const [quotationFetchLimit, setQuotationFetchLimit] = useState(500);
+  const [quotationSearchDocuments, setQuotationSearchDocuments] = useState<Document[]>([]);
+  const [quotationSearchLoading, setQuotationSearchLoading] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm.trim());
   const listFirstLoadRef = useRef(true);
 
@@ -183,13 +190,38 @@ export function DocumentList({
     }
   };
 
+  const quotationDocNoSearchActive =
+    docType === "QUOTATION" &&
+    deferredSearchTerm.length >= 2 &&
+    isQuotationDocNoSearch(deferredSearchTerm);
+
   const listDocuments = useMemo(() => {
     if (usesMonthScopedLoad && monthFilter !== "ALL") return monthScopedDocuments;
+    if (quotationDocNoSearchActive) return quotationSearchDocuments;
     return allDocuments;
-  }, [usesMonthScopedLoad, monthFilter, monthScopedDocuments, allDocuments]);
+  }, [
+    usesMonthScopedLoad,
+    monthFilter,
+    monthScopedDocuments,
+    allDocuments,
+    quotationDocNoSearchActive,
+    quotationSearchDocuments,
+  ]);
 
-  const listLoading =
-    usesMonthScopedLoad && monthFilter !== "ALL" ? monthScopedLoading : loading;
+  const listLoading = quotationDocNoSearchActive
+    ? quotationSearchLoading
+    : usesMonthScopedLoad && monthFilter !== "ALL"
+      ? monthScopedLoading
+      : loading;
+
+  const recentQuotationPrefixes = useMemo(() => {
+    const prefixes = new Set<string>();
+    allDocuments.forEach((docItem) => {
+      const match = docItem.docNo.match(/^[A-Za-z]+/);
+      if (match) prefixes.add(match[0]);
+    });
+    return Array.from(prefixes).sort();
+  }, [allDocuments]);
 
   const uniqueStatuses = useMemo(() => {
     let base = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"];
@@ -267,9 +299,47 @@ export function DocumentList({
   }, [listDocuments]);
 
   useEffect(() => {
-    setQuotationFetchLimit(200);
+    setQuotationFetchLimit(500);
+    setQuotationSearchDocuments([]);
+    setQuotationSearchLoading(false);
     listFirstLoadRef.current = true;
   }, [docType]);
+
+  useEffect(() => {
+    if (!db || docType !== "QUOTATION") {
+      setQuotationSearchDocuments([]);
+      setQuotationSearchLoading(false);
+      return;
+    }
+    const term = deferredSearchTerm;
+    if (term.length < 2 || !isQuotationDocNoSearch(term)) {
+      setQuotationSearchDocuments([]);
+      setQuotationSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setQuotationSearchLoading(true);
+    void searchQuotationsByDocNo(db, {
+      searchTerm: term,
+      prefixFilter,
+      knownPrefixes: recentQuotationPrefixes,
+    })
+      .then((docs) => {
+        if (!cancelled) {
+          setQuotationSearchDocuments(docs);
+          setQuotationSearchLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setQuotationSearchDocuments([]);
+          setQuotationSearchLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [db, docType, deferredSearchTerm, prefixFilter, recentQuotationPrefixes]);
 
   useEffect(() => {
     if (!db) return;
@@ -278,7 +348,7 @@ export function DocumentList({
         ? query(
             collection(db, "documents"),
             where("docType", "==", "QUOTATION"),
-            orderBy("updatedAt", "desc"),
+            orderBy("docNo", "desc"),
             limit(quotationFetchLimit)
           )
         : usesMonthScopedLoad
@@ -379,6 +449,11 @@ export function DocumentList({
     if (statusFilter !== "ALL") filtered = filtered.filter(doc => getDocDisplayStatus(doc).key === statusFilter);
     const q = deferredSearchTerm.toLowerCase();
     if (q) {
+      if (docType === "QUOTATION" && isQuotationDocNoSearch(deferredSearchTerm)) {
+        filtered = filtered.filter((doc) =>
+          docNoMatchesQuotationSearch(doc.docNo, deferredSearchTerm)
+        );
+      } else {
       const qCompact = q.replace(/\s|-/g, "");
       filtered = filtered.filter((doc) => {
         const snap = doc.customerSnapshot;
@@ -425,12 +500,17 @@ export function DocumentList({
 
         return false;
       });
+      }
     }
     if (docType === "QUOTATION") {
-      filtered.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
+      filtered.sort((a, b) =>
+        quotationDocNoSearchActive
+          ? a.docNo.localeCompare(b.docNo)
+          : b.docNo.localeCompare(a.docNo)
+      );
     }
     return filtered;
-  }, [listDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId, docType, usesMonthScopedLoad]);
+  }, [listDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId, docType, usesMonthScopedLoad, quotationDocNoSearchActive]);
 
   const taxInvoiceTotals = useMemo(() => {
     if (docType !== "TAX_INVOICE" && docType !== "RECEIPT") return null;
@@ -697,15 +777,19 @@ export function DocumentList({
           {docType === "QUOTATION" && (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <span>
-                แสดง {allDocuments.length} ใบล่าสุด (โหลดสูงสุด {quotationFetchLimit} ฉบับ เรียงตามวันที่แก้ไข) — ค้นหาทำงานภายในชุดที่โหลดแล้ว
+                {quotationDocNoSearchActive
+                  ? "ค้นหาเลขที่จากทั้งระบบ (เช่น 029 → QJ2026-0290, 0291, …)"
+                  : deferredSearchTerm.length >= 2
+                    ? "ค้นหาชื่อลูกค้า/เบอร์โทร/ทะเบียน — ทำงานในรายการที่โหลดแล้ว"
+                    : `แสดง ${allDocuments.length} ใบล่าสุด (โหลดสูงสุด ${quotationFetchLimit} ฉบับ เรียงตามเลขที่)`}
               </span>
-              {allDocuments.length >= quotationFetchLimit && quotationFetchLimit < 500 && (
+              {allDocuments.length >= quotationFetchLimit && quotationFetchLimit < 1000 && (
                 <Button
                   type="button"
                   variant="secondary"
                   size="sm"
                   className="shrink-0"
-                  onClick={() => setQuotationFetchLimit((n) => Math.min(n + 200, 500))}
+                  onClick={() => setQuotationFetchLimit((n) => Math.min(n + 200, 1000))}
                 >
                   โหลดเพิ่ม (+200 ฉบับ)
                 </Button>
