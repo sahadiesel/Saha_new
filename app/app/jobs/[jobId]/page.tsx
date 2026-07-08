@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
 import { isJobActivityHiddenFromTimeline } from "@/lib/job-activity-display";
 import { resolveJobQuotationEditId } from "@/lib/job-quotation";
-import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2 } from "lucide-react";
+import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2, Play } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -226,7 +226,7 @@ function JobDetailsPageContent() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
-  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'START_REPAIR' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -862,7 +862,7 @@ function JobDetailsPageContent() {
 
   const handleFinishJob = async () => {
     if (!db || !profile || !job) return;
-    if (job.status === "WAITING_APPROVE" || job.status === "PENDING_CUSTOMER_INFORM" || job.status === "WAITING_QUOTATION") return;
+    if (job.status !== "IN_REPAIR_PROCESS") return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -893,6 +893,29 @@ function JobDetailsPageContent() {
     });
     batch.commit().then(() => {
         toast({ title: "ส่งคำขอเสนอราคาแล้ว", description: "ฝ่ายออฟฟิศจะได้รับแจ้งเพื่อดำเนินการออกใบเสนอราคาค่ะ" });
+    })
+    .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
+    .finally(() => setIsSubmittingNote(false));
+  };
+
+  const handleStartRepair = async () => {
+    if (!db || !profile || !job) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, { 
+      status: 'IN_REPAIR_PROCESS', 
+      lastActivityAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), { 
+      text: `เริ่มดำเนินการซ่อม (ข้ามขั้นตอนเสนอราคา)`, 
+      userName: profile.displayName, 
+      userId: profile.uid, 
+      createdAt: serverTimestamp() 
+    });
+    batch.commit().then(() => {
+        toast({ title: "เริ่มซ่อมแล้ว", description: "สถานะงานเปลี่ยนเป็น 'กำลังดำเนินการซ่อม' แล้วค่ะ" });
     })
     .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
     .finally(() => setIsSubmittingNote(false));
@@ -1040,6 +1063,12 @@ function JobDetailsPageContent() {
         confirmText: "ใช่, แจ้งเสนอราคา",
         onConfirm: handleRequestQuotation,
       },
+      START_REPAIR: {
+        title: "ยืนยันเริ่มดำเนินการซ่อม",
+        description: "ยืนยันว่าต้องการเริ่มดำเนินการซ่อมทันทีใช่ไหม?",
+        confirmText: "ใช่, เริ่มดำเนินการซ่อม",
+        onConfirm: handleStartRepair,
+      },
       FINISH_JOB: {
         title: "ยืนยันแจ้งงานเสร็จทำบิล",
         description: "เก็บรายละเอียดงาน และตรวจสอบสินค้าเรียบร้อย พร้อมที่จะส่งให้ลูกค้าแล้วใช่ไหม?",
@@ -1084,7 +1113,7 @@ function JobDetailsPageContent() {
         onConfirm: handleRequestMoreParts,
       },
     } as const;
-  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
+  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain, handleStartRepair]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -1588,7 +1617,7 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Finish / Return to Main */}
-                    {(['IN_PROGRESS', 'IN_REPAIR_PROCESS', 'PENDING_PARTS'].includes(job.status) ||
+                    {(['IN_REPAIR_PROCESS'].includes(job.status) ||
                       (isSubTask && job.status === 'RECEIVED')) && (
                         <Button 
                           onClick={() => setStatusConfirmAction(isSubTask ? 'RETURN_TO_MAIN' : 'FINISH_JOB')} 
@@ -1597,6 +1626,18 @@ function JobDetailsPageContent() {
                         >
                             <CheckCircle className="mr-2 h-4 w-4" /> 
                             {isSubTask ? "ส่งงานกลับแผนกหลัก" : "งานเสร็จแจ้งทำบิล"}
+                        </Button>
+                    )}
+
+                    {/* Start Repair (Direct from In Progress) */}
+                    {job.status === 'IN_PROGRESS' && !isSubTask && (
+                        <Button 
+                          onClick={() => setStatusConfirmAction('START_REPAIR')} 
+                          disabled={isSubmittingNote} 
+                          className="w-full bg-green-600 hover:bg-green-700 text-white font-bold"
+                        >
+                            <Play className="mr-2 h-4 w-4" /> 
+                            เริ่มดำเนินการซ่อม
                         </Button>
                     )}
 
