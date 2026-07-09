@@ -226,7 +226,7 @@ function JobDetailsPageContent() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
-  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'START_REPAIR' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -898,28 +898,6 @@ function JobDetailsPageContent() {
     .finally(() => setIsSubmittingNote(false));
   };
 
-  const handleStartRepair = async () => {
-    if (!db || !profile || !job) return;
-    setIsSubmittingNote(true);
-    const jobDocRef = doc(db, "jobs", job.id);
-    const batch = writeBatch(db);
-    batch.update(jobDocRef, { 
-      status: 'IN_REPAIR_PROCESS', 
-      lastActivityAt: serverTimestamp(), 
-      updatedAt: serverTimestamp() 
-    });
-    batch.set(doc(collection(jobDocRef, "activities")), { 
-      text: `เริ่มดำเนินการซ่อม (ข้ามขั้นตอนเสนอราคา)`, 
-      userName: profile.displayName, 
-      userId: profile.uid, 
-      createdAt: serverTimestamp() 
-    });
-    batch.commit().then(() => {
-        toast({ title: "เริ่มซ่อมแล้ว", description: "สถานะงานเปลี่ยนเป็น 'กำลังดำเนินการซ่อม' แล้วค่ะ" });
-    })
-    .catch(e => toast({ variant: 'destructive', title: 'Error', description: e.message }))
-    .finally(() => setIsSubmittingNote(false));
-  };
 
   const handleRequestMoreParts = async () => {
     if (!db || !profile || !job) return;
@@ -1063,12 +1041,6 @@ function JobDetailsPageContent() {
         confirmText: "ใช่, แจ้งเสนอราคา",
         onConfirm: handleRequestQuotation,
       },
-      START_REPAIR: {
-        title: "ยืนยันเริ่มดำเนินการซ่อม",
-        description: "ยืนยันว่าต้องการเริ่มดำเนินการซ่อมทันทีใช่ไหม?",
-        confirmText: "ใช่, เริ่มดำเนินการซ่อม",
-        onConfirm: handleStartRepair,
-      },
       FINISH_JOB: {
         title: "ยืนยันแจ้งงานเสร็จทำบิล",
         description: "เก็บรายละเอียดงาน และตรวจสอบสินค้าเรียบร้อย พร้อมที่จะส่งให้ลูกค้าแล้วใช่ไหม?",
@@ -1113,7 +1085,7 @@ function JobDetailsPageContent() {
         onConfirm: handleRequestMoreParts,
       },
     } as const;
-  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain, handleStartRepair]);
+  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -1629,17 +1601,7 @@ function JobDetailsPageContent() {
                         </Button>
                     )}
 
-                    {/* Start Repair (Direct from In Progress) */}
-                    {job.status === 'IN_PROGRESS' && !isSubTask && (
-                        <Button 
-                          onClick={() => setStatusConfirmAction('START_REPAIR')} 
-                          disabled={isSubmittingNote} 
-                          className="w-full bg-green-600 hover:bg-green-700 text-white font-bold"
-                        >
-                            <Play className="mr-2 h-4 w-4" /> 
-                            เริ่มดำเนินการซ่อม
-                        </Button>
-                    )}
+
 
                     {showReturnToHandoff && (
                       <Button

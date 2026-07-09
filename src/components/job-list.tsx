@@ -157,7 +157,7 @@ export function JobList({
     ? `?from=jobs-by-status&status=${encodeURIComponent(byStatusTab)}`
     : "";
 
-  type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB' | 'START_REPAIR';
+  type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
   /** แสดงป้าย "ค้าง X วัน" บนการ์ดเมื่อดูตามแผนก หรือเปิดชัดเจนจากหน้าจัดการ */
   const effectiveShowSystemAgeBadge = showSystemAgeBadge || Boolean(department);
@@ -566,11 +566,6 @@ export function JobList({
         description: "เก็บรายละเอียดงานเรียบร้อยแล้ว และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
         confirmText: "ยืนยันงานเสร็จ",
       },
-      START_REPAIR: {
-        title: "ยืนยันเริ่มดำเนินการซ่อม",
-        description: "ยืนยันว่าต้องการเริ่มดำเนินการซ่อมทันทีใช่ไหม?",
-        confirmText: "ยืนยันเริ่มซ่อม",
-      },
       ACCEPT_JOB: {
         title: "ยืนยันรับงาน",
         description: "ยืนยันว่าคุณพร้อมรับงานนี้และเริ่มดำเนินการใช่ไหม?",
@@ -590,8 +585,6 @@ export function JobList({
       await handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"');
     } else if (type === 'FINISH_JOB') {
       await handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล');
-    } else if (type === 'START_REPAIR') {
-      await handleUpdateStatus(job.id, 'IN_REPAIR_PROCESS', 'เริ่มดำเนินการซ่อม (ข้ามขั้นตอนเสนอราคา)');
     } else if (type === 'ACCEPT_JOB') {
       await handleAcceptJob(job);
     }
@@ -711,9 +704,7 @@ export function JobList({
                     <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'FINISH_JOB', job })} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
                   )}
 
-                  {job.status === 'IN_PROGRESS' && (
-                    <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'START_REPAIR', job })} disabled={!!isProcessing}><Play className="mr-2 h-4 w-4" />เริ่มดำเนินการซ่อม</Button>
-                  )}
+
 
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => setStatusConfirmAction({ type: 'ACCEPT_JOB', job })} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (
