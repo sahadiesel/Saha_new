@@ -232,35 +232,41 @@ export async function createDocument(
     const targetJobId = data.jobId;
     if (!options?.skipJobAttachment && targetJobId && typeof targetJobId === "string" && targetJobId.trim() !== "") {
       const jobRef = doc(db, 'jobs', targetJobId);
-      
-      // LOG ACTIVITY: Standardized log for document creation
-      const activityRef = doc(collection(jobRef, 'activities'));
-      transaction.set(activityRef, {
-        text: `สร้าง${docTypeLabel(docType)} เลขที่ ${finalDocNo} วันที่ ${docData.docDate}`,
-        userName: userProfile.displayName,
-        userId: userProfile.uid,
-        createdAt: serverTimestamp(),
-      });
 
-      // For withdrawals, we don't necessarily want to change status to WAITING_APPROVE
-      if (docType !== 'WITHDRAWAL') {
-        const jobSalesPatch = {
-          salesDocId: docId,
-          salesDocNo: finalDocNo,
-          salesDocType: docType,
-          salesDocStatus: docStatus,
-          lastActivityAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-        if (options?.linkJobWithoutStatusChange) {
-          transaction.update(jobRef, jobSalesPatch);
-        } else {
-          transaction.update(jobRef, {
-            status: newJobStatus || 'WAITING_APPROVE',
-            ...jobSalesPatch,
-          });
+      // Guard: ตรวจสอบว่าเอกสาร Job มีอยู่จริงก่อนทำการ update
+      // เพื่อป้องกัน "No document to update" error กรณีงานถูกลบ/ไม่มีในระบบ
+      const jobSnap = await transaction.get(jobRef);
+      if (jobSnap.exists()) {
+        // LOG ACTIVITY: Standardized log for document creation
+        const activityRef = doc(collection(jobRef, 'activities'));
+        transaction.set(activityRef, {
+          text: `สร้าง${docTypeLabel(docType)} เลขที่ ${finalDocNo} วันที่ ${docData.docDate}`,
+          userName: userProfile.displayName,
+          userId: userProfile.uid,
+          createdAt: serverTimestamp(),
+        });
+
+        // For withdrawals, we don't necessarily want to change status to WAITING_APPROVE
+        if (docType !== 'WITHDRAWAL') {
+          const jobSalesPatch = {
+            salesDocId: docId,
+            salesDocNo: finalDocNo,
+            salesDocType: docType,
+            salesDocStatus: docStatus,
+            lastActivityAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          };
+          if (options?.linkJobWithoutStatusChange) {
+            transaction.update(jobRef, jobSalesPatch);
+          } else {
+            transaction.update(jobRef, {
+              status: newJobStatus || 'WAITING_APPROVE',
+              ...jobSalesPatch,
+            });
+          }
         }
       }
+      // หากไม่พบงานในระบบ ให้บันทึกเอกสารต่อไปโดยไม่ผูกกับงาน
     }
 
     return { finalDocNo };

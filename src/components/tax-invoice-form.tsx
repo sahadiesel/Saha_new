@@ -417,15 +417,19 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
-                batch.update(jobRef, {
-                    status: targetJobStatus,
-                    salesDocId: effectiveEditDocId,
-                    salesDocNo: finalDocNo,
-                    salesDocType: 'TAX_INVOICE',
-                    salesDocStatus: targetStatus,
-                    lastActivityAt: serverTimestamp(),
-                    updatedAt: serverTimestamp()
-                });
+                // Guard: ตรวจสอบว่างานมีอยู่จริงก่อน update เพื่อป้องกัน "No document to update"
+                const jobSnap = await getDoc(jobRef);
+                if (jobSnap.exists()) {
+                    batch.update(jobRef, {
+                        status: targetJobStatus,
+                        salesDocId: effectiveEditDocId,
+                        salesDocNo: finalDocNo,
+                        salesDocType: 'TAX_INVOICE',
+                        salesDocStatus: targetStatus,
+                        lastActivityAt: serverTimestamp(),
+                        updatedAt: serverTimestamp()
+                    });
+                }
             }
             await batch.commit();
         } else {

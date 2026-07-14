@@ -365,15 +365,20 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                   updatedAt: serverTimestamp(),
                 })
               );
-              batch.update(doc(db, "jobs", jid), {
-                status: "PENDING_CUSTOMER_INFORM",
-                salesDocId: editDocId,
-                salesDocNo: docToEdit.docNo,
-                salesDocType: "QUOTATION",
-                salesDocStatus: "FINAL",
-                lastActivityAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
+              // Guard: ตรวจสอบว่างานมีอยู่จริงก่อน update เพื่อป้องกัน "No document to update"
+              const jobRefForFinal = doc(db, "jobs", jid);
+              const jobSnapForFinal = await getDoc(jobRefForFinal);
+              if (jobSnapForFinal.exists()) {
+                batch.update(jobRefForFinal, {
+                  status: "PENDING_CUSTOMER_INFORM",
+                  salesDocId: editDocId,
+                  salesDocNo: docToEdit.docNo,
+                  salesDocType: "QUOTATION",
+                  salesDocStatus: "FINAL",
+                  lastActivityAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+              }
               await batch.commit();
               toast({ title: "บันทึกราคาฉบับจริงแล้ว", description: "งานเข้าขั้นรอแจ้งลูกค้า — พร้อมดำเนินการตามระบบเดิม" });
             } else {
@@ -383,17 +388,22 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               }
               await updateDoc(doc(db, "documents", editDocId), sanitizeForFirestore(patch));
               if (docToEdit?.jobId) {
-                await updateDoc(
-                  doc(db, "jobs", docToEdit.jobId),
-                  sanitizeForFirestore({
-                    salesDocId: editDocId,
-                    salesDocNo: docToEdit.docNo,
-                    salesDocType: "QUOTATION",
-                    salesDocStatus: mode === "draft" ? "DRAFT" : patch.status ?? docToEdit.status,
-                    lastActivityAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                  })
-                );
+                // Guard: ตรวจสอบว่างานมีอยู่จริงก่อน update เพื่อป้องกัน "No document to update"
+                const jobRefForDraft = doc(db, "jobs", docToEdit.jobId);
+                const jobSnapForDraft = await getDoc(jobRefForDraft);
+                if (jobSnapForDraft.exists()) {
+                  await updateDoc(
+                    jobRefForDraft,
+                    sanitizeForFirestore({
+                      salesDocId: editDocId,
+                      salesDocNo: docToEdit.docNo,
+                      salesDocType: "QUOTATION",
+                      salesDocStatus: mode === "draft" ? "DRAFT" : patch.status ?? docToEdit.status,
+                      lastActivityAt: serverTimestamp(),
+                      updatedAt: serverTimestamp(),
+                    })
+                  );
+                }
               }
               toast({
                 title: mode === "draft" ? "บันทึกฉบับร่างแล้ว" : "อัปเดตสำเร็จ",
