@@ -204,6 +204,17 @@ export async function createDocument(
   }
 
   const result = await runTransaction(db, async (transaction) => {
+    // ===== READS FIRST (Firestore requires all reads before any writes) =====
+    const targetJobId = data.jobId;
+    let jobSnap: Awaited<ReturnType<typeof transaction.get>> | null = null;
+    if (!options?.skipJobAttachment && targetJobId && typeof targetJobId === "string" && targetJobId.trim() !== "") {
+      const jobRef = doc(db, 'jobs', targetJobId);
+      // Guard: ตรวจสอบว่าเอกสาร Job มีอยู่จริงก่อนทำการ write
+      // เพื่อป้องกัน "No document to update" error กรณีงานถูกลบ/ไม่มีในระบบ
+      jobSnap = await transaction.get(jobRef);
+    }
+
+    // ===== WRITES =====
     let finalDocNo = options?.manualDocNo;
 
     if (!finalDocNo) {
@@ -229,14 +240,9 @@ export async function createDocument(
 
     transaction.set(newDocRef, docData);
 
-    const targetJobId = data.jobId;
     if (!options?.skipJobAttachment && targetJobId && typeof targetJobId === "string" && targetJobId.trim() !== "") {
       const jobRef = doc(db, 'jobs', targetJobId);
-
-      // Guard: ตรวจสอบว่าเอกสาร Job มีอยู่จริงก่อนทำการ update
-      // เพื่อป้องกัน "No document to update" error กรณีงานถูกลบ/ไม่มีในระบบ
-      const jobSnap = await transaction.get(jobRef);
-      if (jobSnap.exists()) {
+      if (jobSnap?.exists()) {
         // LOG ACTIVITY: Standardized log for document creation
         const activityRef = doc(collection(jobRef, 'activities'));
         transaction.set(activityRef, {
