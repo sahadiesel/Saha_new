@@ -38,11 +38,13 @@ export function resolveJobStatusAfterSubReturn(
     | "salesDocType"
     | "salesDocStatus"
     | "subHandoffStatusSnapshot"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
   >,
   withdrawals: WithdrawalLike[]
 ): JobStatus {
   const snapshot = job.subHandoffStatusSnapshot;
-  const hasWd = jobHasActiveWithdrawals(withdrawals, job);
+  const partsOk = jobPartsStepSatisfied(job, withdrawals);
 
   if (!jobHasLinkedQuotation(job)) {
     if (snapshot === "WAITING_QUOTATION") return "WAITING_QUOTATION";
@@ -61,7 +63,7 @@ export function resolveJobStatusAfterSubReturn(
     }
     return "WAITING_APPROVE";
   }
-  if (!hasWd) return "PENDING_PARTS";
+  if (!partsOk) return "PENDING_PARTS";
   return "IN_REPAIR_PROCESS";
 }
 
@@ -71,10 +73,23 @@ export function statusAfterSubDepartmentHandoff(current: JobStatus): JobStatus {
   return "IN_PROGRESS";
 }
 
+export function jobPartsStepSatisfied(
+  job: Pick<Job, "hasPartsWithdrawal" | "partsWithdrawalWaived">,
+  withdrawals: WithdrawalLike[]
+): boolean {
+  if (job.partsWithdrawalWaived) return true;
+  return jobHasActiveWithdrawals(withdrawals, job);
+}
+
 export function jobFinishForBillingBlockedReason(
   job: Pick<
     Job,
-    "status" | "salesDocId" | "salesDocType" | "salesDocStatus" | "hasPartsWithdrawal"
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
   >,
   withdrawals: WithdrawalLike[]
 ): string | null {
@@ -82,8 +97,8 @@ export function jobFinishForBillingBlockedReason(
   if (!jobCustomerApprovedForParts(job)) {
     return "ยังไม่ผ่านขั้นตอนลูกค้าอนุมัติ — ต้องเสนอราคาและรออนุมัติก่อนจบงาน";
   }
-  if (!jobHasActiveWithdrawals(withdrawals, job)) {
-    return "ยังไม่มีการเบิกอะไหล่ — ต้องเบิกอะไหล่และดำเนินการซ่อมก่อนแจ้งทำบิล";
+  if (!jobPartsStepSatisfied(job, withdrawals)) {
+    return "ยังไม่มีการเบิกอะไหล่ — ต้องเบิกอะไหล่และดำเนินการซ่อมก่อนแจ้งทำบิล (หรือเลือกไม่ต้องเบิกอะไหล่)";
   }
   return null;
 }
@@ -91,7 +106,12 @@ export function jobFinishForBillingBlockedReason(
 export function canJobFinishForBilling(
   job: Pick<
     Job,
-    "status" | "salesDocId" | "salesDocType" | "salesDocStatus" | "hasPartsWithdrawal"
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
   >,
   withdrawals: WithdrawalLike[]
 ): boolean {
@@ -101,7 +121,12 @@ export function canJobFinishForBilling(
 export function jobRequestMorePartsBlockedReason(
   job: Pick<
     Job,
-    "status" | "salesDocId" | "salesDocType" | "salesDocStatus" | "hasPartsWithdrawal"
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
   >,
   withdrawals: WithdrawalLike[]
 ): string | null {
@@ -109,8 +134,8 @@ export function jobRequestMorePartsBlockedReason(
   if (!jobCustomerApprovedForParts(job)) {
     return "ต้องมีใบเสนอราคาที่ลูกค้าอนุมัติแล้วก่อนแจ้งเบิกอะไหล่เพิ่ม";
   }
-  if (!jobHasActiveWithdrawals(withdrawals, job)) {
-    return "ต้องเบิกอะไหล่ครั้งแรกก่อนแจ้งเบิกเพิ่ม";
+  if (!jobPartsStepSatisfied(job, withdrawals)) {
+    return "ต้องเบิกอะไหล่ครั้งแรกก่อนแจ้งเบิกเพิ่ม (หรือเลือกไม่ต้องเบิกอะไหล่)";
   }
   return null;
 }
@@ -118,7 +143,12 @@ export function jobRequestMorePartsBlockedReason(
 export function jobPartsReadyBlockedReason(
   job: Pick<
     Job,
-    "status" | "salesDocId" | "salesDocType" | "salesDocStatus" | "hasPartsWithdrawal"
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
   >,
   withdrawals: WithdrawalLike[]
 ): string | null {
@@ -127,7 +157,14 @@ export function jobPartsReadyBlockedReason(
     return "ต้องรอลูกค้าอนุมัติก่อนเริ่มขั้นตอนอะไหล่";
   }
   if (!jobHasActiveWithdrawals(withdrawals, job)) {
-    return "ต้องมีใบเบิกอะไหล่ก่อนแจ้งว่าอะไหล่มาครบ";
+    return "ต้องมีใบเบิกอะไหล่ก่อนแจ้งว่าอะไหล่มาครบ (หรือเลือกไม่ต้องเบิกอะไหล่)";
   }
   return null;
+}
+
+export function canJobSkipPartsWithdrawal(
+  job: Pick<Job, "status" | "salesDocId" | "salesDocType" | "salesDocStatus">
+): boolean {
+  if (job.status !== "PENDING_PARTS") return false;
+  return jobCustomerApprovedForParts(job);
 }

@@ -186,6 +186,8 @@ export interface Job {
   subHandoffStatusSnapshot?: JobStatus;
   /** มีใบเบิกอะไหล่ที่ยังใช้งาน (ตั้งเมื่อสร้าง WITHDRAWAL) */
   hasPartsWithdrawal?: boolean;
+  /** งานไม่ต้องเบิกอะไหล่จากสต็อค — ข้ามขั้นตอนเบิก */
+  partsWithdrawalWaived?: boolean;
   status: JobStatus;
   description: string;
   officeNote?: string;

@@ -59,6 +59,7 @@ import {
   jobRequestMorePartsBlockedReason,
   jobPartsReadyBlockedReason,
   canJobFinishForBilling,
+  canJobSkipPartsWithdrawal,
 } from "@/lib/job-workflow";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
@@ -226,7 +227,8 @@ function JobDetailsPageContent() {
   const [isRestoring, setIsRestoring] = useState(false);
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
-  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS'>(null);
+  const [showNoPartsWithdrawalOptions, setShowNoPartsWithdrawalOptions] = useState(false);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS' | 'NO_PARTS_START_REPAIR' | 'NO_PARTS_FINISH_BILLING'>(null);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -284,6 +286,14 @@ function JobDetailsPageContent() {
   const canShowReturnToMain =
     isSubTask &&
     (job?.status === "IN_REPAIR_PROCESS" || job?.status === "RECEIVED");
+
+  useEffect(() => {
+    if (job?.status !== "PENDING_PARTS") {
+      setShowNoPartsWithdrawalOptions(false);
+    }
+  }, [job?.status]);
+
+  const canSkipPartsWithdrawal = !!job && canJobSkipPartsWithdrawal(job);
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
@@ -1049,6 +1059,62 @@ function JobDetailsPageContent() {
     batch.commit().then(() => toast({ title: "เปลี่ยนสถานะเป็นรอทำบิลเรียบร้อย" })).finally(() => setIsSubmittingNote(false));
   };
 
+  const handleNoPartsStartRepair = async () => {
+    if (!db || !profile || !job) return;
+    if (!canJobSkipPartsWithdrawal(job)) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, {
+      status: "IN_REPAIR_PROCESS",
+      partsWithdrawalWaived: true,
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), {
+      text: "ไม่ต้องเบิกอะไหล่ — แจ้งดำเนินการซ่อม",
+      userName: profile.displayName,
+      userId: profile.uid,
+      createdAt: serverTimestamp(),
+    });
+    batch
+      .commit()
+      .then(() => {
+        setShowNoPartsWithdrawalOptions(false);
+        toast({ title: "เริ่มดำเนินการซ่อมแล้ว", description: "ข้ามขั้นตอนเบิกอะไหล่จากสต็อค" });
+      })
+      .catch((e) => toast({ variant: "destructive", title: "Error", description: e.message }))
+      .finally(() => setIsSubmittingNote(false));
+  };
+
+  const handleNoPartsFinishBilling = async () => {
+    if (!db || !profile || !job) return;
+    if (!canJobSkipPartsWithdrawal(job)) return;
+    setIsSubmittingNote(true);
+    const jobDocRef = doc(db, "jobs", job.id);
+    const batch = writeBatch(db);
+    batch.update(jobDocRef, {
+      status: "DONE",
+      partsWithdrawalWaived: true,
+      lastActivityAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(jobDocRef, "activities")), {
+      text: "ไม่ต้องเบิกอะไหล่ — งานเสร็จแล้วแจ้งทำบิล",
+      userName: profile.displayName,
+      userId: profile.uid,
+      createdAt: serverTimestamp(),
+    });
+    batch
+      .commit()
+      .then(() => {
+        setShowNoPartsWithdrawalOptions(false);
+        toast({ title: "แจ้งทำบิลแล้ว", description: "สถานะเปลี่ยนเป็นรอทำบิล (DONE)" });
+      })
+      .catch((e) => toast({ variant: "destructive", title: "Error", description: e.message }))
+      .finally(() => setIsSubmittingNote(false));
+  };
+
   const handlePartsReady = async () => {
     if (!db || !profile || !job) return;
     const blocked = jobPartsReadyBlockedReason(job, withdrawals);
@@ -1124,8 +1190,20 @@ function JobDetailsPageContent() {
         confirmText: "ยืนยันแจ้งเบิกเพิ่ม",
         onConfirm: handleRequestMoreParts,
       },
+      NO_PARTS_START_REPAIR: {
+        title: "ยืนยันไม่ต้องเบิกอะไหล่",
+        description: "งานนี้ไม่ต้องเบิกอะไหล่จากสต็อค และพร้อมเริ่มดำเนินการซ่อมใช่ไหม?",
+        confirmText: "ยืนยันเริ่มซ่อม",
+        onConfirm: handleNoPartsStartRepair,
+      },
+      NO_PARTS_FINISH_BILLING: {
+        title: "ยืนยันไม่ต้องเบิกอะไหล่",
+        description: "งานนี้ไม่ต้องเบิกอะไหล่ และซ่อมเสร็จแล้ว พร้อมส่งไปทำบิลใช่ไหม?",
+        confirmText: "ยืนยันแจ้งทำบิล",
+        onConfirm: handleNoPartsFinishBilling,
+      },
     } as const;
-  }, [handleApproveJob, handleFinishJob, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
+  }, [handleApproveJob, handleFinishJob, handleNoPartsFinishBilling, handleNoPartsStartRepair, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -1699,6 +1777,57 @@ function JobDetailsPageContent() {
                         </Button>
                       );
                     })()}
+
+                    {job.status === "PENDING_PARTS" && canSkipPartsWithdrawal && (
+                      <div className="space-y-2 rounded-md border border-dashed border-amber-300/80 bg-amber-50/50 p-2">
+                        {!showNoPartsWithdrawalOptions ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full border-amber-600 text-amber-700 hover:bg-amber-50 font-bold"
+                            onClick={() => setShowNoPartsWithdrawalOptions(true)}
+                            disabled={isSubmittingNote}
+                          >
+                            <Ban className="mr-2 h-4 w-4" />
+                            ไม่ต้องเบิกอะไหล่
+                          </Button>
+                        ) : (
+                          <>
+                            <p className="text-[10px] text-center text-amber-800 font-medium px-1">
+                              เลือกขั้นตอนถัดไป (ไม่เบิกจากสต็อค)
+                            </p>
+                            <Button
+                              type="button"
+                              className="w-full bg-indigo-600 hover:bg-indigo-700 font-bold"
+                              onClick={() => setStatusConfirmAction("NO_PARTS_START_REPAIR")}
+                              disabled={isSubmittingNote}
+                            >
+                              <Play className="mr-2 h-4 w-4" />
+                              1. แจ้งดำเนินการซ่อม
+                            </Button>
+                            <Button
+                              type="button"
+                              className="w-full bg-green-600 hover:bg-green-700 font-bold"
+                              onClick={() => setStatusConfirmAction("NO_PARTS_FINISH_BILLING")}
+                              disabled={isSubmittingNote}
+                            >
+                              <CheckCircle className="mr-2 h-4 w-4" />
+                              2. งานเสร็จแล้วแจ้งทำบิล
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="w-full text-xs text-muted-foreground"
+                              onClick={() => setShowNoPartsWithdrawalOptions(false)}
+                              disabled={isSubmittingNote}
+                            >
+                              ยกเลิก
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {/* Request More Parts (Only when In Repair) */}
                     {job.status === 'IN_REPAIR_PROCESS' && (
