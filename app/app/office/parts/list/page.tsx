@@ -164,7 +164,7 @@ export default function PartsInventoryPage() {
   , [db]);
   const { data: locations } = useCollection<PartLocation>(locationsQuery);
 
-  const canManage = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'PURCHASING';
+  const canManage = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.department === 'PURCHASING' || profile?.department === 'OFFICE';
 
   const form = useForm<PartFormData>({
     resolver: zodResolver(partSchema),
