@@ -252,8 +252,13 @@ export async function createDocument(
           createdAt: serverTimestamp(),
         });
 
-        // For withdrawals, we don't necessarily want to change status to WAITING_APPROVE
-        if (docType !== 'WITHDRAWAL') {
+        if (docType === 'WITHDRAWAL') {
+          transaction.update(jobRef, {
+            hasPartsWithdrawal: true,
+            lastActivityAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
           const jobSalesPatch = {
             salesDocId: docId,
             salesDocNo: finalDocNo,

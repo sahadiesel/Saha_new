@@ -52,6 +52,14 @@ import { restoreJobFromArchive, JOB_RESTORE_STATUS_OPTIONS } from "@/firebase/jo
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 import { jobDisplayRef } from "@/lib/job-display";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
+import {
+  statusAfterSubDepartmentHandoff,
+  resolveJobStatusAfterSubReturn,
+  jobFinishForBillingBlockedReason,
+  jobRequestMorePartsBlockedReason,
+  jobPartsReadyBlockedReason,
+  canJobFinishForBilling,
+} from "@/lib/job-workflow";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
 
@@ -90,14 +98,6 @@ const getStatusStyles = (status: Job['status']) => {
     case 'CLOSED': return 'bg-slate-400 text-white border-slate-500 hover:bg-slate-400';
     default: return 'bg-secondary text-secondary-foreground';
   }
-}
-
-/** หลังส่งงานข้ามแผนก — คงสายซ่อม/อะไหล่ ไม่รีเซ็ตเป็นรอรับงาน */
-function statusAfterSubDepartmentHandoff(current: JobStatus): JobStatus {
-  if (current === "IN_REPAIR_PROCESS" || current === "PENDING_PARTS") return current;
-  if (current === "IN_PROGRESS") return "IN_REPAIR_PROCESS";
-  if (current === "WAITING_QUOTATION" || current === "WAITING_APPROVE") return current;
-  return "RECEIVED";
 }
 
 const compressImageIfNeeded = async (file: File): Promise<File> => {
@@ -263,6 +263,27 @@ function JobDetailsPageContent() {
     [job, relatedDocuments.QUOTATION]
   );
   const hasQuotation = !!quotationEditId;
+
+  const finishJobBlockedReason = useMemo(
+    () => (job ? jobFinishForBillingBlockedReason(job, withdrawals) : null),
+    [job, withdrawals]
+  );
+  const requestMorePartsBlockedReason = useMemo(
+    () => (job ? jobRequestMorePartsBlockedReason(job, withdrawals) : null),
+    [job, withdrawals]
+  );
+  const partsReadyBlockedReason = useMemo(
+    () => (job ? jobPartsReadyBlockedReason(job, withdrawals) : null),
+    [job, withdrawals]
+  );
+  const canShowFinishJob =
+    !!job &&
+    job.status === "IN_REPAIR_PROCESS" &&
+    !isSubTask &&
+    canJobFinishForBilling(job, withdrawals);
+  const canShowReturnToMain =
+    isSubTask &&
+    (job?.status === "IN_REPAIR_PROCESS" || job?.status === "RECEIVED");
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
@@ -794,6 +815,7 @@ function JobDetailsPageContent() {
       department: subTransferDept,
       mainDepartment: mainDept,
       subTaskHandoffSource: job.department,
+      subHandoffStatusSnapshot: job.status,
       status: nextStatus,
       assigneeUid: null,
       assigneeName: null,
@@ -815,11 +837,13 @@ function JobDetailsPageContent() {
     if (!db || !profile || !job || !job.mainDepartment) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
+    const nextStatus = resolveJobStatusAfterSubReturn(job, withdrawals);
     const batch = writeBatch(db);
     batch.update(jobDocRef, {
       department: job.mainDepartment,
-      status: "IN_REPAIR_PROCESS",
+      status: nextStatus,
       subTaskHandoffSource: deleteField(),
+      subHandoffStatusSnapshot: deleteField(),
       assigneeUid: null,
       assigneeName: null,
       lastActivityAt: serverTimestamp(),
@@ -835,13 +859,14 @@ function JobDetailsPageContent() {
     if (!db || !profile || !job?.subTaskHandoffSource) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
+    const nextStatus = resolveJobStatusAfterSubReturn(job, withdrawals);
     const batch = writeBatch(db);
     const back = job.subTaskHandoffSource;
     const from = job.department;
     batch.update(jobDocRef, {
       department: back,
       subTaskHandoffSource: from,
-      status: "IN_REPAIR_PROCESS",
+      status: nextStatus,
       assigneeUid: null,
       assigneeName: null,
       lastActivityAt: serverTimestamp(),
@@ -863,6 +888,11 @@ function JobDetailsPageContent() {
   const handleFinishJob = async () => {
     if (!db || !profile || !job) return;
     if (job.status !== "IN_REPAIR_PROCESS") return;
+    const blocked = jobFinishForBillingBlockedReason(job, withdrawals);
+    if (blocked) {
+      toast({ variant: "destructive", title: "ยังจบงานไม่ได้", description: blocked });
+      return;
+    }
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -901,6 +931,11 @@ function JobDetailsPageContent() {
 
   const handleRequestMoreParts = async () => {
     if (!db || !profile || !job) return;
+    const blocked = jobRequestMorePartsBlockedReason(job, withdrawals);
+    if (blocked) {
+      toast({ variant: "destructive", title: "แจ้งเบิกเพิ่มไม่ได้", description: blocked });
+      return;
+    }
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -1016,6 +1051,11 @@ function JobDetailsPageContent() {
 
   const handlePartsReady = async () => {
     if (!db || !profile || !job) return;
+    const blocked = jobPartsReadyBlockedReason(job, withdrawals);
+    if (blocked) {
+      toast({ variant: "destructive", title: "ยังเริ่มซ่อมไม่ได้", description: blocked });
+      return;
+    }
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -1551,9 +1591,21 @@ function JobDetailsPageContent() {
 
                     {/* Parts Ready for PENDING_PARTS */}
                     {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
+                      partsReadyBlockedReason ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full border-blue-600/40 text-blue-600/60 cursor-not-allowed font-bold"
+                          disabled
+                          title={partsReadyBlockedReason}
+                        >
+                          <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
+                        </Button>
+                      ) : (
                         <Button className="w-full bg-blue-600 hover:bg-blue-700 font-bold" onClick={() => setStatusConfirmAction('PARTS_READY')} disabled={isSubmittingNote}>
                             <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
                         </Button>
+                      )
                     )}
 
                     {/* Create / edit quotation while waiting for quote */}
@@ -1589,8 +1641,7 @@ function JobDetailsPageContent() {
                     )}
 
                     {/* Finish / Return to Main */}
-                    {(['IN_REPAIR_PROCESS'].includes(job.status) ||
-                      (isSubTask && job.status === 'RECEIVED')) && (
+                    {(canShowFinishJob || canShowReturnToMain) && (
                         <Button 
                           onClick={() => setStatusConfirmAction(isSubTask ? 'RETURN_TO_MAIN' : 'FINISH_JOB')} 
                           disabled={isSubmittingNote} 
@@ -1600,8 +1651,11 @@ function JobDetailsPageContent() {
                             {isSubTask ? "ส่งงานกลับแผนกหลัก" : "งานเสร็จแจ้งทำบิล"}
                         </Button>
                     )}
-
-
+                    {!isSubTask && job.status === 'IN_REPAIR_PROCESS' && finishJobBlockedReason && (
+                      <p className="text-[10px] text-muted-foreground text-center leading-snug px-1">
+                        {finishJobBlockedReason}
+                      </p>
+                    )}
 
                     {showReturnToHandoff && (
                       <Button
@@ -1648,6 +1702,18 @@ function JobDetailsPageContent() {
 
                     {/* Request More Parts (Only when In Repair) */}
                     {job.status === 'IN_REPAIR_PROCESS' && (
+                      requestMorePartsBlockedReason ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full border-amber-600/40 text-amber-600/60 cursor-not-allowed font-bold"
+                          disabled
+                          title={requestMorePartsBlockedReason}
+                        >
+                          <PlusCircle className="mr-2 h-4 w-4" />
+                          แจ้งเบิกอะไหล่เพิ่ม
+                        </Button>
+                      ) : (
                         <Button 
                           variant="outline"
                           onClick={() => setStatusConfirmAction('REQUEST_MORE_PARTS')}
@@ -1657,6 +1723,7 @@ function JobDetailsPageContent() {
                             <PlusCircle className="mr-2 h-4 w-4" /> 
                             แจ้งเบิกอะไหล่เพิ่ม
                         </Button>
+                      )
                     )}
 
                     {/* Sub-Transfer — เฉพาะกำลังตรวจสอบ ที่แผนกหลัก */}

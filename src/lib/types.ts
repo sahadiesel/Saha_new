@@ -182,6 +182,10 @@ export interface Job {
   mainDepartment?: JobDepartment; // Added to track owner department
   /** แผนกที่ส่งงานมาถึงแผนกปัจจุบัน (งานย่อยข้ามแผนก) — ใช้ปุ่มส่งกลับหนึ่งขั้น */
   subTaskHandoffSource?: JobDepartment;
+  /** สถานะงานก่อนส่งข้ามแผนก — ใช้คืนขั้นตอนเมื่อส่งกลับแผนกหลัก */
+  subHandoffStatusSnapshot?: JobStatus;
+  /** มีใบเบิกอะไหล่ที่ยังใช้งาน (ตั้งเมื่อสร้าง WITHDRAWAL) */
+  hasPartsWithdrawal?: boolean;
   status: JobStatus;
   description: string;
   officeNote?: string;

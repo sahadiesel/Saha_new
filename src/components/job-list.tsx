@@ -100,6 +100,7 @@ import {
   customerPortalStaleAgeBadgeClass,
 } from "@/lib/customer-job-portal-ui";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
+import { canJobFinishForBilling } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId } from "@/lib/job-quotation";
 
 const getStatusStyles = (status: Job['status']) => {
@@ -700,7 +701,7 @@ export function JobList({
                     );
                   })()}
 
-                  {job.status === 'IN_REPAIR_PROCESS' && (
+                  {job.status === 'IN_REPAIR_PROCESS' && canJobFinishForBilling(job, []) && (
                     <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'FINISH_JOB', job })} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
                   )}
 
