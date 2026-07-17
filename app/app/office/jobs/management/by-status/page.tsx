@@ -42,11 +42,15 @@ function ByStatusContent() {
       return ["quotation", "waiting-approve", "pending-parts", "in-repair", "done", "pickup", "waiting-payment"];
     }
 
+    // Accounting HR Manager — full office tab access when using office menu
+    if (userRole === 'MANAGER' && userDept === 'ACCOUNTING_HR') {
+      return ["quotation", "waiting-approve", "pending-parts", "in-repair", "done", "pickup"];
+    }
+
     // Department-based restrictions
     switch (userDept) {
       case 'OFFICE':
-        // Hide "waiting-payment" for office department
-        return ["quotation", "waiting-approve", "in-repair", "done", "pickup"];
+        return ["quotation", "waiting-approve", "pending-parts", "in-repair", "done", "pickup"];
       case 'PURCHASING':
         return ["pending-parts"];
       case 'ACCOUNTING_HR':

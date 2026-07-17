@@ -541,9 +541,9 @@ export function AppNav({ onLinkClick }: { onLinkClick?: () => void }) {
             return ["MANAGEMENT", "OFFICE", "PURCHASING", "ACCOUNTING_HR"];
         }
         
-        // If Accounting/HR Manager, show both Purchasing and Accounting/HR
+        // Accounting/HR Manager — เมนูแผนกออฟฟิศ + จัดซื้อ + บัญชี/บุคคล
         if (profile.department === 'ACCOUNTING_HR' && profile.role === 'MANAGER') {
-            return ["PURCHASING", "ACCOUNTING_HR"];
+            return ["OFFICE", "PURCHASING", "ACCOUNTING_HR"];
         }
         
         // Staff (and Managers in specific departments) see ONLY their assigned department
