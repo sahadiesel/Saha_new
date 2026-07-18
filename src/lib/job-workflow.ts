@@ -196,3 +196,21 @@ export function jobNeedsInitialPartsAction(
   if (!jobCustomerApprovedForParts(job)) return false;
   return !jobPartsStepSatisfied(job, withdrawals);
 }
+
+/** มีใบเบิกแล้วแต่ยังรอจัดอะไหล่เพิ่ม — ต้องไปหน้าเบิก/แก้ไขใบเบิก */
+export function jobNeedsAdditionalPartsWithdrawal(
+  job: Pick<
+    Job,
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
+  >,
+  withdrawals: WithdrawalLike[] = []
+): boolean {
+  if (job.status !== "PENDING_PARTS") return false;
+  if (!jobCustomerApprovedForParts(job)) return false;
+  return jobPartsStepSatisfied(job, withdrawals);
+}

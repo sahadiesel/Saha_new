@@ -61,6 +61,7 @@ import {
   canJobFinishForBilling,
   canJobSkipPartsWithdrawal,
   jobNeedsInitialPartsAction,
+  jobNeedsAdditionalPartsWithdrawal,
   jobPartsStepSatisfied,
 } from "@/lib/job-workflow";
 
@@ -296,6 +297,8 @@ function JobDetailsPageContent() {
   }, [job, withdrawals]);
 
   const needsInitialPartsAction = !!job && jobNeedsInitialPartsAction(job, withdrawals);
+  const needsAdditionalPartsWithdrawal =
+    !!job && jobNeedsAdditionalPartsWithdrawal(job, withdrawals);
   const canSkipPartsWithdrawal = needsInitialPartsAction;
 
   const activitiesQuery = useMemo(() => {
@@ -963,7 +966,10 @@ function JobDetailsPageContent() {
       userId: profile.uid, 
       createdAt: serverTimestamp() 
     });
-    batch.commit().then(() => toast({ title: "ส่งแจ้งเบิกอะไหล่เพิ่มแล้ว" })).finally(() => setIsSubmittingNote(false));
+    batch.commit().then(() => {
+      toast({ title: "ส่งแจ้งเบิกอะไหล่เพิ่มแล้ว" });
+      router.push(`/app/office/parts/withdraw/new?jobId=${job.id}`);
+    }).finally(() => setIsSubmittingNote(false));
   };
 
   const handleRevertJob = async () => {
@@ -1635,7 +1641,7 @@ function JobDetailsPageContent() {
                         {withdrawals.map(wd => (
                             <div key={wd.id} className="flex items-center gap-2">
                                 <Button asChild variant="link" className="p-0 h-auto font-medium">
-                                    <Link href={`/app/documents/${wd.id}`}>{wd.docNo}</Link>
+                                    <Link href={`/app/office/parts/withdraw/new?editDocId=${wd.id}`}>{wd.docNo}</Link>
                                 </Button>
                                 <Badge variant="outline" className="text-[8px] px-1 h-4">
                                     {docStatusLabel(wd.status, 'WITHDRAWAL')}
@@ -1675,7 +1681,20 @@ function JobDetailsPageContent() {
 
                     {/* Parts Ready for PENDING_PARTS */}
                     {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (
-                      partsReadyBlockedReason ? (
+                      <>
+                      {needsAdditionalPartsWithdrawal && (
+                        <Button
+                          asChild
+                          variant="outline"
+                          className="w-full border-blue-600 text-blue-600 hover:bg-blue-50 font-bold"
+                        >
+                          <Link href={`/app/office/parts/withdraw/new?jobId=${job.id}`}>
+                            <ClipboardList className="mr-2 h-4 w-4" />
+                            เบิกอะไหล่เพิ่ม / แก้ไขใบเบิก
+                          </Link>
+                        </Button>
+                      )}
+                      {partsReadyBlockedReason ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -1689,7 +1708,8 @@ function JobDetailsPageContent() {
                         <Button className="w-full bg-blue-600 hover:bg-blue-700 font-bold" onClick={() => setStatusConfirmAction('PARTS_READY')} disabled={isSubmittingNote}>
                             <PackageCheck className="mr-2 h-4 w-4" /> อะไหล่มาครบแล้ว (เริ่มซ่อม)
                         </Button>
-                      )
+                      )}
+                      </>
                     )}
 
                     {/* Create / edit quotation while waiting for quote */}
