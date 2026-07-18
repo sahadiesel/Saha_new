@@ -442,7 +442,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         const js = await getDoc(doc(db, "jobs", data.refId));
         if (js.exists()) jobForCheck = { id: js.id, ...js.data() } as Job;
       }
-      if (jobForCheck && !canJobWithdrawParts(jobForCheck)) {
+      if (jobForCheck && !isEditingIssued && !canJobWithdrawParts(jobForCheck)) {
         toast({
           variant: "destructive",
           title: "ยังเบิกอะไหล่ไม่ได้",
@@ -619,8 +619,16 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
       }
 
       toast({ 
-          title: isDraft ? "บันทึกฉบับร่างสำเร็จ" : "สร้างใบเบิกอะไหล่สำเร็จ", 
-          description: isDraft ? "ข้อมูลถูกบันทึกแล้วแต่ยังไม่มีการตัดสต็อกสินค้าค่ะ" : "สต็อกถูกหักและเอกสารบันทึกเรียบร้อยแล้วค่ะ" 
+          title: isDraft
+            ? "บันทึกฉบับร่างสำเร็จ"
+            : isEditingIssued
+              ? "บันทึกการแก้ไขสำเร็จ"
+              : "สร้างใบเบิกอะไหล่สำเร็จ", 
+          description: isDraft
+            ? "ข้อมูลถูกบันทึกแล้วแต่ยังไม่มีการตัดสต็อกสินค้าค่ะ"
+            : isEditingIssued
+              ? "สต็อกถูกปรับตามรายการที่เปลี่ยนแปลงแล้วค่ะ"
+              : "สต็อกถูกหักและเอกสารบันทึกเรียบร้อยแล้วค่ะ", 
       });
       router.push("/app/office/parts/withdraw");
     } catch (e: any) {
@@ -732,7 +740,9 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   };
 
   const filteredEntities = availableEntities.filter(e => e.name.toLowerCase().includes(customerSearch.toLowerCase()) || e.phone.includes(customerSearch));
-  const jobWithdrawSaveBlocked = watchedRefType === "JOB" && !!watchedRefId && !!jobWithdrawBlockedReason;
+  const isEditingIssued = isEditing && String(docToEdit?.status ?? "").toUpperCase() === "ISSUED";
+  const jobWithdrawSaveBlocked =
+    watchedRefType === "JOB" && !!watchedRefId && !!jobWithdrawBlockedReason && !isEditingIssued;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
@@ -740,7 +750,8 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}><ArrowLeft className="mr-2 h-4 w-4" /> กลับ</Button>
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex gap-2 w-full sm:w-auto flex-wrap justify-end">
+                {!isEditingIssued && (
                 <Button 
                     type="button" 
                     variant="secondary" 
@@ -751,6 +762,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     บันทึกฉบับร่าง
                 </Button>
+                )}
                 {watchedRefType === "JOB" ? (
                   <>
                     <Button
@@ -761,7 +773,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                       className="flex-1 sm:flex-none border-green-600 text-green-700 hover:bg-green-50 font-bold"
                     >
                       {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
-                      เบิกบางส่วน (ตัดสต็อก)
+                      {isEditingIssued ? "บันทึกการแก้ไข (เบิกเพิ่ม)" : "เบิกบางส่วน (ตัดสต็อก)"}
                     </Button>
                     <Button
                       type="button"
@@ -781,7 +793,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 font-bold"
                   >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
-                    สร้างรายการเบิก (ตัดสต็อก)
+                    {isEditingIssued ? "บันทึกการแก้ไข (ตัดสต็อก)" : "สร้างรายการเบิก (ตัดสต็อก)"}
                   </Button>
                 )}
             </div>
@@ -1038,6 +1050,11 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                 <Package className="h-4 w-4 text-primary" />
                 {watchedRefType === "JOB" ? "4." : "3."} รายการอะไหล่ที่เบิก (จำนวนจริง / ตัดสต็อก)
               </CardTitle>
+              <CardDescription>
+                {isEditingIssued
+                  ? "เพิ่มรายการใหม่ด้วยปุ่ม «เพิ่มรายการ» หรือแก้จำนวน — ระบบตัด/คืนสต็อกเฉพาะส่วนที่เปลี่ยน"
+                  : "เลือกอะไหล่จากสต็อคและระบุจำนวนที่เบิกจริง (ไม่จำเป็นต้องตรงกับใบเสนอราคาทุกรายการ)"}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="border rounded-md overflow-x-auto">

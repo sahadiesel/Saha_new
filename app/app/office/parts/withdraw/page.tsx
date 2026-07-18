@@ -549,13 +549,13 @@ export default function OfficePartsWithdrawPage() {
                                   <Eye className="mr-2 h-4 w-4" /> ดูรายละเอียด
                                 </DropdownMenuItem>
 
-                                {s === "DRAFT" && (
+                                {(s === "DRAFT" || s === "ISSUED") && (
                                   <DropdownMenuItem
                                     onClick={() =>
                                       router.push(`/app/office/parts/withdraw/new?editDocId=${w.id}`)
                                     }
                                   >
-                                    <Edit className="mr-2 h-4 w-4" /> แก้ไขฉบับร่าง
+                                    <Edit className="mr-2 h-4 w-4" /> แก้ไขรายการเบิก
                                   </DropdownMenuItem>
                                 )}
 
