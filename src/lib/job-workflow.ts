@@ -163,8 +163,36 @@ export function jobPartsReadyBlockedReason(
 }
 
 export function canJobSkipPartsWithdrawal(
-  job: Pick<Job, "status" | "salesDocId" | "salesDocType" | "salesDocStatus">
+  job: Pick<
+    Job,
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
+  >,
+  withdrawals: WithdrawalLike[] = []
 ): boolean {
-  if (job.status !== "PENDING_PARTS") return false;
-  return jobCustomerApprovedForParts(job);
+  return jobNeedsInitialPartsAction(job, withdrawals);
+}
+
+/** งานอนุมัติแล้วแต่ยังไม่เบิก/ไม่ได้ข้ามขั้นตอนเบิก — ต้องมีปุ่มเบิกหรือไม่เบิก */
+export function jobNeedsInitialPartsAction(
+  job: Pick<
+    Job,
+    | "status"
+    | "salesDocId"
+    | "salesDocType"
+    | "salesDocStatus"
+    | "hasPartsWithdrawal"
+    | "partsWithdrawalWaived"
+  >,
+  withdrawals: WithdrawalLike[] = []
+): boolean {
+  if (job.status !== "PENDING_PARTS" && job.status !== "IN_REPAIR_PROCESS") {
+    return false;
+  }
+  if (!jobCustomerApprovedForParts(job)) return false;
+  return !jobPartsStepSatisfied(job, withdrawals);
 }

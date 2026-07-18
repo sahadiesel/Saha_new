@@ -100,7 +100,7 @@ import {
   customerPortalStaleAgeBadgeClass,
 } from "@/lib/customer-job-portal-ui";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
-import { canJobFinishForBilling } from "@/lib/job-workflow";
+import { canJobFinishForBilling, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId } from "@/lib/job-quotation";
 
 const getStatusStyles = (status: Job['status']) => {
@@ -674,7 +674,7 @@ export function JobList({
                     </div>
                   )}
                   
-                  {isMgmtOrOffice && job.status === 'PENDING_PARTS' && (() => {
+                  {isMgmtOrOffice && jobNeedsInitialPartsAction(job) && (() => {
                     const withdrawBlocked = jobWithdrawPartsBlockedReason(job);
                     if (withdrawBlocked) {
                       return (

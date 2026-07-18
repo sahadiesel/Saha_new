@@ -60,6 +60,8 @@ import {
   jobPartsReadyBlockedReason,
   canJobFinishForBilling,
   canJobSkipPartsWithdrawal,
+  jobNeedsInitialPartsAction,
+  jobPartsStepSatisfied,
 } from "@/lib/job-workflow";
 
 const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
@@ -288,12 +290,13 @@ function JobDetailsPageContent() {
     (job?.status === "IN_REPAIR_PROCESS" || job?.status === "RECEIVED");
 
   useEffect(() => {
-    if (job?.status !== "PENDING_PARTS") {
+    if (!job || !jobNeedsInitialPartsAction(job, withdrawals)) {
       setShowNoPartsWithdrawalOptions(false);
     }
-  }, [job?.status]);
+  }, [job, withdrawals]);
 
-  const canSkipPartsWithdrawal = !!job && canJobSkipPartsWithdrawal(job);
+  const needsInitialPartsAction = !!job && jobNeedsInitialPartsAction(job, withdrawals);
+  const canSkipPartsWithdrawal = needsInitialPartsAction;
 
   const activitiesQuery = useMemo(() => {
     if (!db || !jobId) return null;
@@ -1061,16 +1064,19 @@ function JobDetailsPageContent() {
 
   const handleNoPartsStartRepair = async () => {
     if (!db || !profile || !job) return;
-    if (!canJobSkipPartsWithdrawal(job)) return;
+    if (!canJobSkipPartsWithdrawal(job, withdrawals)) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
-    batch.update(jobDocRef, {
-      status: "IN_REPAIR_PROCESS",
+    const updates: Record<string, unknown> = {
       partsWithdrawalWaived: true,
       lastActivityAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (job.status === "PENDING_PARTS") {
+      updates.status = "IN_REPAIR_PROCESS";
+    }
+    batch.update(jobDocRef, updates);
     batch.set(doc(collection(jobDocRef, "activities")), {
       text: "ไม่ต้องเบิกอะไหล่ — แจ้งดำเนินการซ่อม",
       userName: profile.displayName,
@@ -1089,7 +1095,7 @@ function JobDetailsPageContent() {
 
   const handleNoPartsFinishBilling = async () => {
     if (!db || !profile || !job) return;
-    if (!canJobSkipPartsWithdrawal(job)) return;
+    if (!canJobSkipPartsWithdrawal(job, withdrawals)) return;
     setIsSubmittingNote(true);
     const jobDocRef = doc(db, "jobs", job.id);
     const batch = writeBatch(db);
@@ -1747,8 +1753,8 @@ function JobDetailsPageContent() {
                       </Button>
                     )}
 
-                    {/* Withdraw Parts - Logic Split */}
-                    {job.status === 'PENDING_PARTS' && (() => {
+                    {/* Withdraw Parts — รอจัดอะไหล่ หรือกำลังซ่อมแต่ยังไม่เบิกครั้งแรก */}
+                    {needsInitialPartsAction && isMgmtOrOffice && (() => {
                       const withdrawBlocked = jobWithdrawPartsBlockedReason(job);
                       if (withdrawBlocked) {
                         return (
@@ -1778,7 +1784,7 @@ function JobDetailsPageContent() {
                       );
                     })()}
 
-                    {job.status === "PENDING_PARTS" && canSkipPartsWithdrawal && (
+                    {needsInitialPartsAction && canSkipPartsWithdrawal && (
                       <div className="space-y-2 rounded-md border border-dashed border-amber-300/80 bg-amber-50/50 p-2">
                         {!showNoPartsWithdrawalOptions ? (
                           <Button
@@ -1829,8 +1835,8 @@ function JobDetailsPageContent() {
                       </div>
                     )}
 
-                    {/* Request More Parts (Only when In Repair) */}
-                    {job.status === 'IN_REPAIR_PROCESS' && (
+                    {/* Request More Parts (Only when first withdrawal done or waived) */}
+                    {job.status === 'IN_REPAIR_PROCESS' && jobPartsStepSatisfied(job, withdrawals) && (
                       requestMorePartsBlockedReason ? (
                         <Button
                           type="button"

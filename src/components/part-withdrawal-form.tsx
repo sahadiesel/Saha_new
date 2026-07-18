@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { 
   Loader2, PlusCircle, Trash2, Save, ArrowLeft, Search, 
-  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList, Hash, ExternalLink, Users, PackageCheck
+  ScanBarcode, AlertCircle, Info, Package, User, FileText, ChevronsUpDown, X, ClipboardList, Hash, ExternalLink, Users, PackageCheck, Ban, Play, CheckCircle
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -47,6 +47,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Customer, Job, Part, Document as DocumentType, StoreSettings, UserProfile } from "@/lib/types";
 import { canJobWithdrawParts, jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
+import { canJobSkipPartsWithdrawal, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 
 function tsMs(t: unknown): number {
   if (t && typeof t === "object" && "toMillis" in t && typeof (t as { toMillis: () => number }).toMillis === "function") {
@@ -144,6 +145,8 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const scannerControlsRef = useRef<any>(null);
 
   const [stockConfirmOpen, setStockConfirmOpen] = useState(false);
+  const [showWaivePartsOptions, setShowWaivePartsOptions] = useState(false);
+  const [isWaivingParts, setIsWaivingParts] = useState(false);
   const [stockSummary, setStockSummary] = useState<{
     withdrawals: StockMovementRow[];
     returnsToStock: StockMovementRow[];
@@ -181,6 +184,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const watchedRefId = form.watch("refId");
   const watchedDocDate = form.watch("docDate");
   const jobWithdrawBlockedReason = linkedJob ? jobWithdrawPartsBlockedReason(linkedJob) : null;
+  const canWaivePartsWithdrawal = linkedJob ? jobNeedsInitialPartsAction(linkedJob) : false;
 
   // โหลดใบเสนอราคาที่ผูกกับงาน (แสดงรายการอ้างอิงด้านบน)
   useEffect(() => {
@@ -655,6 +659,78 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     await performWithdrawalSave(pending.data, false, pending.jobCompletion);
   };
 
+  const handleWaivePartsStartRepair = async () => {
+    if (!db || !profile || !linkedJob || !canJobSkipPartsWithdrawal(linkedJob)) return;
+    setIsWaivingParts(true);
+    try {
+      const jobRef = doc(db, "jobs", linkedJob.id);
+      const updates: Record<string, unknown> = {
+        partsWithdrawalWaived: true,
+        lastActivityAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      if (linkedJob.status === "PENDING_PARTS") {
+        updates.status = "IN_REPAIR_PROCESS";
+      }
+      const batch = writeBatch(db);
+      batch.update(jobRef, updates);
+      batch.set(doc(collection(db, "jobs", linkedJob.id, "activities")), {
+        text: "ไม่ต้องเบิกอะไหล่ — แจ้งดำเนินการซ่อม",
+        userName: profile.displayName,
+        userId: profile.uid,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      setShowWaivePartsOptions(false);
+      toast({
+        title: linkedJob.status === "PENDING_PARTS" ? "เริ่มดำเนินการซ่อมแล้ว" : "บันทึกแล้ว",
+        description: "ข้ามขั้นตอนเบิกอะไหล่จากสต็อค",
+      });
+      router.push(`/app/jobs/${linkedJob.id}`);
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "ล้มเหลว",
+        description: e instanceof Error ? e.message : "ไม่สามารถบันทึกได้",
+      });
+    } finally {
+      setIsWaivingParts(false);
+    }
+  };
+
+  const handleWaivePartsFinishBilling = async () => {
+    if (!db || !profile || !linkedJob || !canJobSkipPartsWithdrawal(linkedJob)) return;
+    setIsWaivingParts(true);
+    try {
+      const jobRef = doc(db, "jobs", linkedJob.id);
+      const batch = writeBatch(db);
+      batch.update(jobRef, {
+        status: "DONE",
+        partsWithdrawalWaived: true,
+        lastActivityAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(db, "jobs", linkedJob.id, "activities")), {
+        text: "ไม่ต้องเบิกอะไหล่ — งานเสร็จแล้วแจ้งทำบิล",
+        userName: profile.displayName,
+        userId: profile.uid,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
+      setShowWaivePartsOptions(false);
+      toast({ title: "แจ้งทำบิลแล้ว", description: "สถานะเปลี่ยนเป็นรอทำบิล (DONE)" });
+      router.push(`/app/jobs/${linkedJob.id}`);
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "ล้มเหลว",
+        description: e instanceof Error ? e.message : "ไม่สามารถบันทึกได้",
+      });
+    } finally {
+      setIsWaivingParts(false);
+    }
+  };
+
   const filteredEntities = availableEntities.filter(e => e.name.toLowerCase().includes(customerSearch.toLowerCase()) || e.phone.includes(customerSearch));
   const jobWithdrawSaveBlocked = watchedRefType === "JOB" && !!watchedRefId && !!jobWithdrawBlockedReason;
 
@@ -880,6 +956,78 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                     <span>{jobWithdrawBlockedReason}</span>
                   </div>
                 ) : null}
+              </CardContent>
+            </Card>
+          )}
+
+          {watchedRefType === "JOB" && watchedRefId && canWaivePartsWithdrawal && !isEditing && (
+            <Card className="border-dashed border-amber-300/80 bg-amber-50/40">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2 text-amber-900">
+                  <Ban className="h-4 w-4" />
+                  ไม่มีอะไหล่ที่ต้องเบิกจากสต็อค
+                </CardTitle>
+                <CardDescription>
+                  ถ้างานนี้ไม่ต้องตัดสต็อค สามารถข้ามขั้นตอนเบิกและดำเนินการต่อได้
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {!showWaivePartsOptions ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full border-amber-600 text-amber-800 hover:bg-amber-100 font-bold"
+                    onClick={() => setShowWaivePartsOptions(true)}
+                    disabled={isSubmitting || isWaivingParts}
+                  >
+                    <Ban className="mr-2 h-4 w-4" />
+                    ไม่ต้องเบิกอะไหล่
+                  </Button>
+                ) : (
+                  <>
+                    <p className="text-xs text-center text-amber-900 font-medium">
+                      เลือกขั้นตอนถัดไป (ไม่เบิกจากสต็อค)
+                    </p>
+                    <Button
+                      type="button"
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 font-bold"
+                      onClick={() => void handleWaivePartsStartRepair()}
+                      disabled={isSubmitting || isWaivingParts}
+                    >
+                      {isWaivingParts ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      {linkedJob?.status === "IN_REPAIR_PROCESS"
+                        ? "ยืนยันไม่เบิก — ดำเนินการซ่อมต่อ"
+                        : "แจ้งดำเนินการซ่อม"}
+                    </Button>
+                    <Button
+                      type="button"
+                      className="w-full bg-green-600 hover:bg-green-700 font-bold"
+                      onClick={() => void handleWaivePartsFinishBilling()}
+                      disabled={isSubmitting || isWaivingParts}
+                    >
+                      {isWaivingParts ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                      )}
+                      งานเสร็จแล้วแจ้งทำบิล
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-xs text-muted-foreground"
+                      onClick={() => setShowWaivePartsOptions(false)}
+                      disabled={isSubmitting || isWaivingParts}
+                    >
+                      ยกเลิก
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           )}
