@@ -764,7 +764,11 @@ function DocumentPageContent() {
     if (error || !document || !effectiveCustomer) return <div className="p-12 text-center space-y-4"><AlertCircle className="mx-auto h-12 w-12 text-destructive"/><h2 className="text-xl font-bold">ไม่พบเอกสาร</h2><Button variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2"/> กลับ</Button></div>;
 
     const showMultiCopy = ['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document.docType);
-    const showInformButton = document.docType === 'QUOTATION' && linkedJob?.status === 'PENDING_CUSTOMER_INFORM';
+    const showInformButton =
+        document.docType === 'QUOTATION' &&
+        linkedJob &&
+        document.status === 'FINAL' &&
+        (linkedJob.status === 'PENDING_CUSTOMER_INFORM' || linkedJob.status === 'WAITING_QUOTATION');
 
     const showResubmitQuotationButton =
         document.docType === 'QUOTATION' &&

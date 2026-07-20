@@ -101,7 +101,7 @@ import {
 } from "@/lib/customer-job-portal-ui";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 import { canJobFinishForBilling, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
-import { jobHasEditableQuotation, resolveJobQuotationEditId } from "@/lib/job-quotation";
+import { jobHasEditableQuotation, resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -620,6 +620,8 @@ export function JobList({
           const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
           const quotationEditId = resolveJobQuotationEditId(job, { draftQuotationByJobId });
           const hasQuotation = jobHasEditableQuotation(job, { draftQuotationByJobId });
+          const canInformQuotation = jobCanInformCustomerOfQuotation(job, { draftQuotationByJobId });
+          const quotationInformDocId = jobQuotationInformDocId(job, { draftQuotationByJobId });
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
           const ageDays = customerPortalJobAgeDays(job);
           const thumbUrl = job.photos?.find(Boolean);
@@ -659,9 +661,9 @@ export function JobList({
                 <div className="w-full flex flex-col gap-2">
                   {canAssignWork && job.status === 'RECEIVED' && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
                   
-                  {isMgmtOrOffice && job.status === 'PENDING_CUSTOMER_INFORM' && (
+                  {isMgmtOrOffice && canInformQuotation && quotationInformDocId && (
                     <Button asChild className="w-full h-9 bg-pink-600 hover:bg-pink-700 text-white font-bold">
-                      <Link href={`/app/office/documents/${job.salesDocId}${documentFromJobsByStatusQuery}`}>
+                      <Link href={`/app/office/documents/${quotationInformDocId}${documentFromJobsByStatusQuery}`}>
                         <Send className="mr-2 h-4 w-4" /> แจ้งราคาลูกค้า
                       </Link>
                     </Button>
@@ -710,7 +712,7 @@ export function JobList({
                   {isWorker && isOwnDept && job.status === 'RECEIVED' && (<Button onClick={() => setStatusConfirmAction({ type: 'ACCEPT_JOB', job })} disabled={isProcessing === job.id} className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold">{isProcessing === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle2 className="mr-2 h-4 w-4" />}รับงานนี้</Button>)}
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (
                     hasQuotation ? (
-                      <Button asChild className="w-full h-9 font-bold" variant="default">
+                      <Button asChild className="w-full h-9 font-bold" variant={canInformQuotation ? "outline" : "default"}>
                         <Link href={`/app/office/documents/quotation/new?editDocId=${quotationEditId}`}>
                           <FileText className="mr-2 h-4 w-4" />แก้ไขใบเสนอราคา
                         </Link>

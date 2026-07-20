@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
 import { isJobActivityHiddenFromTimeline } from "@/lib/job-activity-display";
-import { resolveJobQuotationEditId } from "@/lib/job-quotation";
+import { resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
 import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2, Play } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
@@ -268,6 +268,20 @@ function JobDetailsPageContent() {
     [job, relatedDocuments.QUOTATION]
   );
   const hasQuotation = !!quotationEditId;
+  const canInformQuotation = useMemo(
+    () =>
+      job
+        ? jobCanInformCustomerOfQuotation(job, { relatedQuotations: relatedDocuments.QUOTATION })
+        : false,
+    [job, relatedDocuments.QUOTATION]
+  );
+  const quotationInformDocId = useMemo(
+    () =>
+      job
+        ? jobQuotationInformDocId(job, { relatedQuotations: relatedDocuments.QUOTATION })
+        : null,
+    [job, relatedDocuments.QUOTATION]
+  );
 
   const finishJobBlockedReason = useMemo(
     () => (job ? jobFinishForBillingBlockedReason(job, withdrawals) : null),
@@ -1712,10 +1726,20 @@ function JobDetailsPageContent() {
                       </>
                     )}
 
+                    {/* แจ้งลูกค้า — ฉบับจริงแล้ว รอส่ง/ยืนยันแจ้ง */}
+                    {isMgmtOrOffice && canInformQuotation && quotationInformDocId && (
+                      <Button asChild className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold">
+                        <Link href={`/app/office/documents/${quotationInformDocId}`}>
+                          <Send className="mr-2 h-4 w-4" />
+                          แจ้งราคาลูกค้า
+                        </Link>
+                      </Button>
+                    )}
+
                     {/* Create / edit quotation while waiting for quote */}
                     {job.status === "WAITING_QUOTATION" && !isAlreadyBilled && isMgmtOrOffice && (
                       hasQuotation ? (
-                        <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold">
+                        <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold" variant={canInformQuotation ? "outline" : "default"}>
                           <Link href={`/app/office/documents/quotation/new?editDocId=${quotationEditId}`}>
                             <FileText className="mr-2 h-4 w-4" />
                             แก้ไขใบเสนอราคา
