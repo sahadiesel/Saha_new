@@ -467,6 +467,8 @@ export default function PartsInventoryPage() {
   }, [locations, locationSearch]);
 
   const isEditingMode = !!editingPart;
+  const metricColClass = "w-[92px] min-w-[92px] max-w-[92px] px-2 whitespace-nowrap";
+  const metricHeadClass = `${metricColClass} text-xs font-semibold`;
 
   return (
     <div className="space-y-6">
@@ -520,35 +522,52 @@ export default function PartsInventoryPage() {
         </CardHeader>
         <CardContent>
           <div className="border rounded-md overflow-x-auto">
-            <Table>
+            <Table className="table-fixed w-full min-w-[960px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-20">รูป</TableHead>
                   <TableHead>รหัส / ชื่อสินค้า</TableHead>
-                  <TableHead>หมวดหมู่</TableHead>
-                  <TableHead className="text-right">ราคาทุน</TableHead>
-                  <TableHead className="text-right">ราคาขาย</TableHead>
-                  <TableHead className="text-right">สต็อก</TableHead>
-                  <TableHead>ตำแหน่ง</TableHead>
-                  <TableHead className="text-right">จัดการ</TableHead>
+                  <TableHead className="w-[108px] max-w-[108px]">หมวดหมู่</TableHead>
+                  <TableHead className={`${metricHeadClass} text-right`}>ราคาทุน</TableHead>
+                  <TableHead className={`${metricHeadClass} text-right`}>ราคาขาย</TableHead>
+                  <TableHead className={`${metricHeadClass} text-right`}>สต็อก</TableHead>
+                  <TableHead className={`${metricHeadClass} text-right`}>Min Stock</TableHead>
+                  <TableHead className={`${metricHeadClass} text-center`}>ตำแหน่ง</TableHead>
+                  <TableHead className={`${metricHeadClass} text-center`}>จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? <TableRow><TableCell colSpan={8} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                {loading ? <TableRow><TableCell colSpan={9} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
                 : filteredParts.length > 0 ? filteredParts.map(part => (
                     <TableRow key={part.id}>
                       <TableCell><div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">{part.imageUrl ? <Image src={part.imageUrl} alt={part.name} fill className="object-cover" /> : <Box className="w-6 h-6 m-3 text-muted-foreground/30" />}</div></TableCell>
-                      <TableCell><p className="font-bold text-sm font-mono">{part.code}</p><p className="text-sm">{part.name}</p></TableCell>
-                      <TableCell><Badge variant="outline">{part.categoryNameSnapshot}</Badge></TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">฿{(part.costPrice || 0).toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-bold text-primary">฿{part.sellingPrice.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell><p className="font-bold text-sm font-mono">{part.code}</p><p className="text-sm line-clamp-2">{part.name}</p></TableCell>
+                      <TableCell className="w-[108px] max-w-[108px]">
+                        <Badge
+                          variant="outline"
+                          className="max-w-full truncate text-[10px] font-normal"
+                          title={part.categoryNameSnapshot}
+                        >
+                          {part.categoryNameSnapshot}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className={`${metricColClass} text-right font-mono text-xs text-muted-foreground`}>฿{(part.costPrice || 0).toLocaleString()}</TableCell>
+                      <TableCell className={`${metricColClass} text-right font-bold text-primary text-sm`}>฿{part.sellingPrice.toLocaleString()}</TableCell>
+                      <TableCell className={`${metricColClass} text-right`}>
                         <Badge variant={part.stockQty <= (part.minStock || 0) ? "destructive" : "secondary"}>
                           {part.stockQty}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs"><div className="flex items-center gap-1"><MapPin className="h-3 w-3" />{part.location || '-'}</div></TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className={`${metricColClass} text-right font-mono text-xs`}>
+                        {part.minStock ?? 0}
+                      </TableCell>
+                      <TableCell className={`${metricColClass} text-center text-xs`}>
+                        <div className="flex items-center justify-center gap-1 truncate" title={part.location || "-"}>
+                          <MapPin className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{part.location || "-"}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className={`${metricColClass} text-center`}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
@@ -558,7 +577,7 @@ export default function PartsInventoryPage() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  )) : <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการอะไหล่</TableCell></TableRow>}
+                  )) : <TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการอะไหล่</TableCell></TableRow>}
               </TableBody>
             </Table>
           </div>
