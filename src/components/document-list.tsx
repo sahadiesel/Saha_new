@@ -31,6 +31,7 @@ import {
   isQuotationDocNoSearch,
   docNoMatchesQuotationSearch,
 } from "@/lib/quotation-picker";
+import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 
 interface DocumentListProps {
   docType: DocType;
@@ -169,22 +170,18 @@ export function DocumentList({
     if (!canMarkQuotationOffered(d.status)) return;
     if (!db || !profile) return;
     try {
-      await updateDoc(doc(db, "documents", d.id), { status: "OFFERED", updatedAt: serverTimestamp() });
       if (d.jobId) {
-        const jobRef = doc(db, "jobs", d.jobId);
-        await updateDoc(jobRef, {
-          salesDocStatus: "OFFERED",
-          lastActivityAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        await informCustomerOfJobQuotation(db, {
+          jobId: d.jobId,
+          quotationDocId: d.id,
+          actorName: profile.displayName,
+          actorUid: profile.uid,
+          activityText: `ใบเสนอราคา ${d.docNo} — แจ้ง/เสนอราคาลูกค้าแล้ว — สถานะเป็นรอลูกค้าอนุมัติ`,
         });
-        await addDoc(collection(jobRef, "activities"), {
-          text: `ใบเสนอราคา ${d.docNo} — ทำเครื่องหมายว่าเสนอลูกค้าแล้ว`,
-          userName: profile.displayName,
-          userId: profile.uid,
-          createdAt: serverTimestamp(),
-        });
+      } else {
+        await updateDoc(doc(db, "documents", d.id), { status: "OFFERED", updatedAt: serverTimestamp() });
       }
-      toast({ title: "อัปเดตสถานะแล้ว", description: "บันทึกว่าเสนอราคาลูกค้าแล้ว" });
+      toast({ title: "อัปเดตสถานะแล้ว", description: "งานเปลี่ยนเป็นรอลูกค้าอนุมัติแล้ว" });
     } catch (e: any) {
       toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message });
     }

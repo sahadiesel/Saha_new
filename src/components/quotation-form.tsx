@@ -30,6 +30,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
+import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { DATA_LIMITS } from "@/lib/constants";
@@ -500,25 +501,21 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     if (!docToEdit || docToEdit.status !== "FINAL" || isCancelled) return;
     setIsProcessing(true);
     try {
-      await updateDoc(doc(db, "documents", editDocId), {
-        status: "OFFERED",
-        updatedAt: serverTimestamp(),
-      });
       if (docToEdit.jobId) {
-        const jobRef = doc(db, "jobs", docToEdit.jobId);
-        await updateDoc(jobRef, {
-          salesDocStatus: "OFFERED",
-          lastActivityAt: serverTimestamp(),
+        await informCustomerOfJobQuotation(db, {
+          jobId: docToEdit.jobId,
+          quotationDocId: editDocId,
+          actorName: profile.displayName,
+          actorUid: profile.uid,
+          activityText: `ใบเสนอราคา ${docToEdit.docNo} — แจ้ง/เสนอราคาลูกค้าแล้ว — สถานะเป็นรอลูกค้าอนุมัติ`,
+        });
+      } else {
+        await updateDoc(doc(db, "documents", editDocId), {
+          status: "OFFERED",
           updatedAt: serverTimestamp(),
         });
-        await addDoc(collection(jobRef, "activities"), {
-          text: `ใบเสนอราคา ${docToEdit.docNo} — ทำเครื่องหมายว่าเสนอลูกค้าแล้ว`,
-          userName: profile.displayName,
-          userId: profile.uid,
-          createdAt: serverTimestamp(),
-        });
       }
-      toast({ title: "อัปเดตสถานะแล้ว", description: "บันทึกว่าเสนอราคาลูกค้าแล้ว" });
+      toast({ title: "อัปเดตสถานะแล้ว", description: "งานเปลี่ยนเป็นรอลูกค้าอนุมัติแล้ว" });
     } catch (e: any) {
       toast({ variant: "destructive", title: "ไม่สำเร็จ", description: e.message });
     } finally {

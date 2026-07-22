@@ -14,7 +14,7 @@ export function jobCanInformCustomerOfQuotation(
 
   const issuedOnJob = jobQuotationIssued(job);
   const issuedInRelated = !!options?.relatedQuotations?.some(
-    (q) => q.id === docId && q.status === "FINAL"
+    (q) => q.id === docId && (q.status === "FINAL" || q.status === "OFFERED")
   );
   const issued = issuedOnJob || issuedInRelated;
   if (!issued) return false;

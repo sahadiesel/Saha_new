@@ -16,6 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFoo
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
 import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
+import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Document, AccountingAccount, Customer, Job } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
@@ -445,6 +446,31 @@ function DocumentView({
                                 colSpan={itemColCount}
                                 className="border-0 p-0 align-top print:border-0 [&_*]:text-black"
                             >
+                                {(isQuotation || isDeliveryNote) && !isWithdrawal ? (
+                                    <div className="mb-0 p-3 border rounded-md w-full grid gap-3 [grid-template-columns:minmax(0,3fr)_minmax(0,2fr)] items-start">
+                                        <div className="space-y-1 min-w-0 text-left">
+                                            <h4 className="font-bold text-primary uppercase mb-1 text-[10px] tracking-wider">
+                                                หมายเหตุ
+                                            </h4>
+                                            <div className="text-[11px] whitespace-pre-wrap leading-relaxed min-h-[3rem]">
+                                                {document.notes?.trim() ?? ""}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1 min-w-0">
+                                            <div className="flex justify-between text-sm"><span>รวมเป็นเงิน</span><span>{document.subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            <div className="flex justify-between text-sm"><span>ส่วนลด</span><span>{document.discountAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            <div className="flex justify-between font-bold text-sm"><span>ยอดหลังหักส่วนลด</span><span>{document.net.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            {document.withTax && <div className="flex justify-between text-sm"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>{document.vatAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>}
+                                            <Separator className="my-1" />
+                                            <div className="flex justify-between text-base font-bold text-primary uppercase"><span>ยอดสุทธิรวม</span><span>{document.grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</span></div>
+                                            <div className="text-right pt-1">
+                                                <span className="font-bold italic text-[11px]">
+                                                    {thaiBahtText(document.grandTotal)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
                                 <div className="grid grid-cols-2 gap-8 items-start">
                                     <div className="text-left space-y-4">
                                         {document.docType === "TAX_INVOICE" ? (
@@ -487,6 +513,7 @@ function DocumentView({
                                         </div>
                                     )}
                                 </div>
+                                )}
 
                                 <div className="grid grid-cols-2 gap-12 text-center text-[11px] pb-4 pt-10">
                                     <div className="flex flex-col items-center">
@@ -738,18 +765,11 @@ function DocumentPageContent() {
         if (!db || !document?.jobId || !profile) return;
         setIsProcessing(true);
         try {
-            const jRef = doc(db, 'jobs', document.jobId);
-            await updateDoc(jRef, {
-                status: 'WAITING_APPROVE',
-                quotationAwaitingOfficeResubmit: false,
-                lastActivityAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
-            });
-            await addDoc(collection(jRef, 'activities'), {
-                text: `ส่งเอกสาร/แจ้งลูกค้าแล้ว (โดย ${profile.displayName}) — สถานะเป็นรอลูกค้าอนุมัติ`,
-                userName: profile.displayName,
-                userId: profile.uid,
-                createdAt: serverTimestamp()
+            await informCustomerOfJobQuotation(db, {
+                jobId: document.jobId,
+                quotationDocId: document.id,
+                actorName: profile.displayName,
+                actorUid: profile.uid,
             });
             toast({ title: "อัปเดตสถานะสำเร็จ", description: "งานซ่อมเปลี่ยนเป็นสถานะ 'รอลูกค้าอนุมัติ' แล้วค่ะ" });
             setInformConfirmOpen(false);
@@ -767,7 +787,7 @@ function DocumentPageContent() {
     const showInformButton =
         document.docType === 'QUOTATION' &&
         linkedJob &&
-        document.status === 'FINAL' &&
+        (document.status === 'FINAL' || document.status === 'OFFERED') &&
         (linkedJob.status === 'PENDING_CUSTOMER_INFORM' || linkedJob.status === 'WAITING_QUOTATION');
 
     const showResubmitQuotationButton =
