@@ -102,6 +102,7 @@ import {
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 import { canJobFinishForBilling, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
+import { cancelJobAfterCustomerReject, reviseQuotationAfterCustomerReject } from "@/firebase/job-quotation-inform";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -158,7 +159,7 @@ export function JobList({
     ? `?from=jobs-by-status&status=${encodeURIComponent(byStatusTab)}`
     : "";
 
-  type QuickStatusAction = 'APPROVE_JOB' | 'REJECT_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
+  type QuickStatusAction = 'APPROVE_JOB' | 'FINISH_JOB' | 'ACCEPT_JOB';
 
   /** แสดงป้าย "ค้าง X วัน" บนการ์ดเมื่อดูตามแผนก หรือเปิดชัดเจนจากหน้าจัดการ */
   const effectiveShowSystemAgeBadge = showSystemAgeBadge || Boolean(department);
@@ -190,6 +191,7 @@ export function JobList({
   const [submitBillingRequired, setSubmitBillingRequired] = useState(false);
   const [submitDueDate, setSubmitDueDate] = useState('');
   const [statusConfirmAction, setStatusConfirmAction] = useState<{ type: QuickStatusAction; job: Job } | null>(null);
+  const [rejectChoiceJob, setRejectChoiceJob] = useState<Job | null>(null);
   const [officeCustomerChatReads, setOfficeCustomerChatReads] = useState<Record<string, unknown>>({});
   /** ใบเสนอราคาฉบับร่างที่ยังไม่ผูก salesDocId กับงาน (ข้อมูลเก่า) */
   const [draftQuotationByJobId, setDraftQuotationByJobId] = useState<Record<string, string>>({});
@@ -557,11 +559,6 @@ export function JobList({
         description: "ยืนยันว่าลูกค้าอนุมัติแล้ว และต้องการเปลี่ยนสถานะเป็นกำลังจัดอะไหล่ใช่ไหม?",
         confirmText: "ยืนยันอนุมัติ",
       },
-      REJECT_JOB: {
-        title: "ยืนยันไม่อนุมัติงาน",
-        description: "ยืนยันว่าลูกค้าไม่อนุมัติหรือยกเลิก และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
-        confirmText: "ยืนยันไม่อนุมัติ",
-      },
       FINISH_JOB: {
         title: "ยืนยันแจ้งงานเสร็จ",
         description: "เก็บรายละเอียดงานเรียบร้อยแล้ว และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
@@ -582,14 +579,50 @@ export function JobList({
       await handleUpdateStatus(job.id, 'PENDING_PARTS', 'ลูกค้าอนุมัติการซ่อมแล้ว', {
         salesDocStatus: 'APPROVED',
       });
-    } else if (type === 'REJECT_JOB') {
-      await handleUpdateStatus(job.id, 'DONE', 'ลูกค้าไม่อนุมัติการซ่อม - ส่งไป "รอทำบิล"');
     } else if (type === 'FINISH_JOB') {
       await handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล');
     } else if (type === 'ACCEPT_JOB') {
       await handleAcceptJob(job);
     }
     setStatusConfirmAction(null);
+  };
+
+  const handleReviseQuotationAfterReject = async (job: Job) => {
+    if (!db || !profile) return;
+    setIsProcessing(job.id);
+    try {
+      await reviseQuotationAfterCustomerReject(db, {
+        jobId: job.id,
+        actorName: profile.displayName,
+        actorUid: profile.uid,
+      });
+      setRejectChoiceJob(null);
+      toast({ title: "ส่งกลับรอเสนอราคาแล้ว", description: "แก้ไขใบเสนอราคาแล้วส่งให้ลูกค้าอนุมัติใหม่ได้" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: msg });
+    } finally {
+      setIsProcessing(null);
+    }
+  };
+
+  const handleCancelJobAfterReject = async (job: Job) => {
+    if (!db || !profile) return;
+    setIsProcessing(job.id);
+    try {
+      await cancelJobAfterCustomerReject(db, {
+        jobId: job.id,
+        actorName: profile.displayName,
+        actorUid: profile.uid,
+      });
+      setRejectChoiceJob(null);
+      toast({ title: "เปลี่ยนสถานะเป็นรอทำบิลเรียบร้อย" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: msg });
+    } finally {
+      setIsProcessing(null);
+    }
   };
 
   if (indexUrl) return (<div className="flex flex-col items-center justify-center p-12 text-center bg-muted/20 border-2 border-dashed rounded-lg"><AlertCircle className="h-12 w-12 text-destructive mb-4" /><h3 className="text-lg font-bold mb-2">ต้องสร้างดัชนี (Index) ก่อน</h3><Button asChild><a href={indexUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md"><ExternalLink className="h-4 w-4" />สร้าง Index</a></Button></div>);
@@ -677,7 +710,7 @@ export function JobList({
                   {canConfirmWaitingQuotationInList && job.status === 'WAITING_APPROVE' && (
                     <div className="grid grid-cols-2 gap-2">
                       <Button className="h-9 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px]" onClick={() => setStatusConfirmAction({ type: 'APPROVE_JOB', job })} disabled={!!isProcessing}><Check className="mr-1 h-3 w-3" />อนุมัติ</Button>
-                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => setStatusConfirmAction({ type: 'REJECT_JOB', job })} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ไม่อนุมัติ</Button>
+                      <Button variant="outline" className="h-9 border-destructive text-destructive hover:bg-destructive/10 text-[10px] font-bold" onClick={() => setRejectChoiceJob(job)} disabled={!!isProcessing}><Ban className="mr-1 h-3 w-3" />ลูกค้าไม่อนุมัติ</Button>
                     </div>
                   )}
                   
@@ -840,6 +873,42 @@ export function JobList({
           </div>
           
           <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setPaymentConfirmJob(null)} disabled={!!isProcessing}>ยกเลิก</Button><Button onClick={handleFinalPaymentConfirm} disabled={!!isProcessing || (remainingInDialog > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!rejectChoiceJob} onOpenChange={(open) => !open && !isProcessing && setRejectChoiceJob(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>ลูกค้าไม่อนุมัติ</DialogTitle>
+            <DialogDescription>เลือกวิธีดำเนินการต่อไป</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-11 justify-start whitespace-normal py-3 text-left text-xs font-bold"
+              disabled={!!isProcessing}
+              onClick={() => rejectChoiceJob && void handleReviseQuotationAfterReject(rejectChoiceJob)}
+            >
+              <FileText className="mr-2 h-4 w-4 shrink-0" />
+              1. แก้ไขราคาใหม่ — กลับไปรอเสนอราคา
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-11 justify-start whitespace-normal border-destructive py-3 text-left text-xs font-bold text-destructive hover:bg-destructive/10"
+              disabled={!!isProcessing}
+              onClick={() => rejectChoiceJob && void handleCancelJobAfterReject(rejectChoiceJob)}
+            >
+              <Ban className="mr-2 h-4 w-4 shrink-0" />
+              2. ยกเลิก (ไม่ซ่อม) — ส่งไปรอทำบิล
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setRejectChoiceJob(null)} disabled={!!isProcessing}>
+              ปิด
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

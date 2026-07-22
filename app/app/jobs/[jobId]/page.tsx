@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { JOB_DEPARTMENTS, type JobStatus, DATA_LIMITS } from "@/lib/constants";
 import { isJobActivityHiddenFromTimeline } from "@/lib/job-activity-display";
 import { resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
+import { cancelJobAfterCustomerReject, reviseQuotationAfterCustomerReject } from "@/firebase/job-quotation-inform";
 import { Loader2, User, Clock, X, Send, Save, AlertCircle, Camera, FileText, CheckCircle, ArrowLeft, Ban, PackageCheck, Check, UserCheck, Edit, Phone, Receipt, ImageIcon, BookOpen, Eye, Trash2, Forward, History, RotateCcw, ClipboardList, PlusCircle, Undo2, Play } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Job, JobActivity, JobDepartment, Document as DocumentType, DocType, UserProfile, Vendor } from "@/lib/types";
@@ -231,7 +232,8 @@ function JobDetailsPageContent() {
 
   const [isBillingSelectionOpen, setIsBillingSelectionOpen] = useState(false);
   const [showNoPartsWithdrawalOptions, setShowNoPartsWithdrawalOptions] = useState(false);
-  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'REJECT_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS' | 'NO_PARTS_START_REPAIR' | 'NO_PARTS_FINISH_BILLING'>(null);
+  const [statusConfirmAction, setStatusConfirmAction] = useState<null | 'REQUEST_QUOTATION' | 'FINISH_JOB' | 'RETURN_TO_MAIN' | 'RETURN_TO_HANDOFF' | 'APPROVE_JOB' | 'PARTS_READY' | 'REQUEST_MORE_PARTS' | 'NO_PARTS_START_REPAIR' | 'NO_PARTS_FINISH_BILLING'>(null);
+  const [isRejectChoiceOpen, setIsRejectChoiceOpen] = useState(false);
 
   const isSubTask = useMemo(() => job?.mainDepartment && job.department !== job.mainDepartment, [job]);
 
@@ -1063,23 +1065,45 @@ function JobDetailsPageContent() {
     batch.commit().then(() => toast({ title: "อนุมัติงานสำเร็จ" })).finally(() => setIsSubmittingNote(false));
   };
 
+  const handleReviseQuotationAfterReject = async () => {
+    if (!db || !profile || !job) return;
+    setIsSubmittingNote(true);
+    try {
+      await reviseQuotationAfterCustomerReject(db, {
+        jobId: job.id,
+        actorName: profile.displayName,
+        actorUid: profile.uid,
+      });
+      setIsRejectChoiceOpen(false);
+      toast({
+        title: "ส่งกลับรอเสนอราคาแล้ว",
+        description: "แก้ไขใบเสนอราคาแล้วส่งให้ลูกค้าอนุมัติใหม่ได้",
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: msg });
+    } finally {
+      setIsSubmittingNote(false);
+    }
+  };
+
   const handleRejectJob = async () => {
     if (!db || !profile || !job) return;
     setIsSubmittingNote(true);
-    const jobDocRef = doc(db, "jobs", job.id);
-    const batch = writeBatch(db);
-    batch.update(jobDocRef, { 
-      status: 'DONE', // Transition to DONE instead of CLOSED
-      lastActivityAt: serverTimestamp(), 
-      updatedAt: serverTimestamp() 
-    });
-    batch.set(doc(collection(jobDocRef, "activities")), { 
-      text: `ลูกค้าไม่อนุมัติการซ่อม / ยกเลิกงาน - ปรับสถานะเป็น "รอทำบิล" (DONE) เพื่อให้ฝ่ายออฟฟิศตรวจสอบค่าใช้จ่ายหรือออกบิล 0 บาทตามขั้นตอนค่ะ`, 
-      userName: profile.displayName, 
-      userId: profile.uid, 
-      createdAt: serverTimestamp() 
-    });
-    batch.commit().then(() => toast({ title: "เปลี่ยนสถานะเป็นรอทำบิลเรียบร้อย" })).finally(() => setIsSubmittingNote(false));
+    try {
+      await cancelJobAfterCustomerReject(db, {
+        jobId: job.id,
+        actorName: profile.displayName,
+        actorUid: profile.uid,
+      });
+      setIsRejectChoiceOpen(false);
+      toast({ title: "เปลี่ยนสถานะเป็นรอทำบิลเรียบร้อย" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: "destructive", title: "ไม่สำเร็จ", description: msg });
+    } finally {
+      setIsSubmittingNote(false);
+    }
   };
 
   const handleNoPartsStartRepair = async () => {
@@ -1198,12 +1222,6 @@ function JobDetailsPageContent() {
         confirmText: "ยืนยันอนุมัติ",
         onConfirm: handleApproveJob,
       },
-      REJECT_JOB: {
-        title: "ยืนยันลูกค้าไม่อนุมัติ/ยกเลิก",
-        description: "ยืนยันว่าลูกค้าไม่อนุมัติงานนี้ และต้องการเปลี่ยนสถานะเป็นรอทำบิลใช่ไหม?",
-        confirmText: "ยืนยันไม่อนุมัติ",
-        onConfirm: handleRejectJob,
-      },
       PARTS_READY: {
         title: "ยืนยันอะไหล่มาครบ",
         description: "ตรวจสอบว่าอะไหล่ครบแล้ว และพร้อมเริ่มดำเนินการซ่อมใช่ไหม?",
@@ -1229,7 +1247,7 @@ function JobDetailsPageContent() {
         onConfirm: handleNoPartsFinishBilling,
       },
     } as const;
-  }, [handleApproveJob, handleFinishJob, handleNoPartsFinishBilling, handleNoPartsStartRepair, handlePartsReady, handleRejectJob, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
+  }, [handleApproveJob, handleFinishJob, handleNoPartsFinishBilling, handleNoPartsStartRepair, handlePartsReady, handleRequestMoreParts, handleRequestQuotation, handleReturnToHandoff, handleReturnToMain]);
 
   const handleOpenReassignDialog = async () => {
     if (!db || !job) return;
@@ -1687,8 +1705,8 @@ function JobDetailsPageContent() {
                             <Button className="w-full bg-green-600 hover:bg-green-700 font-bold" onClick={() => setStatusConfirmAction('APPROVE_JOB')} disabled={isSubmittingNote}>
                                 <Check className="mr-2 h-4 w-4" /> อนุมัติเริ่มซ่อม
                             </Button>
-                            <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/10 font-bold" onClick={() => setStatusConfirmAction('REJECT_JOB')} disabled={isSubmittingNote}>
-                                <Ban className="mr-2 h-4 w-4" /> ลูกค้าไม่อนุมัติ/ยกเลิก
+                            <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/10 font-bold" onClick={() => setIsRejectChoiceOpen(true)} disabled={isSubmittingNote}>
+                                <Ban className="mr-2 h-4 w-4" /> ลูกค้าไม่อนุมัติ
                             </Button>
                         </>
                     )}
@@ -2096,6 +2114,42 @@ function JobDetailsPageContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={isRejectChoiceOpen} onOpenChange={(open) => !isSubmittingNote && setIsRejectChoiceOpen(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>ลูกค้าไม่อนุมัติ</DialogTitle>
+            <DialogDescription>เลือกวิธีดำเนินการต่อไป</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-11 justify-start whitespace-normal py-3 text-left font-bold"
+              disabled={isSubmittingNote}
+              onClick={() => void handleReviseQuotationAfterReject()}
+            >
+              <FileText className="mr-2 h-4 w-4 shrink-0" />
+              1. แก้ไขราคาใหม่ — กลับไปรอเสนอราคาและแก้ใบเสนอราคา
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-11 justify-start whitespace-normal border-destructive py-3 text-left font-bold text-destructive hover:bg-destructive/10"
+              disabled={isSubmittingNote}
+              onClick={() => void handleRejectJob()}
+            >
+              <Ban className="mr-2 h-4 w-4 shrink-0" />
+              2. ยกเลิก (ไม่ซ่อม) — ส่งไปรอทำบิล
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setIsRejectChoiceOpen(false)} disabled={isSubmittingNote}>
+              ปิด
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!statusConfirmAction} onOpenChange={(open) => !open && setStatusConfirmAction(null)}>
         <AlertDialogContent>
