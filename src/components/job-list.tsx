@@ -622,6 +622,11 @@ export function JobList({
           const hasQuotation = jobHasEditableQuotation(job, { draftQuotationByJobId });
           const canInformQuotation = jobCanInformCustomerOfQuotation(job, { draftQuotationByJobId });
           const quotationInformDocId = jobQuotationInformDocId(job, { draftQuotationByJobId });
+          const showInformQuotationButton =
+            canInformQuotation &&
+            !!quotationInformDocId &&
+            byStatusTab !== "waiting-approve" &&
+            job.status !== "WAITING_APPROVE";
           const isWaitingPickup = job.status === 'WAITING_CUSTOMER_PICKUP';
           const ageDays = customerPortalJobAgeDays(job);
           const thumbUrl = job.photos?.find(Boolean);
@@ -661,7 +666,7 @@ export function JobList({
                 <div className="w-full flex flex-col gap-2">
                   {canAssignWork && job.status === 'RECEIVED' && (<Button onClick={() => handleOpenAssignQuick(job)} className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-white font-bold"><UserCheck className="mr-2 h-4 w-4" />มอบหมายงาน</Button>)}
                   
-                  {isMgmtOrOffice && canInformQuotation && quotationInformDocId && (
+                  {isMgmtOrOffice && showInformQuotationButton && (
                     <Button asChild className="w-full h-9 bg-pink-600 hover:bg-pink-700 text-white font-bold">
                       <Link href={`/app/office/documents/${quotationInformDocId}${documentFromJobsByStatusQuery}`}>
                         <Send className="mr-2 h-4 w-4" /> แจ้งราคาลูกค้า

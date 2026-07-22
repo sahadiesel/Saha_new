@@ -132,8 +132,8 @@ function ByStatusContent() {
                                 searchTerm={searchTerm}
                                 byStatusTab={tab}
                                 status={
-                                    tab === "waiting-approve" ? ["PENDING_CUSTOMER_INFORM", "WAITING_APPROVE"] :
-                                    tab === "quotation" ? "WAITING_QUOTATION" :
+                                    tab === "waiting-approve" ? "WAITING_APPROVE" :
+                                    tab === "quotation" ? ["WAITING_QUOTATION", "PENDING_CUSTOMER_INFORM"] :
                                     tab === "pending-parts" ? "PENDING_PARTS" :
                                     tab === "in-repair" ? "IN_REPAIR_PROCESS" :
                                     tab === "done" ? "DONE" :
@@ -150,8 +150,8 @@ function ByStatusContent() {
                                     "ไม่มีงานที่รอรับเงิน"
                                 }
                                 emptyDescription={
-                                    tab === "quotation" ? "ไม่มีงานที่อยู่ในสถานะ WAITING_QUOTATION ในขณะนี้" :
-                                    tab === "waiting-approve" ? "ไม่มีงานที่อยู่ในสถานะ 'รอแจ้งลูกค้า' หรือ 'รอลูกค้าอนุมัติ' ในขณะนี้" :
+                                    tab === "quotation" ? "ไม่มีงานที่อยู่ในสถานะ 'รอเสนอราคา' หรือ 'รอแจ้งลูกค้า' ในขณะนี้" :
+                                    tab === "waiting-approve" ? "ไม่มีงานที่อยู่ในสถานะ 'รอลูกค้าอนุมัติ' ในขณะนี้" :
                                     tab === "pending-parts" ? "ไม่มีงานที่อยู่ในสถานะ PENDING_PARTS ในขณะนี้" :
                                     tab === "in-repair" ? "ยังไม่มีงานที่อยู่ในสถานะ 'กำลังดำเนินการซ่อม' ในขณะนี้" :
                                     tab === "done" ? "ยังไม่มีงานที่อยู่ในสถานะ 'DONE' รอทำบิล" :
