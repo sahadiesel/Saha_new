@@ -765,6 +765,10 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                     <Input type="number" step="any" className="w-32 text-right bg-background h-8" {...field} disabled={isCancelled || isProcessing} />
                   )}/>
                 </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">ยอดหลังหักส่วนลด</span>
+                  <span>{formatCurrency(form.watch('net'))}</span>
+                </div>
                 <div className="flex justify-between items-center py-2">
                   <FormField control={form.control} name="isVat" render={({ field }) => (
                     <div className="flex items-center space-x-2">

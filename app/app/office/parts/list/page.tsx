@@ -467,8 +467,8 @@ export default function PartsInventoryPage() {
   }, [locations, locationSearch]);
 
   const isEditingMode = !!editingPart;
-  const metricColClass = "w-[92px] min-w-[92px] max-w-[92px] px-2 whitespace-nowrap";
-  const metricHeadClass = `${metricColClass} text-xs font-semibold`;
+  const equalColClass = "w-[100px] min-w-[100px] max-w-[100px] px-2 whitespace-nowrap overflow-hidden";
+  const equalHeadClass = `${equalColClass} text-xs font-semibold`;
 
   return (
     <div className="space-y-6">
@@ -522,18 +522,23 @@ export default function PartsInventoryPage() {
         </CardHeader>
         <CardContent>
           <div className="border rounded-md overflow-x-auto">
-            <Table className="table-fixed w-full min-w-[960px]">
+            <Table className="table-fixed w-full min-w-[980px]">
+              <colgroup>
+                <col className="w-20" />
+                <col />
+                <col span={7} className="w-[100px]" />
+              </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-20">รูป</TableHead>
                   <TableHead>รหัส / ชื่อสินค้า</TableHead>
-                  <TableHead className="w-[108px] max-w-[108px]">หมวดหมู่</TableHead>
-                  <TableHead className={`${metricHeadClass} text-right`}>ราคาทุน</TableHead>
-                  <TableHead className={`${metricHeadClass} text-right`}>ราคาขาย</TableHead>
-                  <TableHead className={`${metricHeadClass} text-right`}>สต็อก</TableHead>
-                  <TableHead className={`${metricHeadClass} text-right`}>Min Stock</TableHead>
-                  <TableHead className={`${metricHeadClass} text-center`}>ตำแหน่ง</TableHead>
-                  <TableHead className={`${metricHeadClass} text-center`}>จัดการ</TableHead>
+                  <TableHead className={`${equalHeadClass} text-center`}>หมวดหมู่</TableHead>
+                  <TableHead className={`${equalHeadClass} text-right`}>ราคาทุน</TableHead>
+                  <TableHead className={`${equalHeadClass} text-right`}>ราคาขาย</TableHead>
+                  <TableHead className={`${equalHeadClass} text-right`}>สต็อก</TableHead>
+                  <TableHead className={`${equalHeadClass} text-right`}>Min Stock</TableHead>
+                  <TableHead className={`${equalHeadClass} text-center`}>ตำแหน่ง</TableHead>
+                  <TableHead className={`${equalHeadClass} text-center`}>จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -542,7 +547,7 @@ export default function PartsInventoryPage() {
                     <TableRow key={part.id}>
                       <TableCell><div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">{part.imageUrl ? <Image src={part.imageUrl} alt={part.name} fill className="object-cover" /> : <Box className="w-6 h-6 m-3 text-muted-foreground/30" />}</div></TableCell>
                       <TableCell><p className="font-bold text-sm font-mono">{part.code}</p><p className="text-sm line-clamp-2">{part.name}</p></TableCell>
-                      <TableCell className="w-[108px] max-w-[108px]">
+                      <TableCell className={`${equalColClass} text-center`}>
                         <Badge
                           variant="outline"
                           className="max-w-full truncate text-[10px] font-normal"
@@ -551,23 +556,23 @@ export default function PartsInventoryPage() {
                           {part.categoryNameSnapshot}
                         </Badge>
                       </TableCell>
-                      <TableCell className={`${metricColClass} text-right font-mono text-xs text-muted-foreground`}>฿{(part.costPrice || 0).toLocaleString()}</TableCell>
-                      <TableCell className={`${metricColClass} text-right font-bold text-primary text-sm`}>฿{part.sellingPrice.toLocaleString()}</TableCell>
-                      <TableCell className={`${metricColClass} text-right`}>
+                      <TableCell className={`${equalColClass} text-right font-mono text-xs text-muted-foreground`}>฿{(part.costPrice || 0).toLocaleString()}</TableCell>
+                      <TableCell className={`${equalColClass} text-right font-bold text-primary text-sm`}>฿{part.sellingPrice.toLocaleString()}</TableCell>
+                      <TableCell className={`${equalColClass} text-right`}>
                         <Badge variant={part.stockQty <= (part.minStock || 0) ? "destructive" : "secondary"}>
                           {part.stockQty}
                         </Badge>
                       </TableCell>
-                      <TableCell className={`${metricColClass} text-right font-mono text-xs`}>
+                      <TableCell className={`${equalColClass} text-right font-mono text-xs`}>
                         {part.minStock ?? 0}
                       </TableCell>
-                      <TableCell className={`${metricColClass} text-center text-xs`}>
+                      <TableCell className={`${equalColClass} text-center text-xs`}>
                         <div className="flex items-center justify-center gap-1 truncate" title={part.location || "-"}>
                           <MapPin className="h-3 w-3 shrink-0" />
                           <span className="truncate">{part.location || "-"}</span>
                         </div>
                       </TableCell>
-                      <TableCell className={`${metricColClass} text-center`}>
+                      <TableCell className={`${equalColClass} text-center`}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
