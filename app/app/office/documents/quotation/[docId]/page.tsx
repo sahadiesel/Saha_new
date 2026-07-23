@@ -103,6 +103,16 @@ function QuotationDetailPageContent() {
                                     <span className="text-muted-foreground">ส่วนลด:</span>
                                     <span>- {formatCurrency(document.discountAmount || 0)}</span>
                                 </div>
+                                <div className="flex justify-between w-full max-w-[300px] text-sm font-medium">
+                                    <span className="text-muted-foreground">ยอดหลังหักส่วนลด:</span>
+                                    <span>{formatCurrency(document.net)}</span>
+                                </div>
+                                {document.withTax && (
+                                    <div className="flex justify-between w-full max-w-[300px] text-sm">
+                                        <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม 7%:</span>
+                                        <span>{formatCurrency(document.vatAmount || 0)}</span>
+                                    </div>
+                                )}
                                 <Separator className="my-1 w-full max-w-[300px]" />
                                 <div className="flex justify-between w-full max-w-[300px] text-lg font-bold text-primary">
                                     <span>ยอดสุทธิรวม:</span>

@@ -30,6 +30,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
+import { createQuotationRevision } from "@/firebase/quotation-revision";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
@@ -354,6 +355,8 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
             const wasDraft = docToEdit?.status === "DRAFT";
             const upgradeToFinal = mode === "final" && wasDraft && !!docToEdit?.jobId;
 
+            let redirectDocId = editDocId;
+
             if (upgradeToFinal) {
               const jid = docToEdit.jobId;
               if (!jid) throw new Error("ไม่พบรหัสงานสำหรับผูกใบเสนอราคา");
@@ -382,6 +385,20 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
               }
               await batch.commit();
               toast({ title: "บันทึกราคาฉบับจริงแล้ว", description: "งานเข้าขั้นรอแจ้งลูกค้า — พร้อมดำเนินการตามระบบเดิม" });
+            } else if (mode === "final" && !wasDraft) {
+              if (!docToEdit) throw new Error("ไม่พบเอกสารที่แก้ไข");
+              const { docId, docNo, revisionNo } = await createQuotationRevision(
+                db,
+                editDocId,
+                docToEdit,
+                documentData,
+                profile
+              );
+              redirectDocId = docId;
+              toast({
+                title: "บันทึกการแก้ไขแล้ว",
+                description: `เลขที่ ${docNo} (ฉบับแก้ไขครั้งที่ ${revisionNo})`,
+              });
             } else {
               const patch: Record<string, unknown> = { ...documentData, updatedAt: serverTimestamp() };
               if (mode === "final" && wasDraft && !docToEdit?.jobId) {
@@ -414,7 +431,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                     : undefined,
               });
             }
-            router.push(`/app/office/documents/quotation/${editDocId}`);
+            router.push(`/app/office/documents/quotation/${redirectDocId}`);
         } else {
             if (mode === "draft") {
               const { docId } = await createDocument(db, "QUOTATION", documentData, profile, undefined, {

@@ -42,7 +42,11 @@ export function docNoMatchesQuotationSearch(docNo: string, rawTerm: string): boo
   const docCompact = docUpper.replace(/\s|-/g, "");
   if (docCompact.includes(q)) return true;
 
-  const seq = docNo.match(/-(\d+)$/)?.[1] || "";
+  const baseDocNo = docUpper.replace(/\s+R\d+$/i, "");
+  const baseCompact = baseDocNo.replace(/\s|-/g, "");
+  if (baseCompact.includes(q)) return true;
+
+  const seq = baseDocNo.match(/-(\d+)/)?.[1] || "";
   if (/^\d+$/.test(q) && seq) {
     if (seq.startsWith(q)) return true;
     if (q.length >= 3 && seq.includes(q)) return true;

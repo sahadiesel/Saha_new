@@ -197,7 +197,7 @@ export interface Job {
   assigneeName?: string;
   pickupDate?: string; // YYYY-MM-DD
   closedDate?: string; // YYYY-MM-DD
-  salesDocType?: 'DELIVERY_NOTE' | 'TAX_INVOICE';
+  salesDocType?: 'QUOTATION' | 'DELIVERY_NOTE' | 'TAX_INVOICE';
   salesDocId?: string;
   salesDocNo?: string;
   salesDocStatus?: string; // TRACKS: DRAFT, FINAL (ใบเสนอราคา), OFFERED, PENDING_REVIEW, APPROVED, PAID
@@ -605,6 +605,16 @@ export interface Document {
   };
   
   // Doc-specific fields
+  /** ใบเสนอราคา: id เอกสารต้นฉบับ (ไม่มี R) ในสาย revision */
+  quotationRootDocId?: string;
+  /** ใบเสนอราคา: เลขที่ฐานไม่มี suffix R */
+  quotationRootDocNo?: string;
+  /** ใบเสนอราคา: 0 = ฉบับจริงแรก, 1 = R1, … */
+  quotationRevisionNo?: number;
+  /** ใบเสนอราคา: id เอกสารที่ถูกแทนที่ด้วยฉบับใหม่ */
+  revisedFromDocId?: string;
+  /** ใบเสนอราคา: id ฉบับแก้ไขที่แทนที่เอกสารนี้ */
+  supersededByDocId?: string;
   expiryDate?: string; // For Quotation
   dueDate?: string; // For TaxInvoice
   paymentMethod?: string; // For Receipt (legacy / display)

@@ -1636,7 +1636,11 @@ function JobDetailsPageContent() {
                 <>
                   {JOB_REFERENCE_DOC_TYPES.map((docType) => {
                       const label = JOB_REFERENCE_DOC_LABELS[docType];
-                      const latestDoc = relatedDocuments[docType]?.[0];
+                      const docs = relatedDocuments[docType];
+                      const latestDoc =
+                        docType === "QUOTATION" && job?.salesDocId
+                          ? docs?.find((d) => d.id === job.salesDocId) ?? docs?.[0]
+                          : docs?.[0];
                       return (
                         <div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0">
                           <span className="text-muted-foreground pt-1">{label}:</span>
