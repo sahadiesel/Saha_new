@@ -42,6 +42,10 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
+import {
+  fetchDocumentsAwaitingReceipt,
+  isDocumentAwaitingReceipt,
+} from "@/lib/accounting-receipt-inbox";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -303,13 +307,36 @@ function AccountingInboxPageContent() {
     );
   }, [db, hasPermission]);
 
-  const approvedQuery = useMemo(() => {
+  const approvedReceiptQuery = useMemo(() => {
     if (!db || !hasPermission) return null;
     return query(
-        collection(db, "documents"),
-        where("status", "==", "APPROVED"),
-        where("docType", "in", ["TAX_INVOICE", "DEBIT_NOTE"]),
-        limit(100)
+      collection(db, "documents"),
+      where("status", "==", "APPROVED"),
+      where("docType", "in", ["TAX_INVOICE", "DEBIT_NOTE"]),
+      orderBy("updatedAt", "desc"),
+      limit(500)
+    );
+  }, [db, hasPermission]);
+
+  const unpaidDebitReceiptQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
+      collection(db, "documents"),
+      where("status", "==", "UNPAID"),
+      where("docType", "==", "DEBIT_NOTE"),
+      orderBy("updatedAt", "desc"),
+      limit(200)
+    );
+  }, [db, hasPermission]);
+
+  const legacyPaidTaxInvoiceQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
+      collection(db, "documents"),
+      where("status", "==", "PAID"),
+      where("docType", "==", "TAX_INVOICE"),
+      orderBy("updatedAt", "desc"),
+      limit(100)
     );
   }, [db, hasPermission]);
 
@@ -413,14 +440,86 @@ function AccountingInboxPageContent() {
   }, [pendingReviewByDocDateQuery, pendingReviewByUpdatedQuery, inboxActiveQuery, db]);
 
   useEffect(() => {
-    if (!approvedQuery || !db) return;
-    const unsubscribe = onSnapshot(approvedQuery, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as WithId<DocumentType>)).filter(d => !d.receiptDocId);
-      data.sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
-      setApprovedDocs(data);
-    });
-    return () => unsubscribe();
-  }, [approvedQuery, db]);
+    if (!db || !hasPermission) return;
+
+    let approvedChunk: WithId<DocumentType>[] = [];
+    let unpaidDebitChunk: WithId<DocumentType>[] = [];
+    let legacyPaidChunk: WithId<DocumentType>[] = [];
+
+    const publishFromSnapshots = () => {
+      const byId = new Map<string, WithId<DocumentType>>();
+      for (const row of [...approvedChunk, ...unpaidDebitChunk, ...legacyPaidChunk]) {
+        if (isDocumentAwaitingReceipt(row)) byId.set(row.id, row);
+      }
+      setApprovedDocs(
+        Array.from(byId.values()).sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""))
+      );
+    };
+
+    const mapSnap = (snap: { docs: { id: string; data: () => Record<string, unknown> }[] }) =>
+      snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
+
+    const onReceiptQueryError = (err: FirestoreError) => {
+      if (err.message?.includes("requires an index")) {
+        const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+      }
+    };
+
+    const unsubApproved = approvedReceiptQuery
+      ? onSnapshot(
+          approvedReceiptQuery,
+          (snap) => {
+            approvedChunk = mapSnap(snap);
+            publishFromSnapshots();
+          },
+          onReceiptQueryError
+        )
+      : () => {};
+
+    const unsubUnpaidDebit = unpaidDebitReceiptQuery
+      ? onSnapshot(
+          unpaidDebitReceiptQuery,
+          (snap) => {
+            unpaidDebitChunk = mapSnap(snap);
+            publishFromSnapshots();
+          },
+          onReceiptQueryError
+        )
+      : () => {};
+
+    const unsubLegacyPaid = legacyPaidTaxInvoiceQuery
+      ? onSnapshot(
+          legacyPaidTaxInvoiceQuery,
+          (snap) => {
+            legacyPaidChunk = mapSnap(snap);
+            publishFromSnapshots();
+          },
+          onReceiptQueryError
+        )
+      : () => {};
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const full = await fetchDocumentsAwaitingReceipt(db);
+        if (!cancelled) setApprovedDocs(full as WithId<DocumentType>[]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("requires an index")) {
+          const urlMatch = msg.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubApproved();
+      unsubUnpaidDebit();
+      unsubLegacyPaid();
+    };
+  }, [db, hasPermission, approvedReceiptQuery, unpaidDebitReceiptQuery, legacyPaidTaxInvoiceQuery]);
 
   useEffect(() => {
     if (!accountsQuery || !db) return;

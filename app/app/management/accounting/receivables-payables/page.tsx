@@ -80,6 +80,7 @@ import {
   splitObligationPaidOutstanding,
 } from "@/lib/accounting-ar-outstanding";
 import { PayCreditorDialog } from "@/components/accounting/pay-creditor-dialog";
+import { getApprovedTaxInvoiceSnapshotsPaged } from "@/lib/accounting-receipt-inbox";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', {
@@ -102,38 +103,6 @@ const PAYMENT_FILTER_LABELS: Record<PaymentStatusFilter, string> = {
   PAID: "ชำระแล้ว",
   OUTSTANDING: "ค้างชำระ",
 };
-
-/** ดึงใบกำกับ APPROVED ทั้งชุดที่เกี่ยวกับการซ่อมลูกหนี้ — แบ่งหน้า + orderBy ไม่ให้พลาดใบที่ไม่อยู่ใน limit แรก */
-async function getApprovedTaxInvoiceSnapshotsPaged(db: Firestore): Promise<QueryDocumentSnapshot<DocumentData>[]> {
-  const pageSize = 200;
-  const maxPages = 50;
-  const out: QueryDocumentSnapshot<DocumentData>[] = [];
-  let last: QueryDocumentSnapshot<DocumentData> | undefined;
-  for (let p = 0; p < maxPages; p++) {
-    const q = last
-      ? query(
-          collection(db, "documents"),
-          where("status", "==", "APPROVED"),
-          where("docType", "==", "TAX_INVOICE"),
-          orderBy("updatedAt", "desc"),
-          startAfter(last),
-          limit(pageSize)
-        )
-      : query(
-          collection(db, "documents"),
-          where("status", "==", "APPROVED"),
-          where("docType", "==", "TAX_INVOICE"),
-          orderBy("updatedAt", "desc"),
-          limit(pageSize)
-        );
-    const snap = await getDocs(q);
-    if (snap.empty) break;
-    out.push(...snap.docs);
-    last = snap.docs[snap.docs.length - 1];
-    if (snap.docs.length < pageSize) break;
-  }
-  return out;
-}
 
 const addCreditorSchema = z.object({
   vendorId: z.string().min(1, "กรุณาเลือก Vendor"),
