@@ -26,6 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Checkbox } from "@/components/ui/checkbox";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { cn } from "@/lib/utils";
 import {
   searchQuotationsByDocNo,
   isQuotationDocNoSearch,
@@ -794,7 +795,7 @@ export function DocumentList({
               )}
             </div>
           )}
-          {listLoading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className="border rounded-md"><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>{docType === "WITHHOLDING_TAX" ? "ผู้รับเงิน" : "ลูกค้า"}</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : docType === "WITHHOLDING_TAX" ? (<><TableHead className="text-right">ฐานหัก</TableHead><TableHead className="text-right">หัก ณ ที่จ่าย</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
+          {listLoading ? (<div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>) : (<div className={cn("border rounded-md", docType === "QUOTATION" && "[&_th]:h-[2.4rem] [&_th]:px-3 [&_th]:py-1.5 [&_td]:px-3 [&_td]:py-2.5 [&_td]:text-sm")}><Table><TableHeader><TableRow><TableHead>เลขที่</TableHead><TableHead>วันที่</TableHead><TableHead>{docType === "WITHHOLDING_TAX" ? "ผู้รับเงิน" : "ลูกค้า"}</TableHead><TableHead>สถานะ</TableHead>{docType === "TAX_INVOICE" || docType === "RECEIPT" ? (<><TableHead className="text-right">ยอดก่อนภาษี</TableHead><TableHead className="text-right">ภาษี</TableHead><TableHead className="text-right">ยอดรวม</TableHead></>) : docType === "WITHHOLDING_TAX" ? (<><TableHead className="text-right">ฐานหัก</TableHead><TableHead className="text-right">หัก ณ ที่จ่าย</TableHead></>) : <TableHead className="text-right">ยอดสุทธิ</TableHead>}<TableHead className="text-right w-[100px]">จัดการ</TableHead></TableRow></TableHeader><TableBody>{paginatedDocuments.length > 0 ? paginatedDocuments.map(docItem => {
                     const displayStatus = getDocDisplayStatus(docItem);
                     const viewPath = docItem.docType === "WITHHOLDING_TAX"
                       ? `/app/management/accounting/documents/withholding-tax/${docItem.id}/print`

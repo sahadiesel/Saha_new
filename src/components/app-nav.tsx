@@ -23,6 +23,7 @@ import type { Department } from "@/lib/constants"
 import { useAuth } from "@/context/auth-context"
 import { useFirebase } from "@/firebase"
 import type { UserProfile } from "@/lib/types"
+import { useAppNavLabel } from "@/context/public-site-language-context"
 
 
 const departmentNames: Record<Department, string> = {
@@ -43,15 +44,19 @@ const SubNavLink = ({
   icon: Icon,
   onClick,
   trailing,
+  translateLabel = true,
 }: {
   href: string;
   label: string;
   icon?: React.ElementType;
   onClick?: () => void;
   trailing?: React.ReactNode;
+  translateLabel?: boolean;
 }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isActive = pathname === href;
+    const displayLabel = translateLabel ? t(label) : label;
     return (
         <Button
             asChild
@@ -61,7 +66,7 @@ const SubNavLink = ({
         >
             <Link href={href} className="flex w-full min-w-0 items-center gap-2">
                 {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
-                <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+                <span className="min-w-0 flex-1 truncate text-left">{displayLabel}</span>
                 {trailing != null && (
                   <span className="ml-auto flex shrink-0 items-center justify-center">{trailing}</span>
                 )}
@@ -74,6 +79,7 @@ const SubNavLink = ({
 function HrPendingLeaveNavDot() {
   const { db } = useFirebase();
   const { profile } = useAuth();
+  const { t } = useAppNavLabel();
   const [hasPending, setHasPending] = useState(false);
 
   const canListen = useMemo(() => {
@@ -108,20 +114,21 @@ function HrPendingLeaveNavDot() {
   return (
     <span
       className="inline-block h-2.5 w-2.5 rounded-full border-2 border-black bg-yellow-400 animate-leave-pending-blink"
-      title="มีคำขอลารออนุมัติ"
-      aria-label="มีคำขอลารออนุมัติ"
+      title={t("มีคำขอลารออนุมัติ")}
+      aria-label={t("มีคำขอลารออนุมัติ")}
     />
   );
 }
 
 const OfficeJobManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen = pathname.startsWith('/app/office/jobs/management');
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                  <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                    จัดการงานซ่อม
+                    {t("จัดการงานซ่อม")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -137,6 +144,7 @@ const OfficeJobManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void 
 
 const PartsStockDocumentsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen =
         pathname.startsWith('/app/office/parts/purchases') ||
         pathname.startsWith('/app/office/parts/withdraw') ||
@@ -146,7 +154,7 @@ const PartsStockDocumentsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void 
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    จัดการเอกสาร
+                    {t("จัดการเอกสาร")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -162,6 +170,7 @@ const PartsStockDocumentsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void 
 
 const PartsStockSettingsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen =
         pathname.startsWith('/app/office/parts/categories') ||
         pathname.startsWith('/app/office/parts/locations') ||
@@ -170,7 +179,7 @@ const PartsStockSettingsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    ตั้งค่า (งานอะไหล่)
+                    {t("ตั้งค่า (งานอะไหล่)")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -197,6 +206,7 @@ const PartsStockSubMenus = ({ onLinkClick }: { onLinkClick?: () => void }) => {
 
 const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     
     const isAccountingDocActive = 
         pathname.startsWith('/app/office/documents/delivery-note') || 
@@ -212,7 +222,7 @@ const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    แผนกบัญชี
+                    {t("แผนกบัญชี")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -227,7 +237,7 @@ const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void
                 <Collapsible defaultOpen={isDocSubGroupActive}>
                     <CollapsibleTrigger asChild>
                         <Button variant={isDocSubGroupActive ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                            เอกสารบัญชี
+                            {t("เอกสารบัญชี")}
                             <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                         </Button>
                     </CollapsibleTrigger>
@@ -248,12 +258,13 @@ const ManagementAccountingSubMenu = ({ onLinkClick }: { onLinkClick?: () => void
 
 const HRSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen = pathname.startsWith('/app/management/hr');
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    แผนกบุคคล
+                    {t("แผนกบุคคล")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -274,12 +285,13 @@ const HRSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
 
 const WebManagementSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen = pathname.startsWith('/app/admin/web-management');
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    จัดการเว็บไซต์
+                    {t("จัดการเว็บไซต์")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -314,12 +326,13 @@ const AdminSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
 
 const SettingsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
     const pathname = usePathname();
+    const { t } = useAppNavLabel();
     const isOpen = pathname.startsWith('/app/management/settings') || pathname.startsWith('/app/management/hr/settings') || pathname.startsWith('/app/management/hr/holidays');
     return (
         <Collapsible defaultOpen={isOpen}>
             <CollapsibleTrigger asChild>
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground text-sm">
-                    ตั้งค่า
+                    {t("ตั้งค่า")}
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
             </CollapsibleTrigger>
@@ -337,6 +350,7 @@ const SettingsSubMenu = ({ onLinkClick }: { onLinkClick?: () => void }) => {
 const CarServiceByWorkerNav = ({ onLinkClick }: { onLinkClick?: () => void }) => {
   const { db } = useFirebase();
   const pathname = usePathname();
+  const { t } = useAppNavLabel();
   const [workers, setWorkers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -371,7 +385,7 @@ const CarServiceByWorkerNav = ({ onLinkClick }: { onLinkClick?: () => void }) =>
     <Collapsible defaultOpen={isOpen}>
       <CollapsibleTrigger asChild>
         <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-          งานตามพนักงาน
+          {t("งานตามพนักงาน")}
           <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
         </Button>
       </CollapsibleTrigger>
@@ -386,11 +400,12 @@ const CarServiceByWorkerNav = ({ onLinkClick }: { onLinkClick?: () => void }) =>
               key={worker.uid}
               href={`/app/car-service/jobs/by-worker/${worker.uid}`}
               label={worker.displayName}
+              translateLabel={false}
               onClick={onLinkClick} 
             />
           ))
         ) : (
-          <p className="p-2 text-xs text-muted-foreground">ไม่พบรายชื่อช่าง</p>
+          <p className="p-2 text-xs text-muted-foreground">{t("ไม่พบรายชื่อช่าง")}</p>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -400,6 +415,7 @@ const CarServiceByWorkerNav = ({ onLinkClick }: { onLinkClick?: () => void }) =>
 const DepartmentMenu = ({ department, onLinkClick }: { department: Department, onLinkClick?: () => void }) => {
     const pathname = usePathname();
     const { profile } = useAuth();
+    const { t } = useAppNavLabel();
 
     const departmentPath = `/app/${department.toLowerCase().replace('_', '-')}`
     const isOpen = pathname.startsWith(departmentPath)
@@ -425,7 +441,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                 <Button variant={isOpen ? "secondary" : "ghost"} className="w-full justify-between">
                     <span className="flex items-center gap-2">
                         <Icon className="h-4 w-4" />
-                        {departmentNames[department]}
+                        {t(departmentNames[department])}
                     </span>
                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                 </Button>
@@ -453,7 +469,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/list-management') || pathname.startsWith('/app/management/customers')}>
                             <CollapsibleTrigger asChild>
                                 <Button variant={(pathname.startsWith('/app/office/list-management') || pathname.startsWith('/app/management/customers')) ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                                    การจัดการรายชื่อ
+                                    {t("การจัดการรายชื่อ")}
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
                             </CollapsibleTrigger>
@@ -465,7 +481,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/documents')}>
                             <CollapsibleTrigger asChild>
                                 <Button variant={pathname.startsWith('/app/office/documents') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                                    จัดการเอกสาร
+                                    {t("จัดการเอกสาร")}
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
                             </CollapsibleTrigger>
@@ -479,7 +495,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                         <Collapsible defaultOpen={pathname.startsWith('/app/office/parts')}>
                             <CollapsibleTrigger asChild>
                                 <Button variant={pathname.startsWith('/app/office/parts') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9 text-muted-foreground">
-                                    จัดซื้อ/สต๊อค
+                                    {t("จัดซื้อ/สต๊อค")}
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>
                             </CollapsibleTrigger>
@@ -540,7 +556,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
                                 <Collapsible defaultOpen={pathname.startsWith('/app/outsource/tracking')}>
                                     <CollapsibleTrigger asChild>
                                         <Button variant={pathname.startsWith('/app/outsource/tracking') ? "secondary" : "ghost"} className="w-full justify-between font-normal h-9">
-                                            ติดตาม
+                                            {t("ติดตาม")}
                                             <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                         </Button>
                                     </CollapsibleTrigger>
@@ -562,6 +578,7 @@ const DepartmentMenu = ({ department, onLinkClick }: { department: Department, o
 export function AppNav({ onLinkClick }: { onLinkClick?: () => void }) {
     const pathname = usePathname();
     const { profile, loading } = useAuth();
+    const { t } = useAppNavLabel();
     const isAttendanceOpen = pathname.startsWith('/app/kiosk') || pathname.startsWith('/app/attendance');
 
     // Attendance QR only visible for specific technical/office roles, not restricted admin depts
@@ -610,7 +627,7 @@ export function AppNav({ onLinkClick }: { onLinkClick?: () => void }) {
                                 <Button variant={isAttendanceOpen ? "secondary" : "ghost"} className="w-full justify-between">
                                     <span className="flex items-center gap-2">
                                         <QrCode className="h-4 w-4" />
-                                        QR ลงเวลา
+                                        {t("QR ลงเวลา")}
                                     </span>
                                     <ChevronDown className="h-4 w-4 transition-transform [&[data-state=open]]:rotate-180" />
                                 </Button>

@@ -47,6 +47,7 @@ export default function OfficeQuotationPage() {
             
             <DocumentList
                 docType="QUOTATION"
+                limit={20}
             />
         </div>
     );

@@ -234,3 +234,16 @@
   }
   /* ไม่บังคับ padding/font ทุกเซลล์ — จะทับ Tailwind (เช่น p-4) ทำให้ตัวหนังสือดูบีบตอนพิมพ์ */
 }
+
+/* Google Translate — ซ่อนแถบด้านบน ใช้ปุ่มเลือกภาษาใน header แทน */
+body {
+  top: 0 !important;
+}
+.goog-te-banner-frame.skiptranslate,
+iframe.skiptranslate {
+  display: none !important;
+}
+#google_translate_element,
+.goog-te-gadget {
+  display: none !important;
+}

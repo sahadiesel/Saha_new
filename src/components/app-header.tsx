@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Menu, Settings, LogOut, FileText, Receipt, CalendarDays, Home } from "lucide-react"
 
 import { useAuth } from "@/context/auth-context"
+import { useAppNavLabel } from "@/context/public-site-language-context"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet"
 import { Logo } from "@/components/logo"
@@ -22,6 +23,7 @@ import {
 export function AppHeader() {
   const [open, setOpen] = useState(false);
   const { profile, signOut } = useAuth();
+  const { t } = useAppNavLabel();
 
   const getInitials = (name?: string) => {
     if (!name) return "?";
@@ -69,26 +71,26 @@ export function AppHeader() {
             <DropdownMenuLabel>{profile.displayName}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/settings"><Settings className="mr-2 h-4 w-4"/> โปรไฟล์และการตั้งค่า</Link>
+              <Link href="/settings"><Settings className="mr-2 h-4 w-4"/> {t("โปรไฟล์และการตั้งค่า")}</Link>
             </DropdownMenuItem>
             {!isOutsourceWorker && (
                 <DropdownMenuItem asChild>
-                    <Link href="/settings/my-leaves"><FileText className="mr-2 h-4 w-4"/> ใบลาของฉัน</Link>
+                    <Link href="/settings/my-leaves"><FileText className="mr-2 h-4 w-4"/> {t("ใบลาของฉัน")}</Link>
                 </DropdownMenuItem>
             )}
              <DropdownMenuItem asChild>
-              <Link href="/settings/holidays"><CalendarDays className="mr-2 h-4 w-4"/> ปฏิทินวันหยุด</Link>
+              <Link href="/settings/holidays"><CalendarDays className="mr-2 h-4 w-4"/> {t("ปฏิทินวันหยุด")}</Link>
             </DropdownMenuItem>
             {!isOutsourceWorker && (
                 <DropdownMenuItem asChild>
-                    <Link href="/settings/my-payslips"><Receipt className="mr-2 h-4 w-4"/> ใบเงินเดือนของฉัน</Link>
+                    <Link href="/settings/my-payslips"><Receipt className="mr-2 h-4 w-4"/> {t("ใบเงินเดือนของฉัน")}</Link>
                 </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
                 <Link href="/" className="text-primary font-bold">
                     <Home className="mr-2 h-4 w-4" />
-                    <span>กลับสู่หน้าแรก</span>
+                    <span>{t("กลับสู่หน้าแรก")}</span>
                 </Link>
             </DropdownMenuItem>
           </DropdownMenuContent>

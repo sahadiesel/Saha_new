@@ -85,7 +85,7 @@ export const LEAVE_STATUS_LABELS: Record<string, string> = {
     SUBMITTED: "รออนุมัติ",
     APPROVED: "อนุมัติแล้ว",
     REJECTED: "ไม่อนุมัติ",
-    CANCELLED: "ยกเลิก",
+    CANCELLED: "ยกเลิกแล้ว",
 };
 
 export const NEW_PAYSLIP_STATUS_LABELS: Record<string, string> = {
@@ -118,14 +118,16 @@ export function vendorTypeLabel(type: string | undefined): string {
     return VENDOR_TYPE_LABELS[type] || type;
 }
 
-export function newPayslipStatusLabel(status: string | undefined): string {
+export function newPayslipStatusLabel(status: string | undefined, translate?: (label: string) => string): string {
     if (!status) return '';
-    return NEW_PAYSLIP_STATUS_LABELS[status] || status;
+    const label = NEW_PAYSLIP_STATUS_LABELS[status] || status;
+    return translate ? translate(label) : label;
 }
 
-export function deptLabel(dept: string | undefined): string {
+export function deptLabel(dept: string | undefined, translate?: (label: string) => string): string {
     if (!dept) return '';
-    return DEPARTMENT_LABELS[dept] || dept;
+    const label = DEPARTMENT_LABELS[dept] || dept;
+    return translate ? translate(label) : label;
 }
 
 export function deptCode(dept: string | undefined): string {
@@ -195,12 +197,14 @@ export function payTypeLabel(payType: string | undefined): string {
     return PAY_TYPE_LABELS[payType] || payType;
 }
 
-export function leaveTypeLabel(type: string | undefined): string {
+export function leaveTypeLabel(type: string | undefined, translate?: (label: string) => string): string {
     if (!type) return '';
-    return LEAVE_TYPE_LABELS[type] || type;
+    const label = LEAVE_TYPE_LABELS[type] || type;
+    return translate ? translate(label) : label;
 }
 
-export function leaveStatusLabel(status: string | undefined): string {
+export function leaveStatusLabel(status: string | undefined, translate?: (label: string) => string): string {
     if (!status) return '';
-    return LEAVE_STATUS_LABELS[status] || status;
+    const label = LEAVE_STATUS_LABELS[status] || status;
+    return translate ? translate(label) : label;
 }

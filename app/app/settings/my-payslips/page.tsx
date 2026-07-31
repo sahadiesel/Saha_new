@@ -20,6 +20,7 @@ import { newPayslipStatusLabel, deptLabel, payTypeLabel } from "@/lib/ui-labels"
 import { PayslipSlipDrawer } from "@/components/payroll/PayslipSlipDrawer";
 import { PayslipSlipView, calcTotals } from "@/components/payroll/PayslipSlipView";
 import { thaiBahtText } from "@/lib/utils";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 
 const formatCurrency = (value: number | undefined) => {
   return (value ?? 0).toLocaleString("th-TH", {
@@ -53,6 +54,7 @@ function RevisionDialog({
   isSubmitting: boolean;
 }) {
   const [reason, setReason] = useState("");
+  const { t } = useAppNavLabel();
 
   const handleSubmit = () => {
     if (!reason.trim()) {
@@ -65,14 +67,14 @@ function RevisionDialog({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>ร้องขอแก้ไขสลิปเงินเดือน</DialogTitle>
+          <DialogTitle>{t("ร้องขอแก้ไขสลิปเงินเดือน")}</DialogTitle>
           <DialogDescription>
-            สำหรับงวด: {payslip.batchId}. กรุณาระบุเหตุผลที่ต้องการแก้ไขให้ชัดเจน
+            {payslip.batchId}. {t("กรุณาระบุเหตุผลที่ต้องการแก้ไขให้ชัดเจน")}
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">
           <Textarea
-            placeholder="กรุณากรอกเหตุผลที่นี่..."
+            placeholder={t("กรุณากรอกเหตุผลที่นี่...")}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={5}
@@ -80,11 +82,11 @@ function RevisionDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
-            ยกเลิก
+            {t("ยกเลิก")}
           </Button>
           <Button onClick={handleSubmit} disabled={!reason.trim() || isSubmitting}>
             {isSubmitting && <Loader2 className="mr-2 animate-spin" />}
-            ส่งคำร้อง
+            {t("ส่งคำร้อง")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -96,6 +98,7 @@ export default function MyPayslipsPage() {
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
+  const { t } = useAppNavLabel();
   const printFrameRef = useRef<HTMLIFrameElement | null>(null);
   
   const [payslips, setPayslips] = useState<(WithId<PayslipNew> & { refPath: string })[]>([]);
@@ -328,30 +331,30 @@ export default function MyPayslipsPage() {
 
 
   const getPaymentStatus = (status: string) => {
-    if (status === 'READY_TO_PAY') return 'รอโอน';
-    if (status === 'PAID') return 'จ่ายแล้ว';
+    if (status === 'READY_TO_PAY') return t('รอโอน');
+    if (status === 'PAID') return t('จ่ายแล้ว');
     return '-';
   };
 
   return (
     <>
-      <PageHeader title="ใบเงินเดือนของฉัน" description="ตรวจสอบสลิปเงินเดือนและกดยืนยัน" />
+      <PageHeader title={t("ใบเงินเดือนของฉัน")} description={t("ตรวจสอบสลิปเงินเดือนและกดยืนยัน")} />
       <Card>
         <CardHeader>
-          <CardTitle>ประวัติสลิปเงินเดือน</CardTitle>
+          <CardTitle>{t("ประวัติสลิปเงินเดือน")}</CardTitle>
           <CardDescription>
-            แสดงรายการสลิปเงินเดือนล่าสุดของคุณ
+            {t("แสดงรายการสลิปเงินเดือนล่าสุดของคุณ")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>งวด</TableHead>
-                <TableHead>เงินสุทธิ</TableHead>
-                <TableHead>สถานะสลิป</TableHead>
-                <TableHead>สถานะการจ่าย</TableHead>
-                <TableHead className="text-right">การดำเนินการ</TableHead>
+                <TableHead>{t("งวด")}</TableHead>
+                <TableHead>{t("เงินสุทธิ")}</TableHead>
+                <TableHead>{t("สถานะสลิป")}</TableHead>
+                <TableHead>{t("สถานะการจ่าย")}</TableHead>
+                <TableHead className="text-right">{t("การดำเนินการ")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -365,14 +368,14 @@ export default function MyPayslipsPage() {
                 payslips.map(p => (
                   <TableRow key={p.id + p.batchId}>
                     <TableCell>{p.batchId}</TableCell>
-                    <TableCell>{formatCurrency(p.snapshot?.netPay)} บาท</TableCell>
+                    <TableCell>{formatCurrency(p.snapshot?.netPay)} {t("บาท")}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(p.status)}>{newPayslipStatusLabel(p.status)}</Badge>
+                      <Badge variant={getStatusBadgeVariant(p.status)}>{newPayslipStatusLabel(p.status, t)}</Badge>
                     </TableCell>
                     <TableCell>{getPaymentStatus(p.status)}</TableCell>
                     <TableCell className="text-right">
                        <Button size="sm" variant="outline" onClick={() => handleView(p)}>
-                          ดู
+                          {t("ดู")}
                         </Button>
                     </TableCell>
                   </TableRow>
@@ -380,7 +383,7 @@ export default function MyPayslipsPage() {
               ) : (
                 <TableRow>
                   <TableCell colSpan={5} className="h-24 text-center">
-                    ยังไม่มีข้อมูลสลิปเงินเดือน
+                    {t("ยังไม่มีข้อมูลสลิปเงินเดือน")}
                   </TableCell>
                 </TableRow>
               )}
@@ -403,8 +406,8 @@ export default function MyPayslipsPage() {
         <PayslipSlipDrawer
           open={!!viewPayslip}
           onOpenChange={(open) => !open && setViewPayslip(null)}
-          title="ดูสลิปเงินเดือน"
-          description={`งวด: ${viewPayslip.batchId}`}
+          title={t("ดูสลิปเงินเดือน")}
+          description={`${t("งวด")}: ${viewPayslip.batchId}`}
           onPrint={handlePrintInDrawer}
           footerActions={
             <div className="flex gap-2 justify-end w-full">
@@ -413,7 +416,7 @@ export default function MyPayslipsPage() {
                 disabled={actioningId !== null || viewPayslip.status !== 'SENT_TO_EMPLOYEE'}
               >
                 <CheckCircle/>
-                ยอมรับ
+                {t("ยอมรับ")}
               </Button>
 
               <Button
@@ -425,7 +428,7 @@ export default function MyPayslipsPage() {
                 disabled={actioningId !== null || viewPayslip.status !== 'SENT_TO_EMPLOYEE'}
               >
                 <MessageSquareWarning/>
-                ร้องขอแก้ไข
+                {t("ร้องขอแก้ไข")}
               </Button>
             </div>
           }

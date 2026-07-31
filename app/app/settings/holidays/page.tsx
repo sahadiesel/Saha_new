@@ -7,6 +7,7 @@ import { getYear, format, parseISO } from 'date-fns';
 import { useFirebase, useCollection } from "@/firebase";
 import type { HRHoliday } from "@/lib/types";
 import type { WithId } from "@/firebase/firestore/use-collection";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,11 +28,11 @@ const groupHolidaysByMonth = (holidays: WithId<HRHoliday>[]) => {
 
 export default function MyHolidaysPage() {
   const { db } = useFirebase();
+  const { t } = useAppNavLabel();
   const [selectedYear, setSelectedYear] = useState(getYear(new Date()).toString());
 
   const holidaysQuery = useMemo(() => {
     if (!db) return null;
-    // Firestore's where with string comparison works for YYYY-MM-DD
     return query(
       collection(db, 'hrHolidays'),
       where('date', '>=', `${selectedYear}-01-01`),
@@ -54,11 +55,11 @@ export default function MyHolidaysPage() {
 
   return (
     <>
-      <PageHeader title="ปฏิทินวันหยุด" description="วันหยุดตามประเพณีประจำปีของบริษัท" />
+      <PageHeader title={t("ปฏิทินวันหยุด")} description={t("วันหยุดตามประเพณีประจำปีของบริษัท")} />
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>วันหยุดปี {selectedYear}</CardTitle>
+            <CardTitle>{t("วันหยุดปี")} {selectedYear}</CardTitle>
             <Select value={selectedYear} onValueChange={setSelectedYear}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Select year" />
@@ -88,7 +89,7 @@ export default function MyHolidaysPage() {
                   <ul className="space-y-2 list-disc pl-5 text-muted-foreground">
                     {monthHolidays.map(holiday => (
                       <li key={holiday.id}>
-                        <span className="font-medium text-foreground">{format(parseISO(holiday.date), 'dd')}</span>: {holiday.name}
+                        <span className="font-medium text-foreground">{format(parseISO(holiday.date), 'dd')}</span>: {t(holiday.name)}
                       </li>
                     ))}
                   </ul>
@@ -97,7 +98,7 @@ export default function MyHolidaysPage() {
             </div>
           ) : (
             <div className="text-center text-muted-foreground h-48 flex items-center justify-center">
-              ไม่มีข้อมูลวันหยุดสำหรับปีที่เลือก
+              {t("ไม่มีข้อมูลวันหยุดสำหรับปีที่เลือก")}
             </div>
           )}
         </CardContent>

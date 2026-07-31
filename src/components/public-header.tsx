@@ -20,7 +20,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ChevronDown, Menu, User, Briefcase, Globe, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut, MapPin } from "lucide-react";
+import { ChevronDown, Menu, User, Briefcase, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut, MapPin } from "lucide-react";
+import { PublicLanguageSwitcher } from "@/components/public-language-switcher";
 import { cn } from "@/lib/utils";
 
 export function PublicHeader() {
@@ -72,6 +73,8 @@ export function PublicHeader() {
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
             <Link href="/contact">ติดต่อเรา</Link>
           </Button>
+
+          <PublicLanguageSwitcher className="ml-2" />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -171,6 +174,11 @@ export function PublicHeader() {
                     ติดต่อเรา
                   </Link>
                 </Button>
+
+                <div className="flex items-center justify-between px-2 py-2 mb-2">
+                  <span className="text-xs text-slate-400 uppercase tracking-widest font-bold">ภาษา</span>
+                  <PublicLanguageSwitcher />
+                </div>
 
                 <div className="mt-4 pt-4 border-t border-white/10">
                   {!user ? (

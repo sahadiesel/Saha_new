@@ -40,6 +40,7 @@ import { Loader2, Send, Trash2, AlertCircle, ExternalLink, CalendarDays, Camera,
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from "@/components/ui/calendar";
+import { useAppNavLabel } from '@/context/public-site-language-context';
 import { cn } from '@/lib/utils';
 
 /** พนักงานยื่นได้เฉพาะลาป่วย / ลากิจ (ไม่มีลาพักร้อน) */
@@ -70,6 +71,7 @@ export default function MyLeavesPage() {
   const { db, storage } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
+  const { t } = useAppNavLabel();
   
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -340,13 +342,13 @@ export default function MyLeavesPage() {
           <TableCell colSpan={6} className="text-center p-8">
             <div className="flex flex-col items-center gap-4 bg-muted/50 p-6 rounded-lg border border-dashed">
               <AlertCircle className="h-10 w-10 text-destructive" />
-              <h3 className="font-semibold text-lg">ต้องสร้างดัชนี (Index) ก่อน</h3>
+              <h3 className="font-semibold text-lg">{t("ต้องสร้างดัชนี (Index) ก่อน")}</h3>
               <p className="text-muted-foreground text-sm max-w-md">
-                ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงประวัติการลาของคุณ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index
+                {t("ฐานข้อมูลต้องการดัชนีเพื่อจัดเรียงประวัติการลาของคุณ กรุณากดปุ่มด้านล่างเพื่อสร้าง Index")}
               </p>
               <Button asChild>
                 <a href={indexCreationUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" /> สร้าง Index / Create Index
+                  <ExternalLink className="mr-2 h-4 w-4" /> {t("สร้าง Index / Create Index")}
                 </a>
               </Button>
             </div>
@@ -361,12 +363,12 @@ export default function MyLeavesPage() {
           <TableCell className="font-medium">
             {dfFormat(parseISO(leave.startDate), 'dd/MM/yy')} 
             {!leave.isHalfDay && leave.endDate !== leave.startDate && ` - ${dfFormat(parseISO(leave.endDate), 'dd/MM/yy')}`}
-            {leave.isHalfDay && <span className="ml-1 text-muted-foreground text-[10px]">({leave.halfDaySession === 'MORNING' ? 'ครึ่งเช้า' : 'ครึ่งบ่าย'})</span>}
+            {leave.isHalfDay && <span className="ml-1 text-muted-foreground text-[10px]">({leave.halfDaySession === 'MORNING' ? t('ครึ่งเช้า') : t('ครึ่งบ่าย')})</span>}
           </TableCell>
-          <TableCell>{leaveTypeLabel(leave.leaveType)}</TableCell>
+          <TableCell>{leaveTypeLabel(leave.leaveType, t)}</TableCell>
           <TableCell className="text-center">{leave.days}</TableCell>
           <TableCell>
-            <Badge variant={getStatusVariant(leave.status)}>{leaveStatusLabel(leave.status)}</Badge>
+            <Badge variant={getStatusVariant(leave.status)}>{leaveStatusLabel(leave.status, t)}</Badge>
           </TableCell>
           <TableCell className="text-sm">
             {leave.attachmentUrls && leave.attachmentUrls.length > 0 ? (
@@ -380,7 +382,7 @@ export default function MyLeavesPage() {
                     className="text-primary underline-offset-2 hover:underline inline-flex items-center gap-1"
                   >
                     <ExternalLink className="h-3 w-3 shrink-0" />
-                    รูป {i + 1}
+                    {t("รูป")} {i + 1}
                   </a>
                 ))}
               </div>
@@ -392,21 +394,23 @@ export default function MyLeavesPage() {
             {leave.status === 'SUBMITTED' && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="icon" disabled={!!cancellingId} title="ยกเลิกใบลา">
+                  <Button variant="ghost" size="icon" disabled={!!cancellingId} title={t("ยกเลิกใบลา")}>
                     {cancellingId === leave.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-destructive" />}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>ยืนยันการยกเลิกคำขอลา?</AlertDialogTitle>
+                    <AlertDialogTitle>{t("ยืนยันการยกเลิกคำขอลา?")}</AlertDialogTitle>
                     <AlertDialogDescription>
-                      คุณต้องการยกเลิกใบลาประเภท {leaveTypeLabel(leave.leaveType)} วันที่ {dfFormat(parseISO(leave.startDate), 'dd/MM/yyyy')} ใช่หรือไม่?
+                      {t("คุณต้องการยกเลิกใบลาประเภท {type} วันที่ {date} ใช่หรือไม่?")
+                        .replace("{type}", leaveTypeLabel(leave.leaveType, t))
+                        .replace("{date}", dfFormat(parseISO(leave.startDate), 'dd/MM/yyyy'))}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>ปิด</AlertDialogCancel>
+                    <AlertDialogCancel>{t("ปิด")}</AlertDialogCancel>
                     <AlertDialogAction onClick={() => handleCancel(leave.id)} className="bg-destructive hover:bg-destructive/90">
-                      ยืนยันยกเลิก
+                      {t("ยืนยันยกเลิก")}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -420,7 +424,7 @@ export default function MyLeavesPage() {
     return (
       <TableRow>
         <TableCell colSpan={6} className="h-24 text-center text-muted-foreground italic">
-          ยังไม่มีประวัติการลา
+          {t("ยังไม่มีประวัติการลา")}
         </TableCell>
       </TableRow>
     );
@@ -428,22 +432,22 @@ export default function MyLeavesPage() {
 
   return (
     <>
-      <PageHeader title="ใบลาของฉัน" description="ยื่นใบลาและดูประวัติการลาของคุณ" />
+      <PageHeader title={t("ใบลาของฉัน")} description={t("ยื่นใบลาและดูประวัติการลาของคุณ")} />
       <div className="grid gap-8 md:grid-cols-3">
         <div className="md:col-span-1">
           <Card>
             <CardHeader>
-              <CardTitle>ยื่นใบลาใหม่</CardTitle>
+              <CardTitle>{t("ยื่นใบลาใหม่")}</CardTitle>
               <CardDescription>
                 {isDailyPay ? (
                   <>
-                    กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล
+                    {t("กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล")}
                     <span className="mt-2 block text-amber-700 dark:text-amber-500 font-medium">
-                      คุณเป็นพนักงานค่าแรงรายวัน — วันลาที่อนุมัติไม่นับเป็นวันจ่ายค่าจ้าง (ไม่ใช้สิทธิ์ลาป่วย/ลากิจแบบพนักงานเงินเดือน)
+                      {t("คุณเป็นพนักงานค่าแรงรายวัน — วันลาที่อนุมัติไม่นับเป็นวันจ่ายค่าจ้าง (ไม่ใช้สิทธิ์ลาป่วย/ลากิจแบบพนักงานเงินเดือน)")}
                     </span>
                   </>
                 ) : (
-                  'กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล'
+                  t('กรอกข้อมูลเพื่อส่งคำขอลาไปยังแผนกบุคคล')
                 )}
               </CardDescription>
             </CardHeader>
@@ -455,16 +459,16 @@ export default function MyLeavesPage() {
                     name="leaveType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>ประเภทการลา</FormLabel>
+                        <FormLabel>{t("ประเภทการลา")}</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder="เลือกประเภทการลา" />
+                              <SelectValue placeholder={t("เลือกประเภทการลา")} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
                             {employeeLeaveTypes.map(type => (
-                              <SelectItem key={type} value={type}>{leaveTypeLabel(type)}</SelectItem>
+                              <SelectItem key={type} value={type}>{leaveTypeLabel(type, t)}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -479,7 +483,7 @@ export default function MyLeavesPage() {
                             <FormControl>
                                 <Switch checked={field.value} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className="font-bold cursor-pointer">ลาครึ่งวัน (0.5 วัน)</FormLabel>
+                            <FormLabel className="font-bold cursor-pointer">{t("ลาครึ่งวัน (0.5 วัน)")}</FormLabel>
                         </FormItem>
                     )} />
                   </div>
@@ -487,12 +491,12 @@ export default function MyLeavesPage() {
                   {watchedIsHalfDay && (
                     <FormField control={form.control} name="halfDaySession" render={({ field }) => (
                         <FormItem>
-                            <FormLabel>ช่วงเวลาที่ลา</FormLabel>
+                            <FormLabel>{t("ช่วงเวลาที่ลา")}</FormLabel>
                             <Select onValueChange={field.onChange} value={field.value}>
                                 <FormControl><SelectTrigger><SelectValue/></SelectTrigger></FormControl>
                                 <SelectContent>
-                                    <SelectItem value="MORNING">ครึ่งเช้า</SelectItem>
-                                    <SelectItem value="AFTERNOON">ครึ่งบ่าย</SelectItem>
+                                    <SelectItem value="MORNING">{t("ครึ่งเช้า")}</SelectItem>
+                                    <SelectItem value="AFTERNOON">{t("ครึ่งบ่าย")}</SelectItem>
                                 </SelectContent>
                             </Select>
                         </FormItem>
@@ -505,7 +509,7 @@ export default function MyLeavesPage() {
                       name="startDate"
                       render={({ field }) => (
                         <FormItem className="flex flex-col">
-                          <FormLabel>วันเริ่มลา</FormLabel>
+                          <FormLabel>{t("วันเริ่มลา")}</FormLabel>
                           <Popover>
                             <PopoverTrigger asChild>
                               <FormControl>
@@ -516,7 +520,7 @@ export default function MyLeavesPage() {
                                     !field.value && "text-muted-foreground"
                                   )}
                                 >
-                                  {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                  {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>{t("เลือกวันที่")}</span>}
                                   <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
                                 </Button>
                               </FormControl>
@@ -539,7 +543,7 @@ export default function MyLeavesPage() {
                       name="endDate"
                       render={({ field }) => (
                         <FormItem className="flex flex-col">
-                          <FormLabel>วันสิ้นสุด</FormLabel>
+                          <FormLabel>{t("วันสิ้นสุด")}</FormLabel>
                           <Popover>
                             <PopoverTrigger asChild>
                               <FormControl>
@@ -551,7 +555,7 @@ export default function MyLeavesPage() {
                                   )}
                                   disabled={watchedIsHalfDay}
                                 >
-                                  {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                                  {field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>{t("เลือกวันที่")}</span>}
                                   <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
                                 </Button>
                               </FormControl>
@@ -577,9 +581,9 @@ export default function MyLeavesPage() {
                     name="reason"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>เหตุผลการลา</FormLabel>
+                        <FormLabel>{t("เหตุผลการลา")}</FormLabel>
                         <FormControl>
-                          <Textarea placeholder="ระบุเหตุผล เช่น ลาป่วยมีใบรับรองแพทย์..." {...field} />
+                          <Textarea placeholder={t("ระบุเหตุผล เช่น ลาป่วยมีใบรับรองแพทย์...")} {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -589,10 +593,10 @@ export default function MyLeavesPage() {
                   <div className="space-y-3 rounded-lg border border-dashed border-primary/25 bg-muted/20 p-4">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <Paperclip className="h-4 w-4 text-primary" />
-                      แนบเอกสารการลา
+                      {t("แนบเอกสารการลา")}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      ถ่ายรูปหรือเลือกจากอัลบั้ม (สูงสุด {MAX_LEAVE_ATTACHMENTS} รูป) ระบบจะลดขนาดอัตโนมัติหากใหญ่กว่า ~500 KB
+                      {t("ถ่ายรูปหรือเลือกจากอัลบั้ม (สูงสุด 2 รูป) ระบบจะลดขนาดอัตโนมัติหากใหญ่กว่า ~500 KB").replace("2", String(MAX_LEAVE_ATTACHMENTS))}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <Button
@@ -612,7 +616,7 @@ export default function MyLeavesPage() {
                           <Camera className="h-8 w-8 text-primary" />
                         )}
                         <span className="text-xs font-bold uppercase tracking-wide">
-                          {isCompressingAttachments ? "กำลังประมวลผล..." : "ถ่ายรูป"}
+                          {isCompressingAttachments ? t("กำลังประมวลผล...") : t("ถ่ายรูป")}
                         </span>
                         <input
                           type="file"
@@ -635,7 +639,7 @@ export default function MyLeavesPage() {
                         onClick={() => galleryInputRef.current?.click()}
                       >
                         <ImageIcon className="h-8 w-8 text-primary" />
-                        <span className="text-xs font-bold uppercase tracking-wide">อัลบั้ม</span>
+                        <span className="text-xs font-bold uppercase tracking-wide">{t("อัลบั้ม")}</span>
                         <input
                           type="file"
                           ref={galleryInputRef}
@@ -674,7 +678,7 @@ export default function MyLeavesPage() {
                     disabled={isSubmitting || isLoading || isCompressingAttachments}
                   >
                     {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4"/>}
-                    ส่งคำขอลา
+                    {t("ส่งคำขอลา")}
                   </Button>
                 </form>
               </Form>
@@ -684,19 +688,19 @@ export default function MyLeavesPage() {
         <div className="md:col-span-2">
             <Card>
                 <CardHeader>
-                    <CardTitle>ประวัติการลาของฉัน</CardTitle>
-                    <CardDescription>รายการใบลาที่ยื่นในระบบทั้งหมด (เรียงตามล่าสุด)</CardDescription>
+                    <CardTitle>{t("ประวัติการลาของฉัน")}</CardTitle>
+                    <CardDescription>{t("รายการใบลาที่ยื่นในระบบทั้งหมด (เรียงตามล่าสุด)")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <TableHead>วันที่ลา</TableHead>
-                                <TableHead>ประเภท</TableHead>
-                                <TableHead className="text-center">วัน</TableHead>
-                                <TableHead>สถานะ</TableHead>
-                                <TableHead>เอกสารแนบ</TableHead>
-                                <TableHead className="text-right">จัดการ</TableHead>
+                                <TableHead>{t("วันที่ลา")}</TableHead>
+                                <TableHead>{t("ประเภท")}</TableHead>
+                                <TableHead className="text-center">{t("วัน")}</TableHead>
+                                <TableHead>{t("สถานะ")}</TableHead>
+                                <TableHead>{t("เอกสารแนบ")}</TableHead>
+                                <TableHead className="text-right">{t("จัดการ")}</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -719,9 +723,9 @@ export default function MyLeavesPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>จำนวนวันลาของคุณเกินสิทธิ์ที่กำหนด</AlertDialogTitle>
+            <AlertDialogTitle>{t("จำนวนวันลาของคุณเกินสิทธิ์ที่กำหนด")}</AlertDialogTitle>
             <AlertDialogDescription>
-              การลาครั้งนี้จะทำให้วันลาสะสมเกินจำนวนวันที่บริษัทกำหนด คุณต้องการยืนยันการส่งใบลาต่อหรือไม่?
+              {t("การลาครั้งนี้จะทำให้วันลาสะสมเกินจำนวนวันที่บริษัทกำหนด คุณต้องการยืนยันการส่งใบลาต่อหรือไม่?")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -731,10 +735,10 @@ export default function MyLeavesPage() {
                 setPendingLeaveFiles([]);
               }}
             >
-              ยกเลิก
+              {t("ยกเลิก")}
             </AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmOverLimit} disabled={isSubmitting}>
-              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "ยืนยันส่งใบลา"}
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : t("ยืนยันส่งใบลา")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
