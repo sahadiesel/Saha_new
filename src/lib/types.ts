@@ -664,6 +664,12 @@ export interface Document {
     arPaymentId: string;
   };
 
+  /** ใบเสร็จที่ยกเลิกหลัง confirm — id รายการตัดรายรับใน cashbook */
+  reversalEntryId?: string;
+  cancelledAt?: Timestamp;
+  cancelledByName?: string;
+  cancelledByUid?: string;
+
   /** ลายเซ็น / ผู้ออกเอกสาร (ใบวางบิล ฯลฯ) */
   senderName?: string;
   receiverName?: string;

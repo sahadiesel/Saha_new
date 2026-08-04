@@ -34,8 +34,19 @@ import {
 } from "@/lib/quotation-picker";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
+import {
+  cancelUnconfirmedReceipt,
+  isReceiptPaymentConfirmed,
+  reverseConfirmedReceipt,
+} from "@/lib/reverse-confirmed-receipt";
 
-function cancelReceiptDialogDescription(): string {
+function cancelReceiptDialogDescription(doc: Document): string {
+  if (isReceiptPaymentConfirmed(doc)) {
+    return (
+      "ยกเลิกใบเสร็จที่ยืนยันรับเงินแล้ว — ระบบจะบันทึกรายการตัดรายรับใน cashbook " +
+      "(ไม่ลบรายการรับเดิม) คืนสถานะใบกำกับเป็นรอออกใบเสร็จใหม่ ใบกำกับภาษีไม่ถูกยกเลิก"
+    );
+  }
   return (
     "ยกเลิกเฉพาะใบเสร็จรับเงินนี้ — ใบกำกับภาษีหรือใบวางบิลที่อ้างอิงไม่ถูกยกเลิก " +
     "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
@@ -47,7 +58,7 @@ function cancelDialogDescription(doc: Document): string {
     return "ยกเลิกเฉพาะเอกสารนี้ — ไม่เปลี่ยนสถานะงาน (แก้ราคา/ยอดบิลไม่เกี่ยวกับสถานะงาน) คุณสามารถออกเอกสารใหม่แทนได้เมื่อต้องการ";
   }
   if (doc.docType === "RECEIPT") {
-    return cancelReceiptDialogDescription();
+    return cancelReceiptDialogDescription(doc);
   }
   if (doc.docType === "TAX_INVOICE" || doc.docType === "DELIVERY_NOTE") {
     return (
@@ -68,6 +79,12 @@ function deleteDialogDescription(doc: Document): string {
     return "ลบเอกสารนี้อย่างถาวร — ไม่เปลี่ยนสถานะงาน";
   }
   if (doc.docType === "RECEIPT") {
+    if (isReceiptPaymentConfirmed(doc)) {
+      return (
+        "ไม่สามารถลบใบเสร็จที่ยืนยันรับเงินแล้ว — ให้ใช้ \"ยกเลิก\" เพื่อตัดรายรับใน cashbook แทน " +
+        "(ระบบเก็บประวัติใบเสร็จและรายการรับเดิมไว้)"
+      );
+    }
     return (
       "ลบใบเสร็จรับเงินนี้อย่างถาวร — ใบกำกับภาษีที่อ้างอิงไม่ถูกลบ " +
       "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
@@ -633,6 +650,24 @@ export function DocumentList({
     if (!db || !docToAction || !profile) return;
     setIsActionLoading(true);
     try {
+      if (docToAction.docType === "RECEIPT") {
+        const actor = {
+          uid: profile.uid,
+          displayName: profile.displayName || "User",
+        };
+        if (isReceiptPaymentConfirmed(docToAction)) {
+          await reverseConfirmedReceipt(db, docToAction, actor);
+          toast({
+            title: "ยกเลิกใบเสร็จและตัดรายรับเรียบร้อย",
+            description: "ใบกำกับพร้อมออกใบเสร็จใหม่และรอยืนยันรับเงินอีกครั้ง",
+          });
+        } else {
+          await cancelUnconfirmedReceipt(db, docToAction, actor);
+          toast({ title: "ยกเลิกใบเสร็จเรียบร้อย" });
+        }
+        return;
+      }
+
       const batch = writeBatch(db);
       const docRef = doc(db, 'documents', docToAction.id);
       const noteLine = `\n[System] ยกเลิกเมื่อ ${safeFormat(new Date(), APP_DATE_FORMAT + ' HH:mm')} โดย ${profile.displayName}`;
@@ -646,9 +681,6 @@ export function DocumentList({
         cancelUpdate.arStatus = deleteField();
       }
       batch.update(docRef, cancelUpdate);
-      if (docToAction.docType === "RECEIPT") {
-        clearReceiptLinksOnSourceDocs(batch, docToAction);
-      }
       if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
         await unlinkJob(batch, docToAction);
       }
@@ -667,6 +699,16 @@ export function DocumentList({
 
   const confirmDelete = async () => {
     if (!db || !docToAction || !profile) return;
+    if (docToAction.docType === "RECEIPT" && isReceiptPaymentConfirmed(docToAction)) {
+      toast({
+        variant: "destructive",
+        title: "ไม่สามารถลบได้",
+        description: "ใบเสร็จที่ยืนยันรับเงินแล้วให้ใช้ \"ยกเลิก\" เพื่อตัดรายรับแทน",
+      });
+      setIsDeleteAlertOpen(false);
+      setDocToAction(null);
+      return;
+    }
     setIsActionLoading(true);
     try {
       const batch = writeBatch(db);
