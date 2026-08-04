@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { MapPin, Phone, ExternalLink } from "lucide-react";
 import type { LandingPageContent } from "@/app/page";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ const SAHADIESEL_MAP_EMBED_SRC = `https://www.google.com/maps?q=${SAHADIESEL_LAT
 
 export default function ContactPage() {
   const { db } = useFirebase();
+  const { t } = useAppNavLabel();
   const [content, setContent] = useState<LandingPageContent>({
     heroTitle: "SAHADIESEL SERVICE CENTER",
     heroDescription: "",
@@ -94,8 +96,8 @@ export default function ContactPage() {
       <main className="relative z-10 flex-1 pt-24 pb-20">
         <section className="container mx-auto px-4">
           <div className="mb-12 animate-in fade-in slide-in-from-top-4 duration-700">
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 font-headline tracking-tight">ติดต่อเรา (Contact Us)</h1>
-            <p className="text-white/60 text-sm md:text-base">ข้อมูลการติดต่อและสถานที่ตั้งร้าน Sahadiesel Service Center</p>
+            <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 font-headline tracking-tight">{t("ติดต่อเรา (Contact Us)")}</h1>
+            <p className="text-white/60 text-sm md:text-base">{t("ข้อมูลการติดต่อและสถานที่ตั้งร้าน Sahadiesel Service Center")}</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-12">
@@ -104,12 +106,12 @@ export default function ContactPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-primary">
                     <MapPin className="h-5 w-5" />
-                    ข้อมูลการติดต่อและสถานที่ตั้ง
+                    {t("ข้อมูลการติดต่อและสถานที่ตั้ง")}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-2">
-                    <p className="text-xl font-bold">หจก. สหดีเซลกลการ (Sahadiesel Service Center)</p>
+                    <p className="text-xl font-bold">{t("หจก. สหดีเซลกลการ (Sahadiesel Service Center)")}</p>
                     <p className="text-slate-300 leading-relaxed">
                       {content.footerAddress}
                     </p>
@@ -121,7 +123,7 @@ export default function ContactPage() {
                     <div className="flex items-center gap-4">
                       <div className="bg-primary/20 p-3 rounded-full text-primary shadow-lg shadow-primary/10"><Phone className="h-6 w-6" /></div>
                       <div>
-                        <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">เบอร์โทรศัพท์</p>
+                        <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">{t("เบอร์โทรศัพท์")}</p>
                         {phoneTelHref ? (
                           <a href={phoneTelHref} className="text-xl font-bold text-white hover:text-primary transition-colors">
                             {content.footerPhone}
@@ -136,7 +138,7 @@ export default function ContactPage() {
                   <div className="pt-6">
                     <Button asChild variant="outline" className="w-full h-12 border-primary text-primary hover:bg-primary hover:text-white font-bold transition-all shadow-lg shadow-primary/5">
                       <a href={SAHADIESEL_GOOGLE_MAPS_URL} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="mr-2 h-4 w-4" /> เปิดใน Google Maps
+                        <ExternalLink className="mr-2 h-4 w-4" /> {t("เปิดใน Google Maps")}
                       </a>
                     </Button>
                   </div>
@@ -164,7 +166,7 @@ export default function ContactPage() {
                 aria-label="เปิดตำแหน่งร้านใน Google Maps"
               >
                 <span className="pointer-events-none rounded-full bg-background/90 px-4 py-2 text-sm font-bold text-foreground shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-                  เปิดใน Google Maps
+                  {t("เปิดใน Google Maps")}
                 </span>
               </a>
             </div>

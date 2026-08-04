@@ -23,11 +23,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ChevronDown, Menu, User, Briefcase, Phone, Package, Settings, Home, Mail, Wrench, LayoutDashboard, LogOut, MapPin } from "lucide-react";
 import { PublicLanguageSwitcher } from "@/components/public-language-switcher";
 import { cn } from "@/lib/utils";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 
 export function PublicHeader() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { user, profile, signOut } = useAuth();
+  const { t } = useAppNavLabel();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -59,19 +61,19 @@ export function PublicHeader() {
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-1">
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
-            <Link href="/">หน้าแรก</Link>
+            <Link href="/">{t("หน้าแรก")}</Link>
           </Button>
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
-            <Link href="/products">สินค้าและอะไหล่</Link>
+            <Link href="/products">{t("สินค้าและอะไหล่")}</Link>
           </Button>
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
-            <Link href="/services">งานบริการ</Link>
+            <Link href="/services">{t("งานบริการ")}</Link>
           </Button>
 
           <Button variant="ghost" asChild className="text-white hover:bg-white/10 hover:text-white font-medium">
-            <Link href="/contact">ติดต่อเรา</Link>
+            <Link href="/contact">{t("ติดต่อเรา")}</Link>
           </Button>
 
           <PublicLanguageSwitcher className="ml-2" />
@@ -89,7 +91,7 @@ export function PublicHeader() {
                 </Button>
               ) : (
                 <Button variant="outline" className="ml-4 border-primary text-primary hover:bg-primary hover:text-white font-bold gap-2 rounded-full">
-                  ลงชื่อเข้าใช้ <ChevronDown className="h-4 w-4" />
+                  {t("ลงชื่อเข้าใช้")} <ChevronDown className="h-4 w-4" />
                 </Button>
               )}
             </DropdownMenuTrigger>
@@ -99,32 +101,32 @@ export function PublicHeader() {
                   <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3">
                     <Link href="/login">
                       <Briefcase className="mr-2 h-4 w-4 text-primary" /> 
-                      สำหรับพนักงาน (Staff)
+                      {t("สำหรับพนักงาน (Staff)")}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-white/10" />
                   <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3">
                     <Link href="/login/customer">
                       <User className="mr-2 h-4 w-4 text-blue-400" /> 
-                      สำหรับลูกค้า (Customer)
+                      {t("สำหรับลูกค้า (Customer)")}
                     </Link>
                   </DropdownMenuItem>
                 </>
               ) : (
                 <>
                   <div className="px-3 py-2 text-[10px] text-slate-400 uppercase tracking-widest font-bold">
-                    เข้าใช้โดย: {profile?.displayName}
+                    {t("เข้าใช้โดย:")} {profile?.displayName}
                   </div>
                   <DropdownMenuSeparator className="bg-white/10" />
                   <DropdownMenuItem asChild className="focus:bg-primary/20 focus:text-white cursor-pointer py-3 font-bold text-primary">
                     <Link href={profile?.role === "CUSTOMER" ? "/customer" : "/app"}>
                       <LayoutDashboard className="mr-2 h-4 w-4" /> 
-                      หน้าหลักของฉัน
+                      {t("หน้าหลักของฉัน")}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={signOut} className="focus:bg-destructive/20 focus:text-destructive cursor-pointer py-3 text-destructive font-bold">
                     <LogOut className="mr-2 h-4 w-4" /> 
-                    ออกจากระบบ
+                    {t("ออกจากระบบ")}
                   </DropdownMenuItem>
                 </>
               )}
@@ -143,40 +145,40 @@ export function PublicHeader() {
             </SheetTrigger>
             <SheetContent side="right" className="bg-slate-900 border-white/10 text-white w-[300px] p-0">
               <SheetHeader className="p-6 border-b border-white/10 text-left">
-                <SheetTitle className="text-white font-headline text-xl">เมนูหลัก</SheetTitle>
+                <SheetTitle className="text-white font-headline text-xl">{t("เมนูหลัก")}</SheetTitle>
               </SheetHeader>
               
               <div className="flex flex-col p-4">
                 <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
                   <Link href="/">
                     <Home className="mr-3 h-5 w-5 text-primary" />
-                    หน้าแรก
+                    {t("หน้าแรก")}
                   </Link>
                 </Button>
 
                 <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
                   <Link href="/products">
                     <Package className="mr-3 h-5 w-5 text-primary" />
-                    สินค้าและอะไหล่
+                    {t("สินค้าและอะไหล่")}
                   </Link>
                 </Button>
 
                 <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
                   <Link href="/services">
                     <Wrench className="mr-3 h-5 w-5 text-primary" />
-                    งานบริการ
+                    {t("งานบริการ")}
                   </Link>
                 </Button>
 
                 <Button variant="ghost" asChild className="justify-start text-white hover:bg-white/10 mb-2 h-12" onClick={closeMobileMenu}>
                   <Link href="/contact">
                     <MapPin className="mr-3 h-5 w-5 text-primary" />
-                    ติดต่อเรา
+                    {t("ติดต่อเรา")}
                   </Link>
                 </Button>
 
                 <div className="flex items-center justify-between px-2 py-2 mb-2">
-                  <span className="text-xs text-slate-400 uppercase tracking-widest font-bold">ภาษา</span>
+                  <span className="text-xs text-slate-400 uppercase tracking-widest font-bold">{t("ภาษา")}</span>
                   <PublicLanguageSwitcher />
                 </div>
 
@@ -186,13 +188,13 @@ export function PublicHeader() {
                       <Button variant="outline" asChild className="w-full justify-start border-white/20 bg-white/5 h-12" onClick={closeMobileMenu}>
                         <Link href="/login">
                           <Briefcase className="mr-3 h-5 w-5 text-primary" />
-                          ลงชื่อเข้าใช้ (พนักงาน)
+                          {t("ลงชื่อเข้าใช้ (พนักงาน)")}
                         </Link>
                       </Button>
                       <Button variant="outline" asChild className="w-full justify-start border-white/20 bg-white/5 h-12" onClick={closeMobileMenu}>
                         <Link href="/login/customer">
                           <User className="mr-3 h-5 w-5 text-blue-400" />
-                          ลงชื่อเข้าใช้ (ลูกค้า)
+                          {t("ลงชื่อเข้าใช้ (ลูกค้า)")}
                         </Link>
                       </Button>
                     </div>
@@ -201,12 +203,12 @@ export function PublicHeader() {
                       <Button variant="ghost" asChild className="justify-start text-primary h-12 font-bold" onClick={closeMobileMenu}>
                         <Link href={profile?.role === "CUSTOMER" ? "/customer" : "/app"}>
                           <LayoutDashboard className="mr-3 h-5 w-5" />
-                          หน้าหลักของฉัน
+                          {t("หน้าหลักของฉัน")}
                         </Link>
                       </Button>
                       <Button variant="ghost" onClick={() => { signOut(); closeMobileMenu(); }} className="w-full justify-start text-destructive h-12 font-bold">
                         <LogOut className="mr-3 h-5 w-5" />
-                        ออกจากระบบ
+                        {t("ออกจากระบบ")}
                       </Button>
                     </div>
                   )}

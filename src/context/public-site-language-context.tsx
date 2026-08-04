@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   getPublicSiteLanguage,
+  clearGoogleTranslateArtifacts,
   type PublicSiteLanguage,
 } from "@/lib/public-site-language";
 import { translateAppNavLabel } from "@/lib/app-nav-i18n";
@@ -35,6 +36,7 @@ export function PublicSiteLanguageProvider({ children }: { children: ReactNode }
   }, []);
 
   useEffect(() => {
+    clearGoogleTranslateArtifacts();
     refreshLanguage();
     const onStorage = (e: StorageEvent) => {
       if (e.key === "sahadiesel-public-lang") refreshLanguage();

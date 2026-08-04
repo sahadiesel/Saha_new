@@ -12,6 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, ShieldCheck, Wrench, Gauge, MapPin, Phone, ExternalLink } from "lucide-react";
+import { useAppNavLabel } from "@/context/public-site-language-context";
+import { translateLandingContent } from "@/lib/translate-landing-content";
+import { useMemo } from "react";
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +43,7 @@ export interface LandingPageContent {
 
 export default function LandingPage() {
   const { db } = useFirebase();
+  const { t } = useAppNavLabel();
   const [content, setContent] = useState<LandingPageContent>({
     heroTitle: "SAHADIESEL SERVICE CENTER",
     heroDescription: "ศูนย์บริการรถยนต์ครบวงจรที่มีมาตรฐานและเครื่องมือครบครัน พร้อมเครื่องวิเคราะห์รถยนต์ที่ทันสมัย ให้บริการเช็คระยะ ซ่อมเครื่องยนต์และระบบไฟฟ้า ซ่อมบำรุงรถยนต์นำเข้าได้หลากรุ่น หลายแบรนด์ โดยทีมช่างมากประสบการณ์ และมีระบบออนไลน์ในการติดตามงาน ซึ่งลูกค้าสามารถตรวจสอบสถานะการซ่อมได้ตลอดเวลา",
@@ -77,6 +81,11 @@ export default function LandingPage() {
     fetchContent();
   }, [db]);
 
+  const displayContent = useMemo(
+    () => translateLandingContent(content, t),
+    [content, t]
+  );
+
   const bgImage = PlaceHolderImages.find(img => img.id === "login-bg") || PlaceHolderImages[0];
 
   return (
@@ -98,23 +107,23 @@ export default function LandingPage() {
           
           <div className="container relative z-10 mx-auto px-4 text-center max-w-4xl py-12">
             <h1 className="font-headline text-5xl md:text-7xl font-bold mb-6 tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
-              {content.heroTitle}
+              {displayContent.heroTitle}
             </h1>
             
             <div className="relative mb-8 p-6 md:p-10 border-2 border-primary/40 rounded-sm bg-black/20 backdrop-blur-sm animate-in fade-in slide-in-from-bottom-6 duration-1000 delay-200">
                 <p className="text-lg md:text-xl text-slate-200 leading-relaxed font-medium">
-                  {content.heroDescription}
+                  {displayContent.heroDescription}
                 </p>
             </div>
 
             <div className="flex flex-wrap justify-center gap-4 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-300">
               <Button size="lg" className="rounded-full px-10 h-12 text-base font-bold bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20 transition-all hover:scale-105" asChild>
                 <Link href="/products">
-                  {content.buttonText} <ArrowRight className="ml-2 h-4 w-4" />
+                  {displayContent.buttonText} <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
               <Button size="lg" variant="outline" className="rounded-full px-10 h-12 text-base font-bold border-white/20 bg-white/5 hover:bg-white/10 text-white backdrop-blur-sm" asChild>
-                <Link href="/contact">นัดหมายบริการ</Link>
+                <Link href="/contact">{t("นัดหมายบริการ")}</Link>
               </Button>
             </div>
           </div>
@@ -125,35 +134,35 @@ export default function LandingPage() {
           <div className="container mx-auto px-4">
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
-                <h2 className="text-3xl font-bold border-l-4 border-primary pl-4">{content.servicesTitle}</h2>
+                <h2 className="text-3xl font-bold border-l-4 border-primary pl-4">{displayContent.servicesTitle}</h2>
                 
                 <div className="space-y-6">
                   <div className="flex gap-4 group">
                     <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><ShieldCheck className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">{content.s1Title}</h3>
-                      <p className="text-slate-400 text-sm">{content.s1Desc}</p>
+                      <h3 className="font-bold text-lg text-white">{displayContent.s1Title}</h3>
+                      <p className="text-slate-400 text-sm">{displayContent.s1Desc}</p>
                     </div>
                   </div>
                   <div className="flex gap-4 group">
                     <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><CheckCircle2 className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">{content.s2Title}</h3>
-                      <p className="text-slate-400 text-sm">{content.s2Desc}</p>
+                      <h3 className="font-bold text-lg text-white">{displayContent.s2Title}</h3>
+                      <p className="text-slate-400 text-sm">{displayContent.s2Desc}</p>
                     </div>
                   </div>
                   <div className="flex gap-4 group">
                     <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><Wrench className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">{content.s3Title}</h3>
-                      <p className="text-slate-400 text-sm">{content.s3Desc}</p>
+                      <h3 className="font-bold text-lg text-white">{displayContent.s3Title}</h3>
+                      <p className="text-slate-400 text-sm">{displayContent.s3Desc}</p>
                     </div>
                   </div>
                   <div className="flex gap-4 group">
                     <div className="mt-1 bg-primary/20 p-2 rounded-lg h-fit text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300"><Gauge className="h-6 w-6"/></div>
                     <div>
-                      <h3 className="font-bold text-lg text-white">{content.s4Title}</h3>
-                      <p className="text-slate-400 text-sm">{content.s4Desc}</p>
+                      <h3 className="font-bold text-lg text-white">{displayContent.s4Title}</h3>
+                      <p className="text-slate-400 text-sm">{displayContent.s4Desc}</p>
                     </div>
                   </div>
                 </div>

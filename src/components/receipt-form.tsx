@@ -134,23 +134,20 @@ export function ReceiptForm() {
 
   const customerNameById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const c of customers) map.set(c.id, c.name);
+    const labelFromSnap = (snap: DocumentType["customerSnapshot"]) =>
+      snap?.taxName?.trim() || snap?.name?.trim() || "";
     for (const d of [...sourceDocs, ...extraSourceDocs]) {
       const cid = resolveDocCustomerId(d);
-      if (cid && !map.has(cid)) {
-        map.set(cid, d.customerSnapshot?.name || d.customerSnapshot?.taxName || "ลูกค้า");
-      }
+      const label = labelFromSnap(d.customerSnapshot);
+      if (cid && label) map.set(cid, label);
     }
     if (bootstrapSourceDoc) {
       const cid = resolveDocCustomerId(bootstrapSourceDoc);
-      if (cid && !map.has(cid)) {
-        map.set(
-          cid,
-          bootstrapSourceDoc.customerSnapshot?.name ||
-            bootstrapSourceDoc.customerSnapshot?.taxName ||
-            "ลูกค้า"
-        );
-      }
+      const label = labelFromSnap(bootstrapSourceDoc.customerSnapshot);
+      if (cid && label) map.set(cid, label);
+    }
+    for (const c of customers) {
+      if (!map.has(c.id)) map.set(c.id, c.taxName?.trim() || c.name || "ลูกค้า");
     }
     return map;
   }, [customers, sourceDocs, extraSourceDocs, bootstrapSourceDoc]);
@@ -433,22 +430,19 @@ export function ReceiptForm() {
 
   const customerDisplayName = useMemo(() => {
     if (!selectedCustomerId) return "";
-    const fromList = customers.find((c) => c.id === selectedCustomerId)?.name;
-    if (fromList) return fromList;
     const snap = displaySourceDocs.find(
       (d) => (d.customerId || d.customerSnapshot?.id) === selectedCustomerId
     )?.customerSnapshot;
-    if (snap?.name || snap?.taxName) return snap.name || snap.taxName || "";
+    if (snap?.taxName || snap?.name) return snap.taxName || snap.name || "";
     if (bootstrapSourceDoc) {
       const bid = bootstrapSourceDoc.customerId || bootstrapSourceDoc.customerSnapshot?.id;
       if (bid === selectedCustomerId) {
-        return (
-          bootstrapSourceDoc.customerSnapshot?.name ||
-          bootstrapSourceDoc.customerSnapshot?.taxName ||
-          ""
-        );
+        const bs = bootstrapSourceDoc.customerSnapshot;
+        return bs?.taxName || bs?.name || "";
       }
     }
+    const fromList = customers.find((c) => c.id === selectedCustomerId);
+    if (fromList) return fromList.taxName?.trim() || fromList.name || "";
     return "";
   }, [selectedCustomerId, customers, displaySourceDocs, bootstrapSourceDoc]);
 
@@ -470,6 +464,20 @@ export function ReceiptForm() {
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   });
+
+  /** ใช้ snapshot จากใบกำกับ/ใบวางบill ต้นทาง — ไม่ดึงชื่อจาก customers/ ที่อาจต่างจากใบกำกับ */
+  const resolveReceiptCustomer = (
+    customerId: string,
+    selectedDocs: DocumentType[]
+  ): Customer | undefined => {
+    const primaryDoc =
+      selectedDocs.find((d) => resolveDocCustomerId(d) === customerId) || selectedDocs[0];
+    const snap = primaryDoc?.customerSnapshot;
+    if (snap && (snap.name || snap.taxName)) {
+      return buildCustomerFromSnapshot(customerId, snap);
+    }
+    return customers.find((c) => c.id === customerId);
+  };
 
   const handleToggleDoc = (docId: string) => {
     const docRow = tableDocs.find((d) => d.id === docId);
@@ -503,13 +511,7 @@ export function ReceiptForm() {
     const canonicalCustomerId =
       data.customerId || selectedDocs[0]?.customerId || selectedDocs[0]?.customerSnapshot?.id || "";
 
-    let customer: Customer | undefined = customers.find((c) => c.id === canonicalCustomerId);
-    if (!customer && selectedDocs.length > 0) {
-      const snap = selectedDocs[0].customerSnapshot;
-      if (snap && (snap.name || snap.taxName)) {
-        customer = buildCustomerFromSnapshot(canonicalCustomerId, snap);
-      }
-    }
+    const customer = resolveReceiptCustomer(canonicalCustomerId, selectedDocs);
 
     if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || !account) {
       toast({
@@ -527,7 +529,11 @@ export function ReceiptForm() {
 
     const items = selectedDocs.map(doc => {
       const docCustomerId = resolveDocCustomerId(doc);
-      const docCustomerName = customerNameById.get(docCustomerId) || doc.customerSnapshot?.name || "";
+      const docCustomerName =
+        customerNameById.get(docCustomerId) ||
+        doc.customerSnapshot?.taxName ||
+        doc.customerSnapshot?.name ||
+        "";
       const customerLabel = allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
       return {
         description: `ชำระค่าสินค้า/บริการ${customerLabel} ตาม${doc.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : "ใบวางบิล"} เลขที่ ${doc.docNo}`,
@@ -915,7 +921,7 @@ export function ReceiptForm() {
                                         </TableCell>
                                         {showCustomerColumn && (
                                           <TableCell className="text-xs max-w-[140px] truncate">
-                                            {customerNameById.get(resolveDocCustomerId(doc)) || doc.customerSnapshot?.name || "—"}
+                                            {customerNameById.get(resolveDocCustomerId(doc)) || doc.customerSnapshot?.taxName || doc.customerSnapshot?.name || "—"}
                                           </TableCell>
                                         )}
                                         <TableCell>

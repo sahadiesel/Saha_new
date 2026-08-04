@@ -11,12 +11,14 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Wrench, Construction, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 import type { LandingPageContent } from "@/app/page";
 
 export const dynamic = 'force-dynamic';
 
 export default function ServicesPage() {
   const { db } = useFirebase();
+  const { t } = useAppNavLabel();
   const [content, setContent] = useState<LandingPageContent | null>(null);
 
   useEffect(() => {
@@ -60,14 +62,14 @@ export default function ServicesPage() {
               <div className="mx-auto bg-primary/20 p-6 rounded-full w-fit mb-6 shadow-xl shadow-primary/10">
                 <Construction className="h-16 w-16 text-primary animate-pulse" />
               </div>
-              <CardTitle className="text-3xl md:text-4xl font-bold font-headline mb-2">งานบริการ (Our Services)</CardTitle>
+              <CardTitle className="text-3xl md:text-4xl font-bold font-headline mb-2">{t("งานบริการ (Our Services)")}</CardTitle>
               <CardDescription className="text-slate-400 text-lg">
-                หน้านี้กำลังอยู่ระหว่างการปรับปรุงข้อมูลค่ะ
+                {t("หน้านี้กำลังอยู่ระหว่างการปรับปรุงข้อมูลค่ะ")}
               </CardDescription>
             </CardHeader>
             <CardContent className="px-8 pb-12 text-center space-y-6">
               <p className="text-slate-300 leading-relaxed">
-                เรากำลังจัดเตรียมรายละเอียดงานบริการ ทั้งงานซ่อมบำรุงรถยนต์นำเข้า งานซ่อมปั๊มหัวฉีดคอมมอนเรล และขั้นตอนมาตรฐาน 4S เพื่อให้ท่านได้รับข้อมูลที่ครบถ้วนที่สุด
+                {t("เรากำลังจัดเตรียมรายละเอียดงานบริการ ทั้งงานซ่อมบำรุงรถยนต์นำเข้า งานซ่อมปั๊มหัวฉีดคอมมอนเรล และขั้นตอนมาตรฐาน 4S เพื่อให้ท่านได้รับข้อมูลที่ครบถ้วนที่สุด")}
               </p>
               
               <div className="flex items-center justify-center gap-2 text-primary font-bold text-sm uppercase tracking-widest">
@@ -78,7 +80,7 @@ export default function ServicesPage() {
               <div className="pt-6">
                 <Button asChild variant="outline" className="border-white/20 bg-white/5 hover:bg-white/10 text-white rounded-full px-8">
                   <Link href="/">
-                    <ArrowLeft className="mr-2 h-4 w-4" /> กลับสู่หน้าหลัก
+                    <ArrowLeft className="mr-2 h-4 w-4" /> {t("กลับสู่หน้าหลัก")}
                   </Link>
                 </Button>
               </div>

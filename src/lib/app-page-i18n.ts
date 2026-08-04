@@ -106,10 +106,65 @@ export const APP_PAGE_LABELS: Record<string, NavTranslation> = {
     en: "King's Birthday",
     my: "King's Birthday",
   },
-  "วันแม่แห่งชาติ": { en: "Mother's Day", my: "Mother's Day" },
-  "วันพ่อแห่งชาติ": { en: "Father's Day", my: "Father's Day" },
+  "วันแม่แห่งชาติ": { en: "Mother's Day", my: "မိခင်များနေ့" },
+  "วันพ่อแห่งชาติ": { en: "Father's Day", my: "ဖခင်များနေ့" },
   "วันแรงงาน": { en: "Labour Day", my: "အလုပ်သမားနေ့" },
   "วันหยุดราชการ": { en: "Public Holiday", my: "အများပြည်သူ ရုံးပိတ်ရက်" },
+  Songkran: { en: "Songkran", my: "Songkran" },
+  "ชดเชยสารทเดือน10": {
+    en: "End of Buddhist Lent (substitute)",
+    my: "၁၀ လမြောက် ကုသိုလ်ပြုနေ့",
+  },
+  "ชดเชยวันออกพรรษา": {
+    en: "End of Buddhist Lent (substitute)",
+    my: "၁၀ လမြောက် ကုသိုလ်ပြုနေ့",
+  },
+  "วันนวมินทรมหาราช": {
+    en: "King Bhumibol Memorial Day",
+    my: "Bhumibol Memorial Day",
+  },
+  "วันปิยมหาราช": {
+    en: "King Chulalongkorn Day",
+    my: "Chulalongkorn Day",
+  },
+  "ชดเชยวันพ่อแห่งชาติ": {
+    en: "Father's Day (substitute)",
+    my: "Father's Day (substitute)",
+  },
+  "วันสิ้นปี": { en: "New Year's Eve", my: "နှစ်ကူးကန့်လန့်နေ့" },
+  "วันมาฆบูชา": { en: "Makha Bucha Day", my: "Makha Bucha" },
+  "วันจักรี": { en: "Chakri Memorial Day", my: "Chakri Memorial Day" },
+  "วันฉัตรมงคล": { en: "Coronation Day", my: "Coronation Day" },
+  "วันวิสาขบูชา": { en: "Visakha Bucha Day", my: "Visakha Bucha" },
+  "วันอาสาฬหบูชา": { en: "Asarnha Bucha Day", my: "Asarnha Bucha" },
+  "วันเข้าพรรษา": { en: "Buddhist Lent Day", my: "Buddhist Lent Day" },
+  "วันออกพรรษา": { en: "End of Buddhist Lent", my: "End of Buddhist Lent" },
+  "วันเฉลิมพระชนมพรรษาสมเด็จพระนางเจ้าสิริกิติ์ พระบรมราชินีนาถ": {
+    en: "Queen Sirikit's Birthday",
+    my: "Queen Sirikit's Birthday",
+  },
+  "วันเฉลิมพระชนมพรรษาสมเด็จพระนางเจ้าสุทิดา พัชรสุธาพิมลลักษณ": {
+    en: "Queen Suthida's Birthday",
+    my: "Queen Suthida's Birthday",
+  },
+  "ชดเชยวันแม่แห่งชาติ": {
+    en: "Mother's Day (substitute)",
+    my: "Mother's Day (substitute)",
+  },
+  "ชดเชยวันปีใหม่": {
+    en: "New Year's Day (substitute)",
+    my: "New Year's Day (substitute)",
+  },
+  "ชดเชยสงกรานต์": {
+    en: "Songkran (substitute)",
+    my: "Songkran (substitute)",
+  },
+  "ชดเชยตรุษจีน": {
+    en: "Chinese New Year (substitute)",
+    my: "Chinese New Year (substitute)",
+  },
+  "วันหยุดชดเชย": { en: "Substitute Holiday", my: "Substitute Holiday" },
+  "วันพระราชทานธงชาติ": { en: "National Flag Day", my: "National Flag Day" },
 
   // My Payslips page
   "ตรวจสอบสลิปเงินเดือนและกดยืนยัน": {

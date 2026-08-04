@@ -2,20 +2,52 @@
 
 import { Globe, Phone, MapPin, Facebook } from "lucide-react";
 import type { LandingPageContent } from "@/app/page";
+import { useAppNavLabel } from "@/context/public-site-language-context";
+import { translateLandingContent } from "@/lib/translate-landing-content";
 
 interface PublicFooterProps {
   content?: LandingPageContent;
 }
 
 export function PublicFooter({ content }: PublicFooterProps) {
-  // Use provided content or fallbacks
-  const aboutTitle = content?.footerAboutTitle || "เกี่ยวกับเรา";
-  const aboutDesc = content?.footerAboutDesc || "Sahadiesel Service Center ผู้เชี่ยวชาญด้านการซ่อมบำรุงรถยนต์และระบบปั๊มหัวฉีดคอมมอนเรล";
-  const contactTitle = content?.footerContactTitle || "ติดต่อเรา";
-  const phone = content?.footerPhone || "02-XXX-XXXX";
-  const address = content?.footerAddress || "เขตภาษีเจริญ กรุงเทพมหานคร";
-  const website = content?.footerWebsite || "www.sahadiesel.com";
-  const facebookUrl = content?.footerFacebookUrl || "#";
+  const { t } = useAppNavLabel();
+
+  const baseContent: LandingPageContent = {
+    heroTitle: "",
+    heroDescription: "",
+    buttonText: "",
+    servicesTitle: "",
+    s1Title: "",
+    s1Desc: "",
+    s2Title: "",
+    s2Desc: "",
+    s3Title: "",
+    s3Desc: "",
+    s4Title: "",
+    s4Desc: "",
+    footerAboutTitle: content?.footerAboutTitle || "เกี่ยวกับเรา",
+    footerAboutDesc:
+      content?.footerAboutDesc ||
+      "Sahadiesel Service Center ผู้เชี่ยวชาญด้านการซ่อมบำรุงรถยนต์และระบบปั๊มหัวฉีดคอมมอนเรล",
+    footerContactTitle: content?.footerContactTitle || "ติดต่อเรา",
+    footerPhone: content?.footerPhone || "02-XXX-XXXX",
+    footerAddress: content?.footerAddress || "เขตภาษีเจริญ กรุงเทพมหานคร",
+    footerWebsite: content?.footerWebsite || "www.sahadiesel.com",
+    footerFacebookUrl: content?.footerFacebookUrl || "#",
+  };
+
+  const translated = translateLandingContent(
+    content ? { ...baseContent, ...content } : baseContent,
+    t
+  );
+
+  const aboutTitle = translated.footerAboutTitle;
+  const aboutDesc = translated.footerAboutDesc;
+  const contactTitle = translated.footerContactTitle;
+  const phone = translated.footerPhone;
+  const address = translated.footerAddress;
+  const website = translated.footerWebsite;
+  const facebookUrl = translated.footerFacebookUrl;
 
   return (
     <footer className="bg-slate-950 text-slate-400 py-12 border-t border-white/5">
@@ -47,7 +79,7 @@ export function PublicFooter({ content }: PublicFooterProps) {
           </div>
 
           <div className="space-y-4">
-            <h3 className="text-white font-bold text-lg border-l-2 border-primary pl-3">ติดตามเรา</h3>
+            <h3 className="text-white font-bold text-lg border-l-2 border-primary pl-3">{t("ติดตามเรา")}</h3>
             <div className="flex gap-4">
               <a 
                 href={facebookUrl} 

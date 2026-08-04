@@ -45,6 +45,7 @@ import type { Part, PartCategory } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/auth-context";
 import Link from "next/link";
+import { useAppNavLabel } from "@/context/public-site-language-context";
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,7 @@ export default function PublicProductsPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
   const { user, profile } = useAuth();
+  const { t } = useAppNavLabel();
   const canUseCart = !!(user && profile?.role === "CUSTOMER" && profile?.status === "ACTIVE");
   
   const [parts, setParts] = useState<Part[]>([]);
@@ -199,18 +201,18 @@ export default function PublicProductsPage() {
           
           <div className="flex flex-col md:flex-row justify-between items-end gap-6 mb-12">
             <div className="animate-in fade-in slide-in-from-top-4 duration-700">
-              <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 font-headline tracking-tight">สินค้าและอะไหล่</h1>
-              <p className="text-white/60 text-sm md:text-base">เลือกชมรายการอะไหล่มาตรฐาน Sahadiesel ในราคาพิเศษ</p>
+              <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 font-headline tracking-tight">{t("สินค้าและอะไหล่")}</h1>
+              <p className="text-white/60 text-sm md:text-base">{t("เลือกชมรายการอะไหล่มาตรฐาน Sahadiesel ในราคาพิเศษ")}</p>
             </div>
             
             <div className="flex w-full md:w-auto flex-col md:flex-row items-stretch md:items-center gap-3">
               {!canUseCart && (
                 <p className="text-white/70 text-xs md:max-w-xs order-2 md:order-none">
-                  ดูรายการได้โดยไม่ต้องล็อกอิน —{" "}
+                  {t("ดูรายการได้โดยไม่ต้องล็อกอิน —")}{" "}
                   <Link href="/login/customer" className="text-primary font-bold underline">
-                    เข้าสู่ระบบลูกค้า
+                    {t("เข้าสู่ระบบลูกค้า")}
                   </Link>{" "}
-                  เพื่อใส่ตะกร้าและสั่งซื้อ
+                  {t("เพื่อใส่ตะกร้าและสั่งซื้อ")}
                 </p>
               )}
               <div className="relative flex-1 md:w-80">

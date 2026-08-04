@@ -240,7 +240,10 @@ function ConfirmReceiptPageContent() {
             const entryId = `RECEIPT_${receipt.id}`;
             const entryRef = doc(db, 'accountingEntries', entryId);
 
-            const customerName = rData.customerSnapshot?.name || 'ลูกค้าทั่วไป';
+            const customerName =
+              rData.customerSnapshot?.taxName ||
+              rData.customerSnapshot?.name ||
+              "ลูกค้าทั่วไป";
             const receiptDocNo = rData.docNo || "Unknown";
 
             transaction.set(arPaymentRef, sanitizeForFirestore({

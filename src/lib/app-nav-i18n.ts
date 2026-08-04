@@ -1,5 +1,6 @@
 import type { PublicSiteLanguage } from "@/lib/public-site-language";
 import { APP_PAGE_LABELS } from "@/lib/app-page-i18n";
+import { PUBLIC_SITE_LABELS } from "@/lib/public-site-i18n";
 
 export type NavTranslation = { en: string; my: string };
 
@@ -115,6 +116,7 @@ const APP_NAV_LABELS: Record<string, NavTranslation> = {
 const ALL_APP_LABELS: Record<string, NavTranslation> = {
   ...APP_NAV_LABELS,
   ...APP_PAGE_LABELS,
+  ...PUBLIC_SITE_LABELS,
 };
 
 export function translateAppNavLabel(
@@ -124,5 +126,6 @@ export function translateAppNavLabel(
   if (lang === "th") return thaiLabel;
   const entry = ALL_APP_LABELS[thaiLabel];
   if (!entry) return thaiLabel;
-  return entry[lang];
+  if (lang === "mm") return entry.my;
+  return entry.en;
 }

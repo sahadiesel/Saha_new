@@ -35,6 +35,47 @@ import {
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
 
+function cancelReceiptDialogDescription(): string {
+  return (
+    "ยกเลิกเฉพาะใบเสร็จรับเงินนี้ — ใบกำกับภาษีหรือใบวางบิลที่อ้างอิงไม่ถูกยกเลิก " +
+    "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
+  );
+}
+
+function cancelDialogDescription(doc: Document): string {
+  if (doc.docType === "CREDIT_NOTE" || doc.docType === "DEBIT_NOTE") {
+    return "ยกเลิกเฉพาะเอกสารนี้ — ไม่เปลี่ยนสถานะงาน (แก้ราคา/ยอดบิลไม่เกี่ยวกับสถานะงาน) คุณสามารถออกเอกสารใหม่แทนได้เมื่อต้องการ";
+  }
+  if (doc.docType === "RECEIPT") {
+    return cancelReceiptDialogDescription();
+  }
+  if (doc.docType === "TAX_INVOICE" || doc.docType === "DELIVERY_NOTE") {
+    return (
+      'ยกเลิกใบกำกับภาษี/ใบส่งของนี้ — ระบบจะย้อนสถานะงานที่เชื่อมไว้กลับเป็น "ทำเสร็จ" (DONE) ' +
+      "เพื่อให้ออกเอกสารใหม่ได้ (ถ้างานยังไม่ปิด) — ไม่เกี่ยวกับใบเสร็จรับเงิน"
+    );
+  }
+  if (doc.docType === "BILLING_NOTE") {
+    return "ยกเลิกใบวางบิลนี้ — ใบกำกับภาษีที่รวมอยู่ไม่ถูกยกเลิก";
+  }
+  return (
+    'ระบบจะยกเลิกเอกสารนี้ — หากเชื่อมกับงานซ่อม อาจย้อนสถานะงานกลับเป็น "ทำเสร็จ" (DONE) เพื่อให้ออกเอกสารใหม่ได้'
+  );
+}
+
+function deleteDialogDescription(doc: Document): string {
+  if (doc.docType === "CREDIT_NOTE" || doc.docType === "DEBIT_NOTE") {
+    return "ลบเอกสารนี้อย่างถาวร — ไม่เปลี่ยนสถานะงาน";
+  }
+  if (doc.docType === "RECEIPT") {
+    return (
+      "ลบใบเสร็จรับเงินนี้อย่างถาวร — ใบกำกับภาษีที่อ้างอิงไม่ถูกลบ " +
+      "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
+    );
+  }
+  return 'ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ';
+}
+
 interface DocumentListProps {
   docType: DocType;
   limit?: number;
@@ -538,7 +579,21 @@ export function DocumentList({
 
   /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
   const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
-    docObj.docType !== "CREDIT_NOTE" && docObj.docType !== "DEBIT_NOTE";
+    docObj.docType !== "CREDIT_NOTE" &&
+    docObj.docType !== "DEBIT_NOTE" &&
+    docObj.docType !== "RECEIPT";
+
+  const clearReceiptLinksOnSourceDocs = (batch: ReturnType<typeof writeBatch>, receipt: Document) => {
+    if (receipt.docType !== "RECEIPT" || !receipt.referencesDocIds?.length || !db) return;
+    for (const refId of receipt.referencesDocIds) {
+      batch.update(doc(db, "documents", refId), {
+        receiptStatus: deleteField(),
+        receiptDocId: deleteField(),
+        receiptDocNo: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  };
 
   const unlinkJob = async (batch: any, docObj: Document) => {
     if (!docObj.jobId) return;
@@ -591,6 +646,9 @@ export function DocumentList({
         cancelUpdate.arStatus = deleteField();
       }
       batch.update(docRef, cancelUpdate);
+      if (docToAction.docType === "RECEIPT") {
+        clearReceiptLinksOnSourceDocs(batch, docToAction);
+      }
       if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
         await unlinkJob(batch, docToAction);
       }
@@ -612,6 +670,9 @@ export function DocumentList({
     setIsActionLoading(true);
     try {
       const batch = writeBatch(db);
+      if (docToAction.docType === "RECEIPT") {
+        clearReceiptLinksOnSourceDocs(batch, docToAction);
+      }
       if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
         await unlinkJob(batch, docToAction);
       }
@@ -819,14 +880,10 @@ export function DocumentList({
         {totalPages > 1 && (<CardFooter className="justify-center"><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 0}><ChevronLeft className="h-4 w-4" /></Button><span className="text-xs text-muted-foreground">หน้า {currentPage + 1} จาก {totalPages}</span><Button variant="outline" size="sm" onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage >= totalPages - 1}><ChevronRight className="h-4 w-4" /></Button></div></CardFooter>)}
       </Card>
       <AlertDialog open={isCancelAlertOpen} onOpenChange={setIsCancelAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ยกเลิกเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>
-        {docToAction?.docType === "CREDIT_NOTE" || docToAction?.docType === "DEBIT_NOTE"
-          ? "ยกเลิกเฉพาะเอกสารนี้ — ไม่เปลี่ยนสถานะงาน (แก้ราคา/ยอดบิลไม่เกี่ยวกับสถานะงาน) คุณสามารถออกเอกสารใหม่แทนได้เมื่อต้องการ"
-          : 'ระบบจะยกเลิกบิลนี้และย้อนสถานะจ๊อบเป็น "ทำเสร็จ" (DONE) เพื่อให้สามารถออกบิลใหม่ทดแทนได้ค่ะ'}
+        {docToAction ? cancelDialogDescription(docToAction) : ""}
       </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmCancel} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันยกเลิก'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ลบเอกสาร {docToAction?.docNo}</AlertDialogTitle><AlertDialogDescription>
-        {docToAction?.docType === "CREDIT_NOTE" || docToAction?.docType === "DEBIT_NOTE"
-          ? "ลบเอกสารนี้อย่างถาวร — ไม่เปลี่ยนสถานะงาน"
-          : 'ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ'}
+        {docToAction ? deleteDialogDescription(docToAction) : ""}
       </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 

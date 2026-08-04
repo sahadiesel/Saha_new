@@ -25,8 +25,9 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="th">
+    <html lang="th" className="notranslate" translate="no">
        <head>
+        <meta name="google" content="notranslate" />
         <meta name="application-name" content="Sahadiesel System" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -35,14 +36,45 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icon-192x192.png"></link>
         <script dangerouslySetInnerHTML={{ __html: `
+          (function () {
+            var expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+            document.cookie = 'googtrans=;path=/;expires=' + expired;
+            document.documentElement.classList.remove('translated-ltr', 'translated-rtl');
+            sessionStorage.removeItem('gt-recover-reload');
+            sessionStorage.removeItem('gt-recover-retries');
+          })();
+
+          window.addEventListener('load', function () {
+            sessionStorage.removeItem('gt-recover-reload');
+            sessionStorage.removeItem('gt-recover-retries');
+          });
+
           window.addEventListener('error', (event) => {
             // 1. Fix for Chunk Load Errors
             if (event.message && (event.message.includes('ChunkLoadError') || event.message.includes('Loading chunk'))) {
               console.warn('ChunkLoadError detected, reloading page...');
               window.location.reload();
             }
+
+            // 2. Google Translate / extension DOM conflicts with React
+            if (
+              event.message && (
+                event.message.includes('removeChild') ||
+                event.message.includes('insertBefore') ||
+                event.message.includes('not a child of this node')
+              )
+            ) {
+              var expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+              document.cookie = 'googtrans=;path=/;expires=' + expired;
+              document.documentElement.classList.remove('translated-ltr', 'translated-rtl');
+              var gtRetries = parseInt(sessionStorage.getItem('gt-recover-retries') || '0', 10);
+              if (gtRetries < 2) {
+                sessionStorage.setItem('gt-recover-retries', String(gtRetries + 1));
+                window.location.reload();
+              }
+            }
             
-            // 2. Fix for Browser Extension Errors (e.g. MetaMask, AdBlock)
+            // 3. Fix for Browser Extension Errors (e.g. MetaMask, AdBlock)
             // These are not app bugs, so we suppress them from the Next.js error overlay.
             if (
               event.filename && (
@@ -64,7 +96,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           });
         ` }} />
       </head>
-      <body>
+      <body className="notranslate">
         <Providers>
           <AppShellClient>{children}</AppShellClient>
           <Toaster />

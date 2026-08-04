@@ -212,10 +212,17 @@ export function AppShellClient({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMounted(true);
+    // โหลดสำเร็จ — ล้าง flag กู้คืนจาก Google Translate เพื่อให้ reload ได้อีกครั้งถ้า DOM พังซ้ำ
+    try {
+      sessionStorage.removeItem("gt-recover-reload");
+      sessionStorage.removeItem("gt-recover-retries");
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   if (!mounted) {
-    return null;
+    return <FullscreenSpinner />;
   }
 
   return (

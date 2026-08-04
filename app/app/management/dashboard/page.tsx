@@ -117,6 +117,12 @@ const purchaseInputVat = (p: PurchaseDoc, interval: { start: Date; end: Date }):
   return p.vatAmount || 0;
 };
 
+const parseDueDateSafe = (s: string | undefined): Date | null => {
+  if (!s || typeof s !== "string") return null;
+  const d = parseISO(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 const getTrend = (current: number, previous: number) => {
   if (previous === 0) return current > 0 ? 100 : 0;
   return ((current - previous) / previous) * 100;
@@ -564,7 +570,11 @@ function AppDashboardPage() {
       },
       { 
         label: "ลูกหนี้เกินกำหนดชำระ", 
-        count: obligations.filter(o => o.type === 'AR' && o.status !== 'PAID' && o.dueDate && isBefore(parseISO(o.dueDate), startOfToday())).length, 
+        count: obligations.filter(o => {
+          if (o.type !== 'AR' || o.status === 'PAID' || !o.dueDate) return false;
+          const due = parseDueDateSafe(o.dueDate);
+          return due ? isBefore(due, startOfToday()) : false;
+        }).length, 
         link: "/app/management/accounting/receivables-payables?tab=debtors",
         icon: Wallet
       },
