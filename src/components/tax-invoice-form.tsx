@@ -412,8 +412,32 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             const batch = writeBatch(db);
             const docRef = doc(db, 'documents', effectiveEditDocId);
             const finalDocNo = docToEdit?.docNo || "Unknown";
+            const priorStatus = String(docToEdit?.status ?? "").toUpperCase();
+            const resubmitForReview =
+              submitForReview &&
+              ["APPROVED", "PAID", "UNPAID", "PARTIAL"].includes(priorStatus);
 
-            batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
+            batch.update(docRef, sanitizeForFirestore({
+              ...payload,
+              status: targetStatus,
+              updatedAt: serverTimestamp(),
+              dispute: { isDisputed: false, reason: "" },
+              ...(resubmitForReview
+                ? {
+                    receiptStatus: deleteField(),
+                    receiptDocId: deleteField(),
+                    receiptDocNo: deleteField(),
+                    accountingEntryId: deleteField(),
+                    receivedAccountId: deleteField(),
+                    arObligationId: deleteField(),
+                    paymentSummary: {
+                      paidTotal: 0,
+                      balance: data.grandTotal,
+                      paymentStatus: "UNPAID",
+                    },
+                  }
+                : {}),
+            }));
             
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);

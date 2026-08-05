@@ -20,8 +20,8 @@ export function isDocumentAwaitingReceipt(
   if (status === "CANCELLED") return false;
 
   if (doc.docType === "TAX_INVOICE") {
-    /** APPROVED = flow ปกติ; PAID = ข้อมูลเก่าที่รับเงินก่อนมีขั้นตอนใบเสร็จ */
-    return status === "APPROVED" || status === "PAID";
+    /** APPROVED/UNPAID = flow ปกติ; PAID = ข้อมูลเก่าที่รับเงินก่อนมีขั้นตอนใบเสร็จ */
+    return status === "APPROVED" || status === "UNPAID" || status === "PAID";
   }
   if (doc.docType === "DEBIT_NOTE") {
     return status === "APPROVED" || status === "UNPAID" || status === "PARTIAL";
@@ -77,6 +77,14 @@ export async function fetchDocumentsAwaitingReceipt(db: Firestore): Promise<Docu
     orderBy("updatedAt", "desc")
   );
   addSnap(await fetchPaged(db, unpaidDebitBase, pageSize, maxPages));
+
+  const unpaidTaxBase = query(
+    collection(db, "documents"),
+    where("status", "==", "UNPAID"),
+    where("docType", "==", "TAX_INVOICE"),
+    orderBy("updatedAt", "desc")
+  );
+  addSnap(await fetchPaged(db, unpaidTaxBase, pageSize, maxPages));
 
   const legacyPaidBase = query(
     collection(db, "documents"),

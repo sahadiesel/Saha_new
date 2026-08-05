@@ -190,6 +190,8 @@ export async function reverseConfirmedReceipt(
         receiptStatus: deleteField(),
         receiptDocId: deleteField(),
         receiptDocNo: deleteField(),
+        accountingEntryId: deleteField(),
+        receivedAccountId: deleteField(),
         updatedAt: serverTimestamp(),
       });
 
@@ -220,6 +222,8 @@ export async function reverseConfirmedReceipt(
         receiptStatus: deleteField(),
         receiptDocId: deleteField(),
         receiptDocNo: deleteField(),
+        accountingEntryId: deleteField(),
+        receivedAccountId: deleteField(),
         updatedAt: serverTimestamp(),
       };
 

@@ -60,6 +60,17 @@ const INBOX_SALES_DOC_TYPES = [
 
 const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
   all.filter((d) => {
+    const statusKey = String(d.status ?? "").toUpperCase();
+
+    /** ใบกำกับ/ใบเพิ่มหนี้ที่ผ่านบัญชีแล้ว รอออกใบเสร็จใหม่ (เช่น หลังยกเลิกใบเสร็จ) */
+    if (
+      (d.docType === "TAX_INVOICE" || d.docType === "DEBIT_NOTE") &&
+      !d.receiptDocId &&
+      statusKey === "APPROVED"
+    ) {
+      return true;
+    }
+
     /** ออกใบวางบิลแล้ว — ไม่ให้กลับมารอ Inbox (แม้ status ยังเป็น PENDING_REVIEW จากข้อมูลเก่า) */
     if (
       (d.docType === "TAX_INVOICE" ||
@@ -75,11 +86,10 @@ const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
         d.docType === "CREDIT_NOTE" ||
         d.docType === "DEBIT_NOTE") &&
       d.arObligationId &&
-      String(d.status ?? "").toUpperCase() !== "PENDING_REVIEW"
+      statusKey !== "PENDING_REVIEW"
     ) {
       return false;
     }
-    const statusKey = String(d.status ?? "").toUpperCase();
     if (d.docType === "DELIVERY_NOTE")
       return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
     if (d.docType === "TAX_INVOICE")
@@ -192,17 +202,22 @@ function matchesInboxSearch(
 }
 
 function matchesReceiveInboxTab(doc: WithId<DocumentType>): boolean {
-  if (doc.docType === "TAX_INVOICE" && doc.status === "APPROVED") return false;
+  const statusKey = String(doc.status ?? "").toUpperCase();
+  if (doc.docType === "TAX_INVOICE" && statusKey === "APPROVED") return false;
   if (doc.docType === "RECEIPT") return false;
   if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
     return !doc.deliveryInboxCashConfirmed;
   }
   const terms = String(doc.paymentTerms ?? "").toUpperCase();
+  /** ขายเชื่อ — ไปแท็บ รอตัดลูกหนี้ (Credit) */
+  if (terms === "CREDIT") return false;
   return terms === "CASH" || terms === "";
 }
 
 function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
   if (doc.docType === "RECEIPT") return false;
+  const statusKey = String(doc.status ?? "").toUpperCase();
+  if (doc.docType === "TAX_INVOICE" && statusKey === "APPROVED") return false;
   if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
     if (doc.arObligationId) return false;
     const arLeft = doc.deliveryInboxCashConfirmed
@@ -307,6 +322,18 @@ function AccountingInboxPageContent() {
     );
   }, [db, hasPermission]);
 
+  /** ใบเสร็จที่รอยืนยันรับเงิน — query แยก ไม่ให้หลุดเมื่อ active query เต็ม */
+  const pendingReceiptQuery = useMemo(() => {
+    if (!db || !hasPermission) return null;
+    return query(
+      collection(db, "documents"),
+      where("docType", "==", "RECEIPT"),
+      where("receiptStatus", "==", "ISSUED_NOT_CONFIRMED"),
+      orderBy("updatedAt", "desc"),
+      limit(300)
+    );
+  }, [db, hasPermission]);
+
   const approvedReceiptQuery = useMemo(() => {
     if (!db || !hasPermission) return null;
     return query(
@@ -354,11 +381,17 @@ function AccountingInboxPageContent() {
     let pendingUpdatedReady = false;
     let activeRows: WithId<DocumentType>[] = [];
     let activeReady = false;
+    let pendingReceiptRows: WithId<DocumentType>[] = [];
+    let pendingReceiptReady = !pendingReceiptQuery;
 
     const publish = () => {
-      if (!pendingDocDateReady || !pendingUpdatedReady || !activeReady) return;
+      if (!pendingDocDateReady || !pendingUpdatedReady || !activeReady || !pendingReceiptReady) return;
       const pendingRows = Array.from(pendingById.values());
-      setDocuments(filterDocumentsNeedingReview(mergeInboxDocuments([pendingRows, activeRows])));
+      setDocuments(
+        filterDocumentsNeedingReview(
+          mergeInboxDocuments([pendingRows, activeRows, pendingReceiptRows])
+        )
+      );
       setLoading(false);
       setIndexErrorUrl(null);
     };
@@ -432,12 +465,30 @@ function AccountingInboxPageContent() {
       onActiveError
     );
 
+    const unsubPendingReceipt = pendingReceiptQuery
+      ? onSnapshot(
+          pendingReceiptQuery,
+          (snap) => {
+            pendingReceiptRows = snap.docs.map(
+              (d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>)
+            );
+            pendingReceiptReady = true;
+            publish();
+          },
+          () => {
+            pendingReceiptReady = true;
+            publish();
+          }
+        )
+      : () => {};
+
     return () => {
       unsubPendingDocDate();
       unsubPendingUpdated();
       unsubActive();
+      unsubPendingReceipt();
     };
-  }, [pendingReviewByDocDateQuery, pendingReviewByUpdatedQuery, inboxActiveQuery, db]);
+  }, [pendingReviewByDocDateQuery, pendingReviewByUpdatedQuery, inboxActiveQuery, pendingReceiptQuery, db]);
 
   useEffect(() => {
     if (!db || !hasPermission) return;
@@ -1439,7 +1490,11 @@ function AccountingInboxPageContent() {
                   {loading ? (
                     <TableRow><TableCell colSpan={5} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
                   ) : filteredDocs.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตรวจสอบ (Cash)</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">
+                      ไม่มีรายการรอตรวจสอบ (Cash)
+                      {tabCounts.ar > 0 ? " — ลองดูแท็บ รอตัดลูกหนี้ (Credit)" : null}
+                      {tabCounts.receipts > 0 ? " หรือแท็บ ขั้นตอนใบเสร็จ (หลังออกใบเสร็จแล้ว)" : null}
+                    </TableCell></TableRow>
                   ) : filteredDocs.map(docItem => (
                     <TableRow key={docItem.id}>
                       <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
