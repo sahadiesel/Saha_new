@@ -45,6 +45,7 @@ import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 import {
   fetchDocumentsAwaitingReceipt,
   fetchPendingReviewDocuments,
+  inferInboxPaymentTerms,
   INBOX_ACTIVE_STATUSES,
   isDocumentAwaitingReceipt,
 } from "@/lib/accounting-receipt-inbox";
@@ -63,6 +64,19 @@ const INBOX_SALES_DOC_TYPES = [
 const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
   all.filter((d) => {
     const statusKey = String(d.status ?? "").toUpperCase();
+
+    /** รอบัญชีตรวจสอบ — ต้องโผล่ Inbox เสมอ (แม้เคยมี arObligationId / billingNoteId จากรอบก่อน) */
+    if (statusKey === "PENDING_REVIEW") {
+      if (d.docType === "RECEIPT") {
+        return d.status !== "CANCELLED" && d.receiptStatus !== "CONFIRMED";
+      }
+      return (
+        d.docType === "TAX_INVOICE" ||
+        d.docType === "DELIVERY_NOTE" ||
+        d.docType === "CREDIT_NOTE" ||
+        d.docType === "DEBIT_NOTE"
+      );
+    }
 
     /** ใบกำกับ/ใบเพิ่มหนี้ที่ผ่านบัญชีแล้ว รอออกใบเสร็จใหม่ (เช่น หลังยกเลิกใบเสร็จ) */
     if (
@@ -210,10 +224,10 @@ function matchesReceiveInboxTab(doc: WithId<DocumentType>): boolean {
   if (doc.docType === "DELIVERY_NOTE" && isDeliveryNotePartialCashAndCredit(doc)) {
     return !doc.deliveryInboxCashConfirmed;
   }
-  const terms = String(doc.paymentTerms ?? "").toUpperCase();
+  const terms = inferInboxPaymentTerms(doc);
   /** ขายเชื่อ — ไปแท็บ รอตัดลูกหนี้ (Credit) */
   if (terms === "CREDIT") return false;
-  return terms === "CASH" || terms === "";
+  return true;
 }
 
 function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
@@ -229,7 +243,7 @@ function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
       : roundMoney(Math.max(0, (doc.grandTotal || 0) - sumDocSuggestedPayments(doc)));
     return arLeft > 0.01;
   }
-  return String(doc.paymentTerms ?? "").toUpperCase() === "CREDIT";
+  return inferInboxPaymentTerms(doc) === "CREDIT";
 }
 
 function matchesReceiptsInboxTab(doc: WithId<DocumentType>): boolean {
@@ -396,11 +410,7 @@ function AccountingInboxPageContent() {
       if (!pendingReady || !activeReady || !pendingReceiptReady) return;
       const pendingRows = Array.from(pendingById.values());
       const activeRows = mergeInboxDocuments(activeChunks);
-      setDocuments(
-        filterDocumentsNeedingReview(
-          mergeInboxDocuments([pendingRows, activeRows, pendingReceiptRows])
-        )
-      );
+      setDocuments(mergeInboxDocuments([pendingRows, activeRows, pendingReceiptRows]));
       setLoading(false);
     };
 

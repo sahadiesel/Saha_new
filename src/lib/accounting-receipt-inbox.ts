@@ -110,17 +110,20 @@ export async function fetchDocumentsAwaitingReceipt(db: Firestore): Promise<Docu
   return Array.from(byId.values()).sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
 }
 
-/** ดึงเอกสาร PENDING_REVIEW — แยกตาม docType (หลีกเลี่ยง in ซ้อน + fallback เมื่อ index ยังไม่พร้อม) */
+/** ดึงเอกสาร PENDING_REVIEW — แยกตาม docType + fallback รวมทุกประเภท */
 export async function fetchPendingReviewDocuments(db: Firestore): Promise<Document[]> {
   const byId = new Map<string, Document>();
+  const pendingTypes = new Set<string>(INBOX_PENDING_REVIEW_DOC_TYPES);
+
+  const mapDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) => {
+    for (const d of docs) {
+      const row = { id: d.id, ...d.data() } as Document;
+      if (!pendingTypes.has(row.docType)) continue;
+      byId.set(d.id, row);
+    }
+  };
 
   for (const docType of INBOX_PENDING_REVIEW_DOC_TYPES) {
-    const mapDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) => {
-      for (const d of docs) {
-        byId.set(d.id, { id: d.id, ...d.data() } as Document);
-      }
-    };
-
     try {
       const snap = await getDocs(
         query(
@@ -133,19 +136,50 @@ export async function fetchPendingReviewDocuments(db: Firestore): Promise<Docume
       );
       mapDocs(snap.docs);
     } catch {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, "documents"),
+            where("status", "==", "PENDING_REVIEW"),
+            where("docType", "==", docType),
+            limit(400)
+          )
+        );
+        mapDocs(snap.docs);
+      } catch {
+        /* ข้าม docType นี้ */
+      }
+    }
+  }
+
+  /** fallback สุดท้าย — query แค่ status (ไม่ต้อง composite index) */
+  if (byId.size === 0) {
+    try {
       const snap = await getDocs(
-        query(
-          collection(db, "documents"),
-          where("status", "==", "PENDING_REVIEW"),
-          where("docType", "==", docType),
-          limit(400)
-        )
+        query(collection(db, "documents"), where("status", "==", "PENDING_REVIEW"), limit(500))
       );
       mapDocs(snap.docs);
+    } catch {
+      /* ignore */
     }
   }
 
   return Array.from(byId.values());
+}
+
+/** อนุมาน Cash vs Credit สำหรับแยกแท็บ Inbox */
+export function inferInboxPaymentTerms(
+  doc: Pick<Document, "paymentTerms" | "suggestedPayments" | "grandTotal" | "billingRequired">
+): "CASH" | "CREDIT" {
+  const terms = String(doc.paymentTerms ?? "").toUpperCase();
+  if (terms === "CREDIT") return "CREDIT";
+  if (terms === "CASH") return "CASH";
+  const sum = (doc.suggestedPayments || [])
+    .filter((p) => p?.accountId && (p.amount || 0) > 0.01)
+    .reduce((a, p) => a + (p.amount || 0), 0);
+  const balance = Math.round(Math.max(0, (doc.grandTotal || 0) - sum) * 100) / 100;
+  if (doc.billingRequired || balance > 0.01) return "CREDIT";
+  return "CASH";
 }
 
 /** @deprecated ใช้ fetchDocumentsAwaitingReceipt — คงไว้ให้หน้าลูกหนี้ที่ sync obligation */

@@ -245,6 +245,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   }, [isEditing, docToEdit, profile]);
 
   const docStatusKey = String(docToEdit?.status ?? "").toUpperCase();
+  const isCancelled = docToEdit?.status === "CANCELLED";
   /** ผ่านบัญชีแล้ว รอออกใบเสร็จ (รวมกรณียกเลิกใบเสร็จแล้ว) */
   const awaitingReceiptInInbox =
     isEditing &&
@@ -253,8 +254,6 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const alreadySentForReview = docStatusKey === "PENDING_REVIEW";
   const canSendForAccountingReview =
     !isCancelled && (!isEditing || ["DRAFT", "REJECTED"].includes(docStatusKey));
-
-  const isCancelled = docToEdit?.status === 'CANCELLED';
 
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
