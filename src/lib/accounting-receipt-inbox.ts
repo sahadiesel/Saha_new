@@ -5,11 +5,24 @@ import {
   orderBy,
   query,
   startAfter,
+  where,
   type DocumentData,
   type Firestore,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import type { Document } from "@/lib/types";
+
+/** ประเภทเอกสารที่รอบัญชีตรวจสอบ (Inbox แท็บ Cash/Credit) */
+export const INBOX_PENDING_REVIEW_DOC_TYPES = [
+  "TAX_INVOICE",
+  "DELIVERY_NOTE",
+  "CREDIT_NOTE",
+  "DEBIT_NOTE",
+  "RECEIPT",
+] as const;
+
+/** สถานะเอกสารที่กำลังดำเนินการหลังผ่านบัญชี */
+export const INBOX_ACTIVE_STATUSES = ["APPROVED", "UNPAID", "PARTIAL", "ISSUED"] as const;
 
 /** เอกสารที่ผ่านบัญชีแล้วและยังไม่ได้ออกใบเสร็จ */
 export function isDocumentAwaitingReceipt(
@@ -95,6 +108,44 @@ export async function fetchDocumentsAwaitingReceipt(db: Firestore): Promise<Docu
   addSnap(await fetchPaged(db, legacyPaidBase, pageSize, 5));
 
   return Array.from(byId.values()).sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
+}
+
+/** ดึงเอกสาร PENDING_REVIEW — แยกตาม docType (หลีกเลี่ยง in ซ้อน + fallback เมื่อ index ยังไม่พร้อม) */
+export async function fetchPendingReviewDocuments(db: Firestore): Promise<Document[]> {
+  const byId = new Map<string, Document>();
+
+  for (const docType of INBOX_PENDING_REVIEW_DOC_TYPES) {
+    const mapDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) => {
+      for (const d of docs) {
+        byId.set(d.id, { id: d.id, ...d.data() } as Document);
+      }
+    };
+
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "documents"),
+          where("status", "==", "PENDING_REVIEW"),
+          where("docType", "==", docType),
+          orderBy("updatedAt", "desc"),
+          limit(400)
+        )
+      );
+      mapDocs(snap.docs);
+    } catch {
+      const snap = await getDocs(
+        query(
+          collection(db, "documents"),
+          where("status", "==", "PENDING_REVIEW"),
+          where("docType", "==", docType),
+          limit(400)
+        )
+      );
+      mapDocs(snap.docs);
+    }
+  }
+
+  return Array.from(byId.values());
 }
 
 /** @deprecated ใช้ fetchDocumentsAwaitingReceipt — คงไว้ให้หน้าลูกหนี้ที่ sync obligation */

@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { 
   Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, 
   CalendarDays, ArrowLeft, FileSearch, Eye, ExternalLink, PlusCircle, Wallet, 
-  RotateCcw, Check, Ban, UserCog
+  RotateCcw, Check, Ban, UserCog, Receipt
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -243,6 +244,16 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     return ['PENDING_REVIEW', 'APPROVED', 'PAID', 'UNPAID', 'PARTIAL'].includes(docToEdit.status);
   }, [isEditing, docToEdit, profile]);
 
+  const docStatusKey = String(docToEdit?.status ?? "").toUpperCase();
+  /** ผ่านบัญชีแล้ว รอออกใบเสร็จ (รวมกรณียกเลิกใบเสร็จแล้ว) */
+  const awaitingReceiptInInbox =
+    isEditing &&
+    docStatusKey === "APPROVED" &&
+    !docToEdit?.receiptDocId;
+  const alreadySentForReview = docStatusKey === "PENDING_REVIEW";
+  const canSendForAccountingReview =
+    !isCancelled && (!isEditing || ["DRAFT", "REJECTED"].includes(docStatusKey));
+
   const isCancelled = docToEdit?.status === 'CANCELLED';
 
   useEffect(() => {
@@ -377,6 +388,26 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
     const customerSnapshot = buildCustomerSnapshotForTaxInvoice(baseCustomer, resolvedTaxProfile);
 
+    if (submitForReview && isEditing && docToEdit) {
+      const prior = String(docToEdit.status ?? "").toUpperCase();
+      if (prior === "PENDING_REVIEW") {
+        toast({
+          variant: "destructive",
+          title: "ส่งบัญชีแล้ว",
+          description: "ใบนี้อยู่ใน Inbox บัญชีแล้ว — รอฝ่ายบัญชีตรวจสอบ (แท็บ Cash หรือ Credit)",
+        });
+        return;
+      }
+      if (["APPROVED", "PAID", "UNPAID", "PARTIAL"].includes(prior)) {
+        toast({
+          variant: "destructive",
+          title: "ใบนี้ผ่านบัญชีแล้ว",
+          description: "ไม่ต้องส่งตรวจสอบซ้ำ — ไปออกใบเสร็จที่ Inbox → ขั้นตอนใบเสร็จ",
+        });
+        return;
+      }
+    }
+
     setIsProcessing(true);
     
     const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
@@ -412,31 +443,12 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             const batch = writeBatch(db);
             const docRef = doc(db, 'documents', effectiveEditDocId);
             const finalDocNo = docToEdit?.docNo || "Unknown";
-            const priorStatus = String(docToEdit?.status ?? "").toUpperCase();
-            const resubmitForReview =
-              submitForReview &&
-              ["APPROVED", "PAID", "UNPAID", "PARTIAL"].includes(priorStatus);
 
             batch.update(docRef, sanitizeForFirestore({
               ...payload,
               status: targetStatus,
               updatedAt: serverTimestamp(),
               dispute: { isDisputed: false, reason: "" },
-              ...(resubmitForReview
-                ? {
-                    receiptStatus: deleteField(),
-                    receiptDocId: deleteField(),
-                    receiptDocNo: deleteField(),
-                    accountingEntryId: deleteField(),
-                    receivedAccountId: deleteField(),
-                    arObligationId: deleteField(),
-                    paymentSummary: {
-                      paidTotal: 0,
-                      balance: data.grandTotal,
-                      paymentStatus: "UNPAID",
-                    },
-                  }
-                : {}),
             }));
             
             if (linkedJobId) {
@@ -692,10 +704,28 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
                 บันทึกฉบับร่าง
               </Button>
-              <Button type="button" onClick={submitSendReview} disabled={isLocked || isProcessing || isCancelled}>
-                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
-                ส่งบัญชีตรวจสอบ
-              </Button>
+              {awaitingReceiptInInbox ? (
+                <Button type="button" asChild className="bg-primary font-bold">
+                  <Link href="/app/management/accounting/inbox?tab=receipts">
+                    <Receipt className="mr-2 h-4 w-4" />
+                    ไปออกใบเสร็จ (Inbox)
+                  </Link>
+                </Button>
+              ) : alreadySentForReview ? (
+                <Button type="button" disabled className="font-bold">
+                  <Send className="mr-2 h-4 w-4" />
+                  ส่งบัญชีแล้ว — รอตรวจสอบ
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={submitSendReview}
+                  disabled={!canSendForAccountingReview || isLocked || isProcessing || isCancelled}
+                >
+                  {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
+                  ส่งบัญชีตรวจสอบ
+                </Button>
+              )}
             </div>
           </div>
 

@@ -44,6 +44,8 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { validateAccountingEntryDate } from "@/lib/accounting-entry-date";
 import {
   fetchDocumentsAwaitingReceipt,
+  fetchPendingReviewDocuments,
+  INBOX_ACTIVE_STATUSES,
   isDocumentAwaitingReceipt,
 } from "@/lib/accounting-receipt-inbox";
 
@@ -261,6 +263,7 @@ function AccountingInboxPageContent() {
 
   const [documents, setDocuments] = useState<WithId<DocumentType>[]>([]);
   const [approvedDocs, setApprovedDocs] = useState<WithId<DocumentType>[]>([]);
+  const [pendingReviewFallback, setPendingReviewFallback] = useState<WithId<DocumentType>[]>([]);
   const [accounts, setAccounts] = useState<WithId<AccountingAccount>[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -311,14 +314,17 @@ function AccountingInboxPageContent() {
     );
   }, [db, hasPermission]);
 
-  const inboxActiveQuery = useMemo(() => {
-    if (!db || !hasPermission) return null;
-    return query(
-      collection(db, "documents"),
-      where("status", "in", ["APPROVED", "UNPAID", "PARTIAL", "ISSUED"]),
-      where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
-      orderBy("updatedAt", "desc"),
-      limit(500)
+  /** เอกสารที่กำลังดำเนินการ — แยก query ตาม status (Firestore อนุญาต in ได้ครั้งละ 1 ชุด) */
+  const inboxActiveQueries = useMemo(() => {
+    if (!db || !hasPermission) return [];
+    return INBOX_ACTIVE_STATUSES.map((status) =>
+      query(
+        collection(db, "documents"),
+        where("status", "==", status),
+        where("docType", "in", [...INBOX_SALES_DOC_TYPES]),
+        orderBy("updatedAt", "desc"),
+        limit(200)
+      )
     );
   }, [db, hasPermission]);
 
@@ -374,26 +380,28 @@ function AccountingInboxPageContent() {
 
   // DATA LISTENERS - รวมรายการรอตรวจสอบ + รายการที่กำลังดำเนินการ (แยก query กัน)
   useEffect(() => {
-    if (!db || !pendingReviewByDocDateQuery || !pendingReviewByUpdatedQuery || !inboxActiveQuery) return;
+    if (!db || !pendingReviewByDocDateQuery || !pendingReviewByUpdatedQuery || inboxActiveQueries.length === 0) return;
 
     const pendingById = new Map<string, WithId<DocumentType>>();
     let pendingDocDateReady = false;
     let pendingUpdatedReady = false;
-    let activeRows: WithId<DocumentType>[] = [];
-    let activeReady = false;
+    const activeChunks: WithId<DocumentType>[][] = inboxActiveQueries.map(() => []);
+    const activeReadyFlags = new Set<number>();
     let pendingReceiptRows: WithId<DocumentType>[] = [];
     let pendingReceiptReady = !pendingReceiptQuery;
 
     const publish = () => {
-      if (!pendingDocDateReady || !pendingUpdatedReady || !activeReady || !pendingReceiptReady) return;
+      const pendingReady = pendingDocDateReady && pendingUpdatedReady;
+      const activeReady = activeReadyFlags.size >= inboxActiveQueries.length;
+      if (!pendingReady || !activeReady || !pendingReceiptReady) return;
       const pendingRows = Array.from(pendingById.values());
+      const activeRows = mergeInboxDocuments(activeChunks);
       setDocuments(
         filterDocumentsNeedingReview(
           mergeInboxDocuments([pendingRows, activeRows, pendingReceiptRows])
         )
       );
       setLoading(false);
-      setIndexErrorUrl(null);
     };
 
     const mergePending = (rows: WithId<DocumentType>[]) => {
@@ -420,21 +428,6 @@ function AccountingInboxPageContent() {
       publish();
     };
 
-    const onActiveError = (err: FirestoreError) => {
-      if (err.code === "permission-denied") {
-        errorEmitter.emit(
-          "permission-error",
-          new FirestorePermissionError({ path: "documents", operation: "list" })
-        );
-      } else if (err.message?.includes("requires an index")) {
-        const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
-      }
-      activeRows = [];
-      activeReady = true;
-      publish();
-    };
-
     const unsubPendingDocDate = onSnapshot(
       pendingReviewByDocDateQuery,
       (snap) => {
@@ -455,14 +448,28 @@ function AccountingInboxPageContent() {
       onPendingUpdatedError
     );
 
-    const unsubActive = onSnapshot(
-      inboxActiveQuery,
-      (snap) => {
-        activeRows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
-        activeReady = true;
-        publish();
-      },
-      onActiveError
+    const unsubActiveList = inboxActiveQueries.map((activeQuery, idx) =>
+      onSnapshot(
+        activeQuery,
+        (snap) => {
+          activeChunks[idx] = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WithId<DocumentType>));
+          activeReadyFlags.add(idx);
+          publish();
+        },
+        (err: FirestoreError) => {
+          if (err.code === "permission-denied") {
+            errorEmitter.emit(
+              "permission-error",
+              new FirestorePermissionError({ path: "documents", operation: "list" })
+            );
+          } else if (err.message?.includes("requires an index")) {
+            const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+            if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          }
+          activeReadyFlags.add(idx);
+          publish();
+        }
+      )
     );
 
     const unsubPendingReceipt = pendingReceiptQuery
@@ -485,10 +492,40 @@ function AccountingInboxPageContent() {
     return () => {
       unsubPendingDocDate();
       unsubPendingUpdated();
-      unsubActive();
+      unsubActiveList.forEach((unsub) => unsub());
       unsubPendingReceipt();
     };
-  }, [pendingReviewByDocDateQuery, pendingReviewByUpdatedQuery, inboxActiveQuery, pendingReceiptQuery, db]);
+  }, [
+    pendingReviewByDocDateQuery,
+    pendingReviewByUpdatedQuery,
+    inboxActiveQueries,
+    pendingReceiptQuery,
+    db,
+  ]);
+
+  /** fallback โหลด PENDING_REVIEW เมื่อ snapshot/index มีปัญหา */
+  useEffect(() => {
+    if (!db || !hasPermission) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const rows = await fetchPendingReviewDocuments(db);
+        if (!cancelled) setPendingReviewFallback(rows as WithId<DocumentType>[]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const urlMatch = msg.match(/https?:\/\/[^\s]+/);
+        if (urlMatch && !cancelled) setIndexErrorUrl(urlMatch[0]);
+      }
+    };
+
+    void load();
+    const timer = setInterval(() => void load(), 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [db, hasPermission]);
 
   useEffect(() => {
     if (!db || !hasPermission) return;
@@ -582,8 +619,16 @@ function AccountingInboxPageContent() {
     return () => unsubscribe();
   }, [accountsQuery, db]);
 
+  const mergedInboxDocuments = useMemo(
+    () =>
+      filterDocumentsNeedingReview(
+        mergeInboxDocuments([documents, pendingReviewFallback])
+      ),
+    [documents, pendingReviewFallback]
+  );
+
   const filteredDocs = useMemo(() => {
-    let result = documents.filter((doc) => {
+    let result = mergedInboxDocuments.filter((doc) => {
       if (activeTab === "receive") return matchesReceiveInboxTab(doc);
       if (activeTab === "ar") return matchesArInboxTab(doc);
       if (activeTab === "receipts") return matchesReceiptsInboxTab(doc);
@@ -594,15 +639,15 @@ function AccountingInboxPageContent() {
       result = result.filter((doc) => matchesInboxSearch(doc, searchTerm));
     }
     return result;
-  }, [documents, activeTab, searchTerm]);
+  }, [mergedInboxDocuments, activeTab, searchTerm]);
 
   const tabCounts = useMemo(
     () => ({
-      receive: documents.filter(matchesReceiveInboxTab).length,
-      ar: documents.filter(matchesArInboxTab).length,
-      receipts: approvedDocs.length + documents.filter(matchesReceiptsInboxTab).length,
+      receive: mergedInboxDocuments.filter(matchesReceiveInboxTab).length,
+      ar: mergedInboxDocuments.filter(matchesArInboxTab).length,
+      receipts: approvedDocs.length + mergedInboxDocuments.filter(matchesReceiptsInboxTab).length,
     }),
-    [documents, approvedDocs]
+    [mergedInboxDocuments, approvedDocs]
   );
 
   const filteredApprovedDocs = useMemo(() => {
@@ -611,8 +656,8 @@ function AccountingInboxPageContent() {
   }, [approvedDocs, searchTerm]);
 
   const receiptDocsInInbox = useMemo(
-    () => documents.filter((d) => d.docType === "RECEIPT"),
-    [documents]
+    () => mergedInboxDocuments.filter((d) => d.docType === "RECEIPT"),
+    [mergedInboxDocuments]
   );
 
   const handleTabChange = (value: string) => {
