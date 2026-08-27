@@ -284,3 +284,56 @@ export function buildCustomerSnapshotForTaxInvoice(
     taxProfileId: profile.id,
   };
 }
+
+/** ชื่อที่แสดงบนเอกสารภาษี/ใบเสร็จ — ใช้นามบริษัทจากใบกำกับก่อนชื่อผู้ติดต่อ */
+export function taxDocumentCustomerDisplayName(
+  snap: { name?: string | null; taxName?: string | null } | null | undefined
+): string {
+  const tax = snap?.taxName?.trim();
+  if (tax) return tax;
+  return snap?.name?.trim() || "";
+}
+
+/** เลือกเอกสารต้นทางที่มี snapshot ภาษีครบ (ใบกำกับ/DN) สำหรับออกใบเสร็จ */
+export function pickSourceDocumentForReceiptCustomer<
+  T extends {
+    docType?: string;
+    customerId?: string;
+    customerSnapshot?: { id?: string; name?: string; taxName?: string } | null;
+  },
+>(customerId: string, selectedDocs: T[]): T | undefined {
+  const matches = selectedDocs.filter(
+    (d) => (d.customerId || d.customerSnapshot?.id || "") === customerId
+  );
+  const pool = matches.length > 0 ? matches : selectedDocs;
+  return (
+    pool.find((d) => d.docType === "TAX_INVOICE" && d.customerSnapshot?.taxName?.trim()) ||
+    pool.find((d) => d.docType === "DEBIT_NOTE" && d.customerSnapshot?.taxName?.trim()) ||
+    pool.find((d) => d.customerSnapshot?.taxName?.trim()) ||
+    pool[0]
+  );
+}
+
+/** สร้าง snapshot ลูกค้าบนใบเสร็จจากใบกำกับ — คงนามภาษีเดิม ไม่ดึงจาก customers/ สด */
+export function receiptCustomerFromSourceSnapshot(
+  customerId: string,
+  snap: Partial<Customer> | null | undefined
+): Partial<Customer> & { id: string; name: string; phone: string; detail: string; useTax: boolean } | null {
+  if (!snap || (!snap.name?.trim() && !snap.taxName?.trim())) return null;
+  const hasTax = !!(snap.taxId?.trim() || snap.taxName?.trim() || snap.useTax);
+  return {
+    id: customerId,
+    name: snap.name?.trim() || snap.taxName?.trim() || "ลูกค้า",
+    phone: snap.phone || "",
+    phones: snap.phones,
+    detail: snap.detail || "",
+    useTax: hasTax,
+    taxName: snap.taxName?.trim() || undefined,
+    taxAddress: snap.taxAddress,
+    taxId: snap.taxId,
+    taxPhone: snap.taxPhone,
+    taxBranchType: snap.taxBranchType,
+    taxBranchNo: snap.taxBranchNo,
+    taxProfileId: snap.taxProfileId,
+  };
+}

@@ -18,6 +18,11 @@ import { cn, thaiBahtText } from "@/lib/utils";
 import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Document, AccountingAccount, Customer, Job } from "@/lib/types";
+import {
+  pickSourceDocumentForReceiptCustomer,
+  receiptCustomerFromSourceSnapshot,
+  taxDocumentCustomerDisplayName,
+} from "@/lib/customer-utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
 import {
@@ -132,9 +137,7 @@ function DocumentView({
     const isWithdrawal = document.docType === 'WITHDRAWAL';
     
     /** ใบวางบิล: หัวลูกค้าต้องตรง customerSnapshot (เดียวกับใบกำกับภาษี) — ไม่ใช้ receiverName ทับ */
-    const displayCustomerName = customer.useTax
-        ? customer.taxName || customer.name
-        : customer.name;
+    const displayCustomerName = taxDocumentCustomerDisplayName(customer) || customer.name || "";
         
     const displayCustomerAddress = isTaxDoc 
         ? (customer.taxAddress || customer.detail || '---') 
@@ -598,6 +601,7 @@ function DocumentPageContent() {
         "ORIGINAL_ONLY" | "ORIGINAL_PLUS_1_COPY" | "ORIGINAL_PLUS_2_COPIES"
     >("ORIGINAL_PLUS_1_COPY");
     const [accountName, setAccountName] = useState<string>("");
+    const [receiptSourceDocs, setReceiptSourceDocs] = useState<Document[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [informConfirmOpen, setInformConfirmOpen] = useState(false);
     const [resubmitQuotationOpen, setResubmitQuotationOpen] = useState(false);
@@ -622,9 +626,47 @@ function DocumentPageContent() {
     }, [db, document?.jobId]);
     const { data: linkedJob } = useDoc<Job>(jobRef);
 
+    useEffect(() => {
+        if (!db || document?.docType !== "RECEIPT" || !document.referencesDocIds?.length) {
+            setReceiptSourceDocs([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            const snaps = await Promise.all(
+                document.referencesDocIds!.map((id) => getDoc(doc(db, "documents", id)))
+            );
+            if (cancelled) return;
+            setReceiptSourceDocs(
+                snaps
+                    .filter((s) => s.exists())
+                    .map((s) => ({ id: s.id, ...s.data() } as Document))
+            );
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [db, document?.id, document?.docType, document?.referencesDocIds]);
+
     const effectiveCustomer = useMemo(() => {
         if (!document) return null;
         const snap = document.customerSnapshot;
+        const customerId = document.customerId || snap?.id || "";
+
+        if (document.docType === "RECEIPT") {
+            if (receiptSourceDocs.length > 0 && customerId) {
+                const fromRef = pickSourceDocumentForReceiptCustomer(customerId, receiptSourceDocs);
+                const refBuilt = receiptCustomerFromSourceSnapshot(
+                    customerId,
+                    fromRef?.customerSnapshot
+                );
+                if (refBuilt?.taxName?.trim()) {
+                    return refBuilt as Customer;
+                }
+            }
+            if (snap) return snap as Customer;
+            return liveCustomer ?? null;
+        }
 
         // ใบวางบิล: หัวเอกสารต้องตรง snapshot ตอนออกเอกสาร (แถวแยกเล่มใช้ customerId เสมือน — ดึงจาก customers/ จะได้ชื่อหลักผิด)
         if (document.docType === 'BILLING_NOTE' && snap) {
@@ -636,7 +678,6 @@ function DocumentPageContent() {
         // เมื่อลูกค้ามีหลายนามภาษี (หลาย tax profile)
         const freezeSnapshotTypes: Document["docType"][] = [
             "TAX_INVOICE",
-            "RECEIPT",
             "CREDIT_NOTE",
             "WITHHOLDING_TAX",
         ];
@@ -649,7 +690,7 @@ function DocumentPageContent() {
             return { ...snap, ...(liveCustomer || {}) };
         }
         return liveCustomer ?? null;
-    }, [document, liveCustomer]);
+    }, [document, liveCustomer, receiptSourceDocs]);
 
     /** มีบัญชีพอร์ทัลผูกกับรายชื่อลูกค้า (customers.authUid) — ใช้บอกว่าเอกสารจะไปโผล่ใน portal ได้ */
     const customerHasPortalAccount = useMemo(() => {

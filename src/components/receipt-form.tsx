@@ -41,6 +41,11 @@ import { format, parseISO } from "date-fns";
 import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
+import {
+  pickSourceDocumentForReceiptCustomer,
+  receiptCustomerFromSourceSnapshot,
+  taxDocumentCustomerDisplayName,
+} from "@/lib/customer-utils";
 
 const receiptFormSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
@@ -135,7 +140,7 @@ export function ReceiptForm() {
   const customerNameById = useMemo(() => {
     const map = new Map<string, string>();
     const labelFromSnap = (snap: DocumentType["customerSnapshot"]) =>
-      snap?.taxName?.trim() || snap?.name?.trim() || "";
+      taxDocumentCustomerDisplayName(snap) || "";
     for (const d of [...sourceDocs, ...extraSourceDocs]) {
       const cid = resolveDocCustomerId(d);
       const label = labelFromSnap(d.customerSnapshot);
@@ -147,7 +152,7 @@ export function ReceiptForm() {
       if (cid && label) map.set(cid, label);
     }
     for (const c of customers) {
-      if (!map.has(c.id)) map.set(c.id, c.taxName?.trim() || c.name || "ลูกค้า");
+      if (!map.has(c.id)) map.set(c.id, taxDocumentCustomerDisplayName(c) || c.name || "ลูกค้า");
     }
     return map;
   }, [customers, sourceDocs, extraSourceDocs, bootstrapSourceDoc]);
@@ -433,50 +438,53 @@ export function ReceiptForm() {
     const snap = displaySourceDocs.find(
       (d) => (d.customerId || d.customerSnapshot?.id) === selectedCustomerId
     )?.customerSnapshot;
-    if (snap?.taxName || snap?.name) return snap.taxName || snap.name || "";
+    if (snap?.taxName || snap?.name) return taxDocumentCustomerDisplayName(snap);
     if (bootstrapSourceDoc) {
       const bid = bootstrapSourceDoc.customerId || bootstrapSourceDoc.customerSnapshot?.id;
       if (bid === selectedCustomerId) {
-        const bs = bootstrapSourceDoc.customerSnapshot;
-        return bs?.taxName || bs?.name || "";
+        return taxDocumentCustomerDisplayName(bootstrapSourceDoc.customerSnapshot);
       }
     }
     const fromList = customers.find((c) => c.id === selectedCustomerId);
-    if (fromList) return fromList.taxName?.trim() || fromList.name || "";
+    if (fromList) return taxDocumentCustomerDisplayName(fromList) || fromList.name || "";
     return "";
   }, [selectedCustomerId, customers, displaySourceDocs, bootstrapSourceDoc]);
 
   const bootstrappingCustomer = !editDocId && urlSourceDocIds.length > 0 && !bootstrapSourceDoc;
 
-  const buildCustomerFromSnapshot = (id: string, snap: DocumentType["customerSnapshot"]): Customer => ({
-    id,
-    name: snap?.name || snap?.taxName || "ลูกค้า",
-    phone: (snap?.phone as string) || "",
-    detail: "",
-    useTax: !!(snap?.taxId || snap?.taxName),
-    taxName: snap?.taxName,
-    taxAddress: snap?.taxAddress,
-    taxId: snap?.taxId,
-    taxPhone: snap?.taxPhone,
-    taxBranchType: snap?.taxBranchType,
-    taxBranchNo: snap?.taxBranchNo,
-    taxProfileId: snap?.taxProfileId,
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  });
+  const buildCustomerFromSnapshot = (id: string, snap: DocumentType["customerSnapshot"]): Customer => {
+    const built = receiptCustomerFromSourceSnapshot(id, snap);
+    if (!built) {
+      return {
+        id,
+        name: "ลูกค้า",
+        phone: "",
+        detail: "",
+        useTax: false,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+    }
+    return {
+      ...built,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    } as Customer;
+  };
 
   /** ใช้ snapshot จากใบกำกับ/ใบวางบill ต้นทาง — ไม่ดึงชื่อจาก customers/ ที่อาจต่างจากใบกำกับ */
   const resolveReceiptCustomer = (
     customerId: string,
     selectedDocs: DocumentType[]
   ): Customer | undefined => {
-    const primaryDoc =
-      selectedDocs.find((d) => resolveDocCustomerId(d) === customerId) || selectedDocs[0];
+    const primaryDoc = pickSourceDocumentForReceiptCustomer(customerId, selectedDocs);
     const snap = primaryDoc?.customerSnapshot;
     if (snap && (snap.name || snap.taxName)) {
       return buildCustomerFromSnapshot(customerId, snap);
     }
-    return customers.find((c) => c.id === customerId);
+    const fallback = customers.find((c) => c.id === customerId);
+    if (!fallback) return undefined;
+    return buildCustomerFromSnapshot(customerId, fallback);
   };
 
   const handleToggleDoc = (docId: string) => {
@@ -531,8 +539,7 @@ export function ReceiptForm() {
       const docCustomerId = resolveDocCustomerId(doc);
       const docCustomerName =
         customerNameById.get(docCustomerId) ||
-        doc.customerSnapshot?.taxName ||
-        doc.customerSnapshot?.name ||
+        taxDocumentCustomerDisplayName(doc.customerSnapshot) ||
         "";
       const customerLabel = allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
       return {

@@ -27,6 +27,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { cn } from "@/lib/utils";
+import { taxDocumentCustomerDisplayName } from "@/lib/customer-utils";
 import {
   searchQuotationsByDocNo,
   isQuotationDocNoSearch,
@@ -906,7 +907,9 @@ export function DocumentList({
                     const editPath = (['TAX_INVOICE', 'DELIVERY_NOTE', 'QUOTATION'].includes(docItem.docType) && baseContext === 'office') ? `/app/office/documents/${docItem.docType.toLowerCase().replace('_', '-')}/new?editDocId=${docItem.id}` : (docItem.docType === 'RECEIPT' ? `/app/management/accounting/documents/receipt?tab=new&editDocId=${docItem.id}` : null);
                     const contactName = docItem.docType === "WITHHOLDING_TAX"
                       ? docItem.payeeSnapshot?.name || docItem.payeeSnapshot?.companyName || docItem.receiverName || "—"
-                      : docItem.customerSnapshot?.name || "—";
+                      : docItem.docType === "RECEIPT"
+                        ? taxDocumentCustomerDisplayName(docItem.customerSnapshot) || docItem.customerSnapshot?.name || "—"
+                        : docItem.customerSnapshot?.name || "—";
                     const taxInvoiceName =
                       docItem.docType === "TAX_INVOICE"
                         ? (docItem.customerSnapshot?.taxName || "").trim()
