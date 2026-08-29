@@ -15,6 +15,7 @@ import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2 } from "lucide-r
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
+import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
 import { sumWithdrawalGrand } from "@/lib/part-withdrawal-totals";
 import { resolveDocumentBackHref } from "@/lib/document-return-navigation";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
@@ -24,6 +25,7 @@ import {
   receiptCustomerFromSourceSnapshot,
   taxDocumentCustomerDisplayName,
 } from "@/lib/customer-utils";
+import { enrichReceiptItemsWithSourceDocs } from "@/lib/receipt-line-description";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
 import {
@@ -102,12 +104,14 @@ function DocumentView({
     document, 
     customer,
     labelSuffix,
-    accountName
+    accountName,
+    receiptSourceDocs,
 }: { 
     document: Document, 
     customer: any,
     labelSuffix?: 'ORIGINAL' | 'COPY',
-    accountName?: string
+    accountName?: string,
+    receiptSourceDocs?: Document[],
 }) {
     const docTypeDisplay: Record<string, string> = {
         QUOTATION: "ใบเสนอราคา / Quotation",
@@ -190,7 +194,14 @@ function DocumentView({
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
     const itemColCount = isWithdrawal ? 4 : 5;
     const withdrawalGrandTotal = isWithdrawal ? sumWithdrawalGrand(document.items || []) : 0;
-    const allItems = document.items;
+    const allItems =
+        isReceipt && receiptSourceDocs?.length
+            ? enrichReceiptItemsWithSourceDocs(
+                  document.items,
+                  receiptSourceDocs,
+                  document.referencesDocIds
+              )
+            : document.items;
     const splitPrintLayout = shouldSplitPrintPages(document.docType, allItems.length);
     const firstPageItemCount = getPrintFirstPageItemCount(allItems.length);
     const pagesPerCopy = splitPrintLayout ? 2 : 1;
@@ -413,14 +424,14 @@ function DocumentView({
                 </TableHeader>
                     <TableBody>
                         {items.map((item, index) => (
-                            <TableRow key={startIndex + index} className="border-b hover:bg-transparent">
-                                <TableCell className="h-8 py-1.5 text-center">
+                            <TableRow key={startIndex + index} className={cn("border-b hover:bg-transparent", isReceipt && "h-auto")}>
+                                <TableCell className={cn("py-1.5 text-center", isReceipt ? "h-auto" : "h-8")}>
                                     {startIndex + index + 1}
                                 </TableCell>
-                                <TableCell className="h-8 py-1.5">
+                                <TableCell className={cn("py-1.5", isReceipt ? "h-auto whitespace-pre-wrap leading-snug" : "h-8")}>
                                     {item.description}
                                 </TableCell>
-                                <TableCell className="h-8 py-1.5 text-right">
+                                <TableCell className={cn("py-1.5 text-right", isReceipt ? "h-auto" : "h-8")}>
                                     {item.quantity}
                                 </TableCell>
                                 {isWithdrawal ? (
@@ -429,10 +440,10 @@ function DocumentView({
                                     </TableCell>
                                 ) : (
                                     <>
-                                        <TableCell className="h-8 py-1.5 text-right">
+                                        <TableCell className={cn("py-1.5 text-right", isReceipt ? "h-auto" : "h-8")}>
                                             {item.unitPrice.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
-                                        <TableCell className="h-8 py-1.5 text-right">
+                                        <TableCell className={cn("py-1.5 text-right", isReceipt ? "h-auto" : "h-8")}>
                                             {item.total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                                         </TableCell>
                                     </>
@@ -867,22 +878,22 @@ function DocumentPageContent() {
                     <div className="min-w-[210mm] print:min-w-0 print:m-0">
                         {showMultiCopy ? (
                             <div className="space-y-8 print:space-y-0">
-                                <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} />
+                                <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
                                 {printChoice !== "ORIGINAL_ONLY" && (
                                     <>
                                         <div className="hidden print:block print-doc-page-break break-before-page" />
-                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
+                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
                                     </>
                                 )}
                                 {printChoice === "ORIGINAL_PLUS_2_COPIES" && (
                                     <>
                                         <div className="hidden print:block print-doc-page-break break-before-page" />
-                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} />
+                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
                                     </>
                                 )}
                             </div>
                         ) : (
-                            <DocumentView document={document} customer={effectiveCustomer} accountName={accountName} />
+                            <DocumentView document={document} customer={effectiveCustomer} accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
                         )}
                     </div>
                 </div>

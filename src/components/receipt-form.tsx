@@ -35,12 +35,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
+import { buildReceiptLineDescription } from "@/lib/receipt-line-description";
+import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 import {
   pickSourceDocumentForReceiptCustomer,
   receiptCustomerFromSourceSnapshot,
@@ -329,7 +332,12 @@ export function ReceiptForm() {
 
   const isBillingNoteMode = !!selectedBillingNoteId;
 
+  const isEditingConfirmedReceipt = Boolean(
+    editDocId && docToEdit && isReceiptPaymentConfirmed(docToEdit)
+  );
+
   const isDocSelectable = (doc: DocumentType) => {
+    if (isEditingConfirmedReceipt) return false;
     if (!isBillingNoteMode) return true;
     return doc.id === selectedBillingNoteId;
   };
@@ -512,6 +520,97 @@ export function ReceiptForm() {
 
   const handleProcessSubmission = async (data: ReceiptFormData) => {
     if (isSubmitting) return;
+
+    if (isEditingConfirmedReceipt && editDocId && docToEdit) {
+      if (!db || !profile || !storeSettings) {
+        toast({
+          variant: "destructive",
+          title: "ข้อมูลไม่ครบถ้วน",
+          description: "ไม่สามารถบันทึกการแก้ไขได้ — กรุณาลองใหม่อีกครั้ง",
+        });
+        return;
+      }
+
+      const refIds = docToEdit.referencesDocIds || [];
+      if (refIds.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "ข้อมูลไม่ครบถ้วน",
+          description: "ไม่พบบิลอ้างอิงในใบเสร็จ",
+        });
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const sourceDocRows = await Promise.all(
+          refIds.map((id) =>
+            getDoc(doc(db, "documents", id)).then((s) =>
+              s.exists() ? ({ id: s.id, ...s.data() } as DocumentType) : null
+            )
+          )
+        );
+        const sourceDocs = sourceDocRows.filter(Boolean) as DocumentType[];
+        const canonicalCustomerId =
+          docToEdit.customerId || docToEdit.customerSnapshot?.id || "";
+        const customer =
+          resolveReceiptCustomer(canonicalCustomerId, sourceDocs) ||
+          docToEdit.customerSnapshot;
+
+        if (!customer) {
+          throw new Error("ไม่พบข้อมูลลูกค้าของใบเสร็จ");
+        }
+
+        const customerIds = new Set(
+          sourceDocs.map((d) => resolveDocCustomerId(d)).filter(Boolean)
+        );
+        const multiCustomer = customerIds.size > 1;
+
+        const items = sourceDocs.map((sourceDoc, index) => {
+          const existing = docToEdit.items?.[index];
+          const docCustomerId = resolveDocCustomerId(sourceDoc);
+          const docCustomerName =
+            customerNameById.get(docCustomerId) ||
+            taxDocumentCustomerDisplayName(sourceDoc.customerSnapshot) ||
+            "";
+          const customerLabel =
+            multiCustomer && docCustomerName ? ` (${docCustomerName})` : "";
+          return {
+            description: buildReceiptLineDescription(sourceDoc, { customerLabel }),
+            quantity: existing?.quantity ?? 1,
+            unitPrice: existing?.unitPrice ?? docToEdit.grandTotal,
+            total: existing?.total ?? docToEdit.grandTotal,
+          };
+        });
+
+        await updateDoc(
+          doc(db, "documents", editDocId),
+          sanitizeForFirestore({
+            docDate: data.paymentDate,
+            notes: data.notes,
+            items,
+            customerSnapshot: { ...customer, id: canonicalCustomerId },
+            storeSnapshot: { ...storeSettings },
+            updatedAt: serverTimestamp(),
+          })
+        );
+
+        toast({
+          title: "บันทึกการแก้ไขสำเร็จ",
+          description: `ใบเสร็จ ${docToEdit.docNo} — ยืนยันรับเงินแล้ว จึงบันทึกเฉพาะข้อมูลเอกสาร`,
+        });
+        router.push(`/app/office/documents/${editDocId}`);
+      } catch (error: any) {
+        toast({
+          variant: "destructive",
+          title: "เกิดข้อผิดพลาด",
+          description: error.message,
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
     
     const selectedDocs = displaySourceDocs.filter(d => data.sourceDocIds.includes(d.id));
     const account = accounts.find(a => a.id === data.accountId);
@@ -543,7 +642,7 @@ export function ReceiptForm() {
         "";
       const customerLabel = allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
       return {
-        description: `ชำระค่าสินค้า/บริการ${customerLabel} ตาม${doc.docType === "TAX_INVOICE" ? "ใบกำกับภาษี" : "ใบวางบิล"} เลขที่ ${doc.docNo}`,
+        description: buildReceiptLineDescription(doc, { customerLabel }),
         quantity: 1,
         unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
         total: doc.paymentSummary?.balance ?? doc.grandTotal,
@@ -733,10 +832,20 @@ export function ReceiptForm() {
                     onClick={form.handleSubmit(d => handleProcessSubmission(d))}
                 >
                     {isSubmitting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
-                    บันทึกและออกใบเสร็จ
+                    {isEditingConfirmedReceipt ? "บันทึกการแก้ไข" : "บันทึกและออกใบเสร็จ"}
                 </Button>
             </div>
         </div>
+
+        {isEditingConfirmedReceipt && (
+          <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              ใบเสร็จนี้ยืนยันรับเงินเข้าบัญชีแล้ว — แก้ไขได้เฉพาะวันที่ออกใบเสร็จ หมายเหตุ และข้อมูลที่แสดงบนเอกสาร
+              ระบบจะไม่บันทึกรายรับซ้ำ
+            </AlertDescription>
+          </Alert>
+        )}
         
         <Card>
             <CardHeader><CardTitle className="text-base">1. ข้อมูลลูกค้าและบิลที่ต้องการรวม</CardTitle></CardHeader>
@@ -962,7 +1071,7 @@ export function ReceiptForm() {
 
         {watchedSourceDocIds.length > 0 && (
         <Card className="animate-in zoom-in-95">
-            <CardHeader><CardTitle className="text-base">2. รายละเอียดใบเสร็จ (บันทึกบัญชีจริงเมื่อรับเงินที่หน้าลูกหนี้)</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">2. รายละเอียดใบเสร็จ{isEditingConfirmedReceipt ? "" : " (บันทึกบัญชีจริงเมื่อรับเงินที่หน้าลูกหนี้)"}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
@@ -1013,7 +1122,7 @@ export function ReceiptForm() {
                 <FormField name="accountId" render={({ field }) => (
                     <FormItem>
                         <FormLabel>เข้าบัญชี (คาดการณ์)</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting}>
+                        <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting || isEditingConfirmedReceipt}>
                             <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่จะนำเงินเข้า..." /></SelectTrigger></FormControl>
                             <SelectContent>
                                 {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'ธนาคาร'})</SelectItem>)}
