@@ -100,7 +100,7 @@ import {
   customerPortalStaleAgeBadgeClass,
 } from "@/lib/customer-job-portal-ui";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
-import { canJobFinishForBilling, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
+import { jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
 import { cancelJobAfterCustomerReject, reviseQuotationAfterCustomerReject } from "@/firebase/job-quotation-inform";
 import { appendDocumentReturnQuery, documentReturnQueryFromJob } from "@/lib/document-return-navigation";
@@ -742,7 +742,7 @@ export function JobList({
                     );
                   })()}
 
-                  {job.status === 'IN_REPAIR_PROCESS' && canJobFinishForBilling(job, []) && (
+                  {job.status === 'IN_REPAIR_PROCESS' && (
                     <Button className="w-full h-9 bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => setStatusConfirmAction({ type: 'FINISH_JOB', job })} disabled={!!isProcessing}><CheckCircle2 className="mr-2 h-4 w-4" />งานเสร็จแจ้งทำบิล</Button>
                   )}
 

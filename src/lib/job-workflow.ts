@@ -91,15 +91,10 @@ export function jobFinishForBillingBlockedReason(
     | "hasPartsWithdrawal"
     | "partsWithdrawalWaived"
   >,
-  withdrawals: WithdrawalLike[]
+  _withdrawals: WithdrawalLike[]
 ): string | null {
-  if (job.status !== "IN_REPAIR_PROCESS") return null;
-  if (!jobCustomerApprovedForParts(job)) {
-    return "ยังไม่ผ่านขั้นตอนลูกค้าอนุมัติ — ต้องเสนอราคาและรออนุมัติก่อนจบงาน";
-  }
-  if (!jobPartsStepSatisfied(job, withdrawals)) {
-    return "ยังไม่มีการเบิกอะไหล่ — ต้องเบิกอะไหล่และดำเนินการซ่อมก่อนแจ้งทำบิล (หรือเลือกไม่ต้องเบิกอะไหล่)";
-  }
+  // อยู่ในขั้นกำลังซ่อมแล้ว — ให้แจ้งทำบิลได้เสมอ (รวมกรณี admin ถอยสถานะกลับมาแก้ไข)
+  if (job.status === "IN_REPAIR_PROCESS") return null;
   return null;
 }
 

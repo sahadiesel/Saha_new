@@ -60,7 +60,6 @@ import {
   jobFinishForBillingBlockedReason,
   jobRequestMorePartsBlockedReason,
   jobPartsReadyBlockedReason,
-  canJobFinishForBilling,
   canJobSkipPartsWithdrawal,
   jobNeedsInitialPartsAction,
   jobNeedsAdditionalPartsWithdrawal,
@@ -300,10 +299,7 @@ function JobDetailsPageContent() {
     [job, withdrawals]
   );
   const canShowFinishJob =
-    !!job &&
-    job.status === "IN_REPAIR_PROCESS" &&
-    !isSubTask &&
-    canJobFinishForBilling(job, withdrawals);
+    !!job && job.status === "IN_REPAIR_PROCESS" && !isSubTask;
   const canShowReturnToMain =
     isSubTask &&
     (job?.status === "IN_REPAIR_PROCESS" || job?.status === "RECEIVED");
