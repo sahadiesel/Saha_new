@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -36,6 +36,10 @@ import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationT
 import { docStatusLabel } from "@/lib/ui-labels";
 import { DATA_LIMITS } from "@/lib/constants";
 import { customerMatchesSearchTerm } from "@/lib/customer-utils";
+import {
+  appendDocumentReturnQuery,
+  documentReturnQueryFromJob,
+} from "@/lib/document-return-navigation";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "ต้องกรอกรายละเอียดรายการ"),
@@ -73,6 +77,7 @@ const formatCurrency = (value: number | null | undefined) => {
 
 export function QuotationForm({ jobId, editDocId }: { jobId: string | null, editDocId: string | null }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { db } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -101,6 +106,26 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
   const { data: docToEdit, isLoading: isLoadingDocToEdit } = useDoc<DocumentType>(docToEditRef);
+
+  const returnJobId = useMemo(() => {
+    if (searchParams.get("from") === "job") {
+      return searchParams.get("jobId") || jobId || "";
+    }
+    return jobId || "";
+  }, [searchParams, jobId]);
+
+  const returnQuery = useMemo(
+    () => (returnJobId ? documentReturnQueryFromJob(returnJobId) : ""),
+    [returnJobId]
+  );
+
+  const handleGoBack = () => {
+    if (returnJobId) {
+      router.push(`/app/jobs/${returnJobId}`);
+      return;
+    }
+    router.push("/app/office/documents/quotation");
+  };
   const { data: storeSettings, isLoading: isLoadingStore } = useDoc<StoreSettings>(storeSettingsRef);
   const { data: templates } = useCollection<QuotationTemplate>(templatesQuery);
 
@@ -431,7 +456,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                     : undefined,
               });
             }
-            router.push(`/app/office/documents/quotation/${redirectDocId}`);
+            router.push(appendDocumentReturnQuery(`/app/office/documents/quotation/${redirectDocId}`, returnQuery));
         } else {
             if (mode === "draft") {
               const { docId } = await createDocument(db, "QUOTATION", documentData, profile, undefined, {
@@ -444,7 +469,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                   ? "แก้ไขต่อได้ — ยังไม่แสดงบนจ๊อบหรือส่งลูกค้า จนกว่าจะกดบันทึกราคาฉบับจริง"
                   : "แก้ไขต่อได้ — ยังไม่ส่งลูกค้า จนกว่าจะกดบันทึกราคาฉบับจริง",
               });
-              router.push(`/app/office/documents/quotation/${docId}`);
+              router.push(appendDocumentReturnQuery(`/app/office/documents/quotation/${docId}`, returnQuery));
             } else {
               const newJobStatus = data.jobId ? ("PENDING_CUSTOMER_INFORM" as const) : undefined;
               const { docId } = await createDocument(db, "QUOTATION", documentData, profile, newJobStatus, {
@@ -454,7 +479,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                 title: data.jobId ? "บันทึกราคาฉบับจริงแล้ว" : "สร้างใบเสนอราคาสำเร็จ",
                 description: data.jobId ? "งานเข้าขั้นรอแจ้งลูกค้า — พร้อมดำเนินการตามระบบเดิม" : undefined,
               });
-              router.push(`/app/office/documents/quotation/${docId}`);
+              router.push(appendDocumentReturnQuery(`/app/office/documents/quotation/${docId}`, returnQuery));
             }
         }
     } catch (e: any) {
@@ -802,7 +827,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
           </div>
 
           <div className="flex flex-wrap justify-end gap-2 sm:gap-4">
-            <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
+            <Button type="button" variant="outline" onClick={handleGoBack} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             {isEditing && docToEdit?.status === "FINAL" && !isCancelled && (
               <Button
                 type="button"
@@ -845,7 +870,7 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
                 <DialogDescription>งานซ่อมนี้มีการออกใบเสนอราคาไปแล้วคือเลขที่ <span className="font-bold text-primary">{existingActiveDoc?.docNo}</span></DialogDescription>
               </DialogHeader>
               <DialogFooter className="flex flex-col sm:flex-row gap-2">
-                <Button variant="outline" className="w-full sm:w-auto" onClick={() => router.push(`/app/office/documents/quotation/${existingActiveDoc?.id}`)}>
+                <Button variant="outline" className="w-full sm:w-auto" onClick={() => router.push(appendDocumentReturnQuery(`/app/office/documents/quotation/${existingActiveDoc?.id}`, returnQuery))}>
                   <Eye className="mr-2 h-4 w-4" /> ดูใบเดิม
                 </Button>
                 <Button variant="destructive" className="w-full sm:w-auto" onClick={handleCancelExistingAndSave} disabled={isProcessing}>

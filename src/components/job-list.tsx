@@ -103,6 +103,7 @@ import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
 import { canJobFinishForBilling, jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
 import { cancelJobAfterCustomerReject, reviseQuotationAfterCustomerReject } from "@/firebase/job-quotation-inform";
+import { appendDocumentReturnQuery, documentReturnQueryFromJob } from "@/lib/document-return-navigation";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -141,7 +142,7 @@ interface JobListProps {
   byStatusTab?: string;
 }
 
-export function JobList({ 
+export function JobList({
   department, 
   status, 
   excludeStatus, 
@@ -751,13 +752,13 @@ export function JobList({
                   {job.status === 'WAITING_QUOTATION' && !hasActualBill && canDoBilling && (
                     hasQuotation ? (
                       <Button asChild className="w-full h-9 font-bold" variant={canInformQuotation ? "outline" : "default"}>
-                        <Link href={`/app/office/documents/quotation/new?editDocId=${quotationEditId}`}>
+                        <Link href={appendDocumentReturnQuery(`/app/office/documents/quotation/new?editDocId=${quotationEditId}`, documentReturnQueryFromJob(job.id))}>
                           <FileText className="mr-2 h-4 w-4" />แก้ไขใบเสนอราคา
                         </Link>
                       </Button>
                     ) : (
                       <Button asChild className="w-full h-9 font-bold" variant="default">
-                        <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}>
+                        <Link href={appendDocumentReturnQuery(`/app/office/documents/quotation/new?jobId=${job.id}`, documentReturnQueryFromJob(job.id))}>
                           <FileText className="mr-2 h-4 w-4" />สร้างใบเสนอราคา
                         </Link>
                       </Button>
@@ -787,7 +788,7 @@ export function JobList({
                       ) : (
                         <>
                           {job.status === 'DONE' && canDoBilling && (<Button className="w-full h-9 border-primary text-primary hover:bg-primary/10 font-bold" variant="outline" onClick={() => setBillingJob(job)}><Receipt className="mr-2 h-4 w-4" />ออกบิล</Button>)}
-                          {hasQuotation && quotationEditId && (<Button asChild variant="ghost" className="w-full h-8 text-primary hover:text-primary hover:bg-primary/5 text-[10px] font-bold border border-dashed border-primary/20"><Link href={`/app/office/documents/quotation/${quotationEditId}`}><Eye className="mr-1 h-3 w-3" /> ดูใบเสนอราคา {job.salesDocNo}</Link></Button>)}
+                          {hasQuotation && quotationEditId && (<Button asChild variant="ghost" className="w-full h-8 text-primary hover:text-primary hover:bg-primary/5 text-[10px] font-bold border border-dashed border-primary/20"><Link href={`/app/office/documents/quotation/${quotationEditId}${documentReturnQueryFromJob(job.id)}`}><Eye className="mr-1 h-3 w-3" /> ดูใบเสนอราคา {job.salesDocNo}</Link></Button>)}
                         </>
                       )}
                     </div>

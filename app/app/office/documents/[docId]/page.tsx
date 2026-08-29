@@ -15,7 +15,8 @@ import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2 } from "lucide-r
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
-import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
+import { sumWithdrawalGrand } from "@/lib/part-withdrawal-totals";
+import { resolveDocumentBackHref } from "@/lib/document-return-navigation";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Document, AccountingAccount, Customer, Job } from "@/lib/types";
 import {
@@ -188,6 +189,7 @@ function DocumentView({
     const labelSender = isQuotation ? 'ผู้เสนอราคา' : (isBilling ? 'ผู้วางบิล' : (isReceipt ? 'ผู้รับเงิน' : (isWithdrawal ? 'ผู้จ่ายอะไหล่' : 'ผู้ส่งสินค้า')));
     const labelReceiver = isQuotation ? 'ลูกค้า / ผู้รับข้อเสนอ' : (isBilling ? 'ผู้รับวางบิล' : (isReceipt ? 'ลูกค้า / ผู้จ่ายเงิน' : (isWithdrawal ? 'ผู้รับอะไหล่' : 'ผู้รับสินค้า')));
     const itemColCount = isWithdrawal ? 4 : 5;
+    const withdrawalGrandTotal = isWithdrawal ? sumWithdrawalGrand(document.items || []) : 0;
     const allItems = document.items;
     const splitPrintLayout = shouldSplitPrintPages(document.docType, allItems.length);
     const firstPageItemCount = getPrintFirstPageItemCount(allItems.length);
@@ -515,6 +517,18 @@ function DocumentView({
                                             </div>
                                         </div>
                                     )}
+                                    {isWithdrawal && (
+                                        <div className="space-y-1 text-right">
+                                            <div className="flex justify-between text-base font-bold text-primary uppercase">
+                                                <span>มูลค่ารวมอะไหล่</span>
+                                                <span>
+                                                    {withdrawalGrandTotal.toLocaleString("th-TH", {
+                                                        minimumFractionDigits: 2,
+                                                    })}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                                 )}
 
@@ -746,55 +760,7 @@ function DocumentPageContent() {
     }, [document, db]);
 
     const handleBack = () => {
-        const from = searchParams.get('from');
-        const tab = searchParams.get('tab');
-        
-        if (from === 'inbox') {
-            router.push(`/app/management/accounting/inbox?tab=${tab || 'receive'}`);
-            return;
-        }
-
-        if (from === 'jobs-by-status') {
-            router.push(`/app/office/jobs/management/by-status?status=${tab || 'waiting-approve'}`);
-            return;
-        }
-
-        if (!document) {
-            router.back();
-            return;
-        }
-        
-        switch (document.docType) {
-            case 'QUOTATION':
-                router.push('/app/office/documents/quotation');
-                break;
-            case 'DELIVERY_NOTE':
-                router.push('/app/office/documents/delivery-note');
-                break;
-            case 'TAX_INVOICE':
-                router.push('/app/office/documents/tax-invoice');
-                break;
-            case 'BILLING_NOTE':
-                router.push('/app/management/accounting/documents/billing-note');
-                break;
-            case 'RECEIPT':
-                router.push('/app/management/accounting/documents/receipt');
-                break;
-            case 'CREDIT_NOTE':
-                router.push('/app/management/accounting/documents/credit-note');
-                break;
-            case 'DEBIT_NOTE':
-                router.push('/app/management/accounting/documents/debit-note');
-                break;
-            case 'WITHHOLDING_TAX':
-                router.push('/app/management/accounting/documents/withholding-tax');
-                break;
-            case 'WITHDRAWAL':
-                router.push('/app/office/parts/withdraw');
-                break;
-            default:
-                router.push('/app/jobs');
-        }
+        router.push(resolveDocumentBackHref(searchParams, document?.docType));
     };
 
     const handlePrintRequest = () => {

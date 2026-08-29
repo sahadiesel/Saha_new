@@ -401,6 +401,56 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                 }
                 if (nPaid > 0 && !cancelled) await batchPaid.commit();
 
+                const paidInvSnap = await getDocs(
+                    query(
+                        collection(db, 'documents'),
+                        where('docType', '==', 'TAX_INVOICE'),
+                        where('status', '==', 'PAID'),
+                        limit(200)
+                    )
+                );
+                if (cancelled) return;
+                const batchStuckPaid = writeBatch(db);
+                let nStuck = 0;
+                for (const invDoc of paidInvSnap.docs) {
+                    const inv = { id: invDoc.id, ...invDoc.data() } as DocumentType;
+                    if (!inv.receiptDocId) continue;
+                    const recSnap = await getDoc(doc(db, 'documents', inv.receiptDocId));
+                    if (!recSnap.exists() || recSnap.data().status !== 'CANCELLED') continue;
+                    const total = inv.grandTotal ?? 0;
+                    batchStuckPaid.update(invDoc.ref, {
+                        status: 'APPROVED',
+                        arStatus: 'UNPAID',
+                        paymentSummary: {
+                            paidTotal: 0,
+                            balance: total,
+                            paymentStatus: 'UNPAID',
+                        },
+                        receiptStatus: deleteField(),
+                        receiptDocId: deleteField(),
+                        receiptDocNo: deleteField(),
+                        accountingEntryId: deleteField(),
+                        receivedAccountId: deleteField(),
+                        updatedAt: serverTimestamp(),
+                    });
+                    const obRef = doc(db, 'accountingObligations', `AR_${inv.id}`);
+                    const obSnap = await getDoc(obRef);
+                    if (obSnap.exists()) {
+                        const ob = obSnap.data() as AccountingObligation;
+                        const obTotal = typeof ob.amountTotal === 'number' ? ob.amountTotal : total;
+                        batchStuckPaid.update(obRef, {
+                            status: 'UNPAID',
+                            amountPaid: 0,
+                            balance: obTotal,
+                            lastPaymentDate: deleteField(),
+                            paidOffDate: deleteField(),
+                            updatedAt: serverTimestamp(),
+                        });
+                    }
+                    nStuck++;
+                }
+                if (nStuck > 0 && !cancelled) await batchStuckPaid.commit();
+
                 let invDocs: QueryDocumentSnapshot<DocumentData>[] = [];
                 try {
                     invDocs = await getApprovedTaxInvoiceSnapshotsPaged(db);

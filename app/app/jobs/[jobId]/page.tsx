@@ -53,6 +53,7 @@ import { restoreJobFromArchive, JOB_RESTORE_STATUS_OPTIONS } from "@/firebase/jo
 import { archiveCollectionNameByYear, getGregorianArchiveYearFromDateString } from "@/lib/archive-utils";
 import { jobDisplayRef } from "@/lib/job-display";
 import { jobWithdrawPartsBlockedReason } from "@/lib/job-parts-withdrawal";
+import { appendDocumentReturnQuery, documentReturnQueryFromJob } from "@/lib/document-return-navigation";
 import {
   statusAfterSubDepartmentHandoff,
   resolveJobStatusAfterSubReturn,
@@ -176,6 +177,7 @@ function JobDetailsPageContent() {
     const id = params?.jobId;
     return (Array.isArray(id) ? id[0] : id) as string;
   }, [params]);
+  const jobReturnQuery = useMemo(() => documentReturnQueryFromJob(jobId), [jobId]);
 
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1342,7 +1344,23 @@ function JobDetailsPageContent() {
               </div>
               {job.assigneeName && <div><h4 className="font-semibold text-base">{job.department === 'OUTSOURCE' ? 'ผู้รับเหมา' : 'ผู้รับผิดชอบ'}</h4><p>{job.assigneeName}</p></div>}
               <div><div className="flex items-center gap-4"><h4 className="font-semibold text-base">รายการแจ้งซ่อม</h4>{canEditDetails && <Button onClick={handleOpenEditDescriptionDialog} variant="outline" size="sm" className="h-7" disabled={isViewOnly}><Edit className="h-3 w-3 mr-1"/> แก้ไข</Button>}</div><p className="whitespace-pre-wrap pt-1">{job.description}</p></div>
-              <div className="border-t pt-4"><div className="flex items-center gap-4 mb-2"><h4 className="font-semibold text-base">รายละเอียดรถ/ชิ้นส่วน</h4>{canEditDetails && <Button onClick={handleOpenEditVehicleDialog} variant="outline" size="sm" className="h-7" disabled={isViewOnly}><Edit className="h-3 w-3 mr-1"/> แก้ไข</Button>}</div><JobVehicleDetails job={job} /></div>
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold text-base">รายละเอียดรถ/ชิ้นส่วน</h4>
+                  {canUpdateActivity && (
+                    <Button
+                      onClick={handleOpenEditVehicleDialog}
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                      disabled={isViewOnly}
+                    >
+                      <Edit className="h-3 w-3 mr-1" /> แก้ไข
+                    </Button>
+                  )}
+                </div>
+                <JobVehicleDetails job={job} />
+              </div>
                <div className="flex gap-2 pt-4 border-t">
                   {canEditDetails && <Button onClick={() => setIsTransferDialogOpen(true)} variant="outline" size="sm" disabled={isViewOnly}>เปลี่ยนแปลงแผนกหลัก</Button>}
                   {canEditDetails && (
@@ -1651,7 +1669,7 @@ function JobDetailsPageContent() {
                                   <span className="font-medium">{latestDoc.docNo}</span>
                                 ) : (
                                   <Button asChild variant="link" className="p-0 h-auto font-medium">
-                                    <Link href={`/app/office/documents/${latestDoc.id}`}>{latestDoc.docNo}</Link>
+                                    <Link href={`/app/office/documents/${latestDoc.id}${jobReturnQuery}`}>{latestDoc.docNo}</Link>
                                   </Button>
                                 )}
                                 <Badge variant="outline" className="text-[8px] px-1 h-4">
@@ -1751,7 +1769,7 @@ function JobDetailsPageContent() {
                     {/* แจ้งลูกค้า — ฉบับจริงแล้ว รอส่ง/ยืนยันแจ้ง */}
                     {isMgmtOrOffice && canInformQuotation && quotationInformDocId && (
                       <Button asChild className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold">
-                        <Link href={`/app/office/documents/${quotationInformDocId}`}>
+                        <Link href={`/app/office/documents/${quotationInformDocId}${jobReturnQuery}`}>
                           <Send className="mr-2 h-4 w-4" />
                           แจ้งราคาลูกค้า
                         </Link>
@@ -1762,14 +1780,14 @@ function JobDetailsPageContent() {
                     {job.status === "WAITING_QUOTATION" && !isAlreadyBilled && isMgmtOrOffice && (
                       hasQuotation ? (
                         <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold" variant={canInformQuotation ? "outline" : "default"}>
-                          <Link href={`/app/office/documents/quotation/new?editDocId=${quotationEditId}`}>
+                          <Link href={appendDocumentReturnQuery(`/app/office/documents/quotation/new?editDocId=${quotationEditId}`, jobReturnQuery)}>
                             <FileText className="mr-2 h-4 w-4" />
                             แก้ไขใบเสนอราคา
                           </Link>
                         </Button>
                       ) : (
                         <Button asChild className="w-full bg-primary hover:bg-primary/90 font-bold">
-                          <Link href={`/app/office/documents/quotation/new?jobId=${job.id}`}>
+                          <Link href={appendDocumentReturnQuery(`/app/office/documents/quotation/new?jobId=${job.id}`, jobReturnQuery)}>
                             <FileText className="mr-2 h-4 w-4" />
                             สร้างใบเสนอราคา
                           </Link>

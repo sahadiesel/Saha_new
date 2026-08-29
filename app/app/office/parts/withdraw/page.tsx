@@ -69,22 +69,11 @@ import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import type { Document, DocumentItem } from "@/lib/types";
 import { withdrawalListStatusLabel } from "@/lib/ui-labels";
+import { recalcWithdrawalLineTotals, sumWithdrawalGrand } from "@/lib/part-withdrawal-totals";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 function remainingWithdrawQty(item: DocumentItem): number {
   return Math.max(0, Number(item.quantity || 0) - Number(item.returnedToStockQty || 0));
-}
-
-function recalcWithdrawalLineTotals(items: DocumentItem[]): DocumentItem[] {
-  return items.map((i) => {
-    const rem = remainingWithdrawQty(i);
-    const unit = Number(i.unitPrice) || 0;
-    return { ...i, total: Math.round(rem * unit * 100) / 100 };
-  });
-}
-
-function sumWithdrawalGrand(items: DocumentItem[]): number {
-  return Math.round(items.reduce((s, i) => s + (i.total || 0), 0) * 100) / 100;
 }
 
 type PartialLineState = { selected: boolean; qty: number };
@@ -535,7 +524,10 @@ export default function OfficePartsWithdrawPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right font-black text-sm">
-                            ฿{w.grandTotal.toLocaleString()}
+                            ฿{sumWithdrawalGrand(w.items || []).toLocaleString("th-TH", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            })}
                           </TableCell>
                           <TableCell className="text-right">
                             <DropdownMenu>

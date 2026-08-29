@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, Suspense } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { doc } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
@@ -15,14 +15,25 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { safeFormat } from "@/lib/date-utils";
 import type { Document } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { appendDocumentReturnQuery, resolveDocumentBackHref } from "@/lib/document-return-navigation";
 
 function QuotationDetailPageContent() {
     const { docId } = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { db } = useFirebase();
 
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
+
+    const returnQuery = useMemo(() => {
+        const qs = searchParams.toString();
+        return qs ? `?${qs}` : "";
+    }, [searchParams]);
+
+    const handleBack = () => {
+        router.push(resolveDocumentBackHref(searchParams, "QUOTATION"));
+    };
 
     const isCancelled = document?.status === 'CANCELLED';
 
@@ -44,11 +55,11 @@ function QuotationDetailPageContent() {
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
-                <Button variant="outline" onClick={() => router.back()}>
+                <Button variant="outline" onClick={handleBack}>
                     <ArrowLeft className="mr-2 h-4 w-4"/> ย้อนกลับ
                 </Button>
                 <Button asChild variant="default" size="sm">
-                    <Link href={`/app/office/documents/${docId}`}>
+                    <Link href={appendDocumentReturnQuery(`/app/office/documents/${docId}`, returnQuery)}>
                         <Eye className="mr-2 h-4 w-4"/> พรีวิว / พิมพ์เอกสาร
                     </Link>
                 </Button>

@@ -84,6 +84,7 @@ import {
   summarizeWithdrawalDeltas,
   type StockMovementRow,
 } from "@/lib/part-withdrawal-stock-delta";
+import { sumWithdrawalGrand, withdrawalLineValue, quotationUnitPriceForPart } from "@/lib/part-withdrawal-totals";
 
 const withdrawalItemSchema = z.object({
   partId: z.string().min(1, "กรุณาเลือกอะไหล่จากระบบ"),
@@ -138,7 +139,10 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   const [quotationDoc, setQuotationDoc] = useState<DocumentType | null>(null);
   const [linkedJob, setLinkedJob] = useState<Job | null>(null);
+  const [editLinkedJob, setEditLinkedJob] = useState<Job | null>(null);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
+  const editHydratedRef = useRef<string | null>(null);
+  const editQuotationPricesSyncedRef = useRef<string | null>(null);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -183,6 +187,21 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   const watchedCustomerId = form.watch("customerId");
   const watchedRefId = form.watch("refId");
   const watchedDocDate = form.watch("docDate");
+  const watchedItems = useWatch({ control: form.control, name: "items" });
+  const draftWithdrawalTotal = useMemo(
+    () =>
+      sumWithdrawalGrand(
+        (watchedItems || [])
+          .filter((i) => i.partId)
+          .map((i) => ({
+            partId: i.partId,
+            quantity: Number(i.quantity) || 0,
+            unitPrice: Number(i.unitPrice) || 0,
+            total: Number(i.total) || 0,
+          }))
+      ),
+    [watchedItems]
+  );
   const jobWithdrawBlockedReason = linkedJob ? jobWithdrawPartsBlockedReason(linkedJob) : null;
   const canWaivePartsWithdrawal = linkedJob ? jobNeedsInitialPartsAction(linkedJob) : false;
 
@@ -304,27 +323,96 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     };
   }, [queryJobId, isEditing, db, form, toast]);
 
-  // Load existing doc for editing
+  // Load existing doc for editing (ล็อกลูกค้า/งานเดิม — hydrate ครั้งเดียวต่อใบ)
   useEffect(() => {
-    if (docToEdit && customers.length > 0) {
-        form.reset({
-            refType: docToEdit.jobId ? 'JOB' : (docToEdit.notes?.includes('INTERNAL') ? 'INTERNAL' : 'LOAN'), 
-            refId: docToEdit.jobId || 'MANUAL_REF',
-            customerId: docToEdit.customerId || "",
-            docDate: docToEdit.docDate,
-            items: docToEdit.items.map(i => ({
-                partId: i.partId || "",
-                code: i.code || "",
-                description: i.description || "",
-                quantity: i.quantity,
-                unitPrice: i.unitPrice,
-                total: i.total,
-                stockQty: parts.find(p => p.id === i.partId)?.stockQty || 0
-            })),
-            notes: docToEdit.notes || "",
-        });
+    if (!docToEdit) {
+      editHydratedRef.current = null;
+      editQuotationPricesSyncedRef.current = null;
+      return;
     }
-  }, [docToEdit, customers, parts, form]);
+    if (editHydratedRef.current === docToEdit.id) return;
+    if (parts.length === 0) return;
+
+    const customerId = docToEdit.customerId || docToEdit.customerSnapshot?.id || "";
+    editHydratedRef.current = docToEdit.id;
+    form.reset({
+      refType: docToEdit.jobId ? "JOB" : docToEdit.notes?.includes("INTERNAL") ? "INTERNAL" : "LOAN",
+      refId: docToEdit.jobId || "MANUAL_REF",
+      customerId,
+      docDate: docToEdit.docDate,
+      items: docToEdit.items.map((i) => ({
+        partId: i.partId || "",
+        code: i.code || "",
+        description: i.description || "",
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        total: withdrawalLineValue(i),
+        stockQty: parts.find((p) => p.id === i.partId)?.stockQty || 0,
+      })),
+      notes: docToEdit.notes || "",
+    });
+  }, [docToEdit, parts, form]);
+
+  // ปรับราคาต่อหน่วยจากใบเสนอราคาเมื่อแก้ไขใบเบิกที่ผูกงาน (ครั้งเดียวต่อใบ)
+  useEffect(() => {
+    if (!isEditing || !docToEdit?.id || !quotationDoc?.items?.length) return;
+    const syncKey = `${docToEdit.id}:${quotationDoc.id}`;
+    if (editQuotationPricesSyncedRef.current === syncKey) return;
+
+    const items = form.getValues("items");
+    let changed = false;
+    const next = items.map((row) => {
+      if (!row.partId) return row;
+      const part = parts.find((p) => p.id === row.partId);
+      if (!part) return row;
+      const qtPrice = quotationUnitPriceForPart(quotationDoc.items, part);
+      if (qtPrice == null || qtPrice === row.unitPrice) return row;
+      changed = true;
+      const quantity = Number(row.quantity) || 0;
+      return {
+        ...row,
+        unitPrice: qtPrice,
+        total: qtPrice * quantity,
+      };
+    });
+
+    if (changed) {
+      editQuotationPricesSyncedRef.current = syncKey;
+      replace(next);
+    }
+  }, [isEditing, docToEdit?.id, quotationDoc, parts, form, replace]);
+
+  useEffect(() => {
+    if (!db || !isEditing || !docToEdit?.jobId) {
+      setEditLinkedJob(null);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, "jobs", docToEdit.jobId)).then((snap) => {
+      if (cancelled || !snap.exists()) return;
+      setEditLinkedJob({ id: snap.id, ...snap.data() } as Job);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [db, isEditing, docToEdit?.jobId]);
+
+  const editLockedCustomerName = useMemo(() => {
+    if (!isEditing || !docToEdit) return "";
+    const cid = docToEdit.customerId || docToEdit.customerSnapshot?.id || "";
+    return (
+      docToEdit.customerSnapshot?.name ||
+      customers.find((c) => c.id === cid)?.name ||
+      "—"
+    );
+  }, [isEditing, docToEdit, customers]);
+
+  const editLockedJobLabel = useMemo(() => {
+    if (!isEditing || !docToEdit?.jobId) return "";
+    if (editLinkedJob) return formatJobWithdrawalRefLabel(editLinkedJob);
+    if (docToEdit.quotationDocNo) return `ใบเสนอราคา ${docToEdit.quotationDocNo}`;
+    return `งานอ้างอิง (${docToEdit.jobId})`;
+  }, [isEditing, docToEdit, editLinkedJob]);
 
   const availableEntities = useMemo(() => {
     if (watchedRefType === 'JOB') {
@@ -341,16 +429,41 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
     return customers.map(c => ({ id: c.id, name: c.name, phone: c.phone }));
   }, [watchedRefType, activeJobs, activeSalesDocs, workers, customers]);
 
+  const resolveWithdrawalEntity = (customerId: string) => {
+    const fromList = availableEntities.find((e) => e.id === customerId);
+    if (fromList) return fromList;
+    if (isEditing && docToEdit?.customerSnapshot) {
+      const snap = docToEdit.customerSnapshot;
+      if (!customerId || snap.id === customerId || docToEdit.customerId === customerId) {
+        return {
+          id: customerId || snap.id || docToEdit.customerId || "",
+          name: snap.name || "ลูกค้า",
+          phone: snap.phone || "",
+        };
+      }
+    }
+    const fromCustomers = customers.find((c) => c.id === customerId);
+    if (fromCustomers) {
+      return { id: fromCustomers.id, name: fromCustomers.name, phone: fromCustomers.phone };
+    }
+    return null;
+  };
+
   const filteredJobs = useMemo(() => activeJobs.filter(j => j.customerId === watchedCustomerId), [activeJobs, watchedCustomerId]);
   const filteredSalesDocs = useMemo(() => activeSalesDocs.filter(d => d.customerId === watchedCustomerId), [activeSalesDocs, watchedCustomerId]);
 
   const handleSelectPart = (index: number, part: Part) => {
+    const qty = form.getValues(`items.${index}.quantity`) || 1;
+    const unitPrice =
+      watchedRefType === "JOB" && quotationDoc?.items
+        ? quotationUnitPriceForPart(quotationDoc.items, part) ?? part.sellingPrice
+        : part.sellingPrice;
     form.setValue(`items.${index}.partId`, part.id);
     form.setValue(`items.${index}.code`, part.code);
     form.setValue(`items.${index}.description`, part.name);
     form.setValue(`items.${index}.stockQty`, part.stockQty);
-    form.setValue(`items.${index}.unitPrice`, part.sellingPrice);
-    form.setValue(`items.${index}.total`, part.sellingPrice * form.getValues(`items.${index}.quantity`));
+    form.setValue(`items.${index}.unitPrice`, unitPrice);
+    form.setValue(`items.${index}.total`, unitPrice * qty);
     setActivePartSearchIdx(null);
     setPartSearch("");
   };
@@ -401,7 +514,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
       toast({ variant: "destructive", title: "กรุณาเลือกประเภทการเบิก", description: "เบิกบางส่วน หรือ จัดอะไหล่ครบแล้ว" });
       return;
     }
-    const entity = availableEntities.find((e) => e.id === data.customerId);
+    const entity = resolveWithdrawalEntity(data.customerId);
     if (!entity) {
       toast({ variant: "destructive", title: "กรุณาเลือกรายชื่ออ้างอิง" });
       return;
@@ -430,7 +543,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
   ) => {
     if (!db || !profile || !storeSettings) return;
 
-    const entity = availableEntities.find(e => e.id === data.customerId);
+    const entity = resolveWithdrawalEntity(data.customerId);
     if (!entity) {
         toast({ variant: "destructive", title: "กรุณาเลือกรายชื่ออ้างอิง" });
         return;
@@ -542,7 +655,33 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         });
       }
 
-      const subtotal = data.items.reduce((sum, i) => sum + (i.total || 0), 0);
+      const prevReturnedByPartId = new Map(
+        (isEditing && docToEdit?.items ? docToEdit.items : [])
+          .filter((line) => line.partId)
+          .map((line) => [line.partId!, Number(line.returnedToStockQty || 0)] as const)
+      );
+
+      const builtItems = data.items
+        .filter((i) => i.partId)
+        .map((i) => {
+          const quantity = Number(i.quantity) || 0;
+          const unitPrice = Number(i.unitPrice) || 0;
+          const returnedToStockQty = prevReturnedByPartId.get(i.partId) || 0;
+          const lineForTotal = { quantity, unitPrice, returnedToStockQty, total: Number(i.total) || 0 };
+          const total = withdrawalLineValue(lineForTotal);
+          return {
+            description: i.description || "",
+            quantity,
+            unitPrice,
+            total,
+            partId: i.partId,
+            code: i.code,
+            stockSnapshot: (i.stockQty || 0) - (isDraft ? 0 : quantity),
+            ...(returnedToStockQty > 0 ? { returnedToStockQty } : {}),
+          };
+        });
+
+      const subtotal = sumWithdrawalGrand(builtItems);
       const targetStatus = isDraft ? 'DRAFT' : 'ISSUED';
       
       const docPayload = {
@@ -553,15 +692,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
         docDate: data.docDate,
         customerSnapshot: entity,
         storeSnapshot: storeSettings,
-        items: data.items.map(i => ({ 
-            description: i.description || "", 
-            quantity: i.quantity, 
-            unitPrice: i.unitPrice || 0, 
-            total: i.total || 0,
-            partId: i.partId,
-            code: i.code,
-            stockSnapshot: (i.stockQty || 0) - (isDraft ? 0 : i.quantity)
-        })),
+        items: builtItems,
         subtotal,
         discountAmount: 0,
         net: subtotal,
@@ -819,7 +950,7 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                 <FormField name="refType" control={form.control} render={({ field }) => (
                   <FormItem>
                     <FormLabel>ประเภทการเบิก</FormLabel>
-                    <Select onValueChange={(v) => { field.onChange(v); form.setValue("customerId", ""); form.setValue("refId", ""); }} value={field.value} disabled={isSubmitting}>
+                    <Select onValueChange={(v) => { field.onChange(v); form.setValue("customerId", ""); form.setValue("refId", ""); }} value={field.value} disabled={isSubmitting || isEditing}>
                       <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                       <SelectContent>
                         <SelectItem value="JOB">งานซ่อม (Job)</SelectItem>
@@ -836,6 +967,28 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
             <Card>
               <CardHeader><CardTitle className="text-base flex items-center gap-2">{watchedRefType === 'INTERNAL' ? <Users className="h-4 w-4 text-primary"/> : <User className="h-4 w-4 text-primary"/>} 2. รายละเอียดการอ้างอิง</CardTitle></CardHeader>
               <CardContent className="space-y-4">
+                {isEditing ? (
+                  <>
+                    <div className="space-y-2">
+                      <FormLabel>{watchedRefType === "INTERNAL" ? "พนักงานผู้เบิก" : "ชื่อลูกค้า"}</FormLabel>
+                      <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-medium">
+                        {editLockedCustomerName}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        ล็อกตามใบเบิกเดิม — แก้ไขได้เฉพาะรายการอะไหล่
+                      </p>
+                    </div>
+                    {docToEdit?.jobId && (
+                      <div className="space-y-2">
+                        <FormLabel>งานที่อ้างอิง</FormLabel>
+                        <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm leading-snug">
+                          {editLockedJobLabel}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
                 <FormField name="customerId" control={form.control} render={({ field }) => (
                   <FormItem>
                     <FormLabel>{watchedRefType === 'INTERNAL' ? 'พนักงานผู้เบิก (Worker)' : 'ชื่อลูกค้า'}</FormLabel>
@@ -893,6 +1046,8 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                       <FormMessage />
                     </FormItem>
                   )} />
+                )}
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -1105,6 +1260,14 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
                 </Table>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => append({ partId: "", quantity: 1, description: "", code: "", stockQty: 0, unitPrice: 0, total: 0 })} disabled={isSubmitting || fields.length >= 50}><PlusCircle className="mr-2 h-4 w-4" /> เพิ่มรายการ</Button>
+              <div className="flex justify-end border-t pt-3">
+                <p className="text-sm text-muted-foreground">
+                  มูลค่ารวม (ประมาณ):{" "}
+                  <span className="font-black text-primary text-base">
+                    ฿{draftWithdrawalTotal.toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                  </span>
+                </p>
+              </div>
             </CardContent>
           </Card>
 
@@ -1123,6 +1286,9 @@ export default function PartWithdrawalForm({ editDocId }: PartWithdrawalFormProp
 
       <Dialog open={isScannerOpen} onOpenChange={(o) => !o && stopScanner()}>
         <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-black">
+          <DialogHeader className="sr-only">
+            <DialogTitle>สแกนบาร์โค้ดอะไหล่</DialogTitle>
+          </DialogHeader>
           <div className="relative aspect-square">
             <video ref={videoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
             <div className="absolute inset-0 border-2 border-primary/50 m-12 rounded-lg pointer-events-none">

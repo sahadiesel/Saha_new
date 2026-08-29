@@ -4,6 +4,10 @@ import {
   runTransaction,
   serverTimestamp,
   deleteField,
+  getDoc,
+  getDocs,
+  query,
+  where,
   type Firestore,
   type DocumentSnapshot,
 } from "firebase/firestore";
@@ -18,10 +22,59 @@ type ArAllocation = {
   invoiceId: string;
   invoiceDocNo?: string;
   grossApplied?: number;
+  netCashApplied?: number;
 };
 
 function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function allocationGrossForInvoice(allocations: ArAllocation[], invoiceId: string): number {
+  const alloc = allocations.find((a) => a.invoiceId === invoiceId);
+  if (!alloc) return 0;
+  const gross = Number(alloc.grossApplied ?? 0);
+  if (gross > 0) return gross;
+  return Number(alloc.netCashApplied ?? 0);
+}
+
+function collectLinkedInvoiceIdsFromRefs(
+  refIds: string[],
+  relatedSnaps: Map<string, DocumentSnapshot>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const refId of refIds) {
+    const snap = relatedSnaps.get(refId);
+    if (!snap?.exists()) continue;
+    const d = snap.data() as Document;
+    if (d.docType === "TAX_INVOICE" || d.docType === "DEBIT_NOTE") {
+      ids.add(refId);
+    }
+    if (d.docType === "BILLING_NOTE" && Array.isArray(d.invoiceIds)) {
+      for (const childId of d.invoiceIds) {
+        if (childId) ids.add(childId);
+      }
+    }
+  }
+  return ids;
+}
+
+function invoiceResetUpdates(inv: Document): Record<string, unknown> {
+  const total = inv.grandTotal ?? 0;
+  return {
+    status: "APPROVED",
+    arStatus: "UNPAID",
+    paymentSummary: {
+      paidTotal: 0,
+      balance: total,
+      paymentStatus: "UNPAID",
+    },
+    receiptStatus: deleteField(),
+    receiptDocId: deleteField(),
+    receiptDocNo: deleteField(),
+    accountingEntryId: deleteField(),
+    receivedAccountId: deleteField(),
+    updatedAt: serverTimestamp(),
+  };
 }
 
 /** ใบเสร็จที่ยืนยันรับเงินเข้าบัญชีแล้ว (มีรายการใน cashbook) */
@@ -34,6 +87,113 @@ export function isReceiptPaymentConfirmed(receipt: Document): boolean {
     Boolean(receipt.accountingEntryId) ||
     Boolean(receipt.confirmedPayment?.arPaymentId)
   );
+}
+
+/**
+ * ซ่อมใบกำกับที่ยังค้างสถานะ PAID หลังยกเลิกใบเสร็จแล้ว (ข้อมูลเก่า / อ้างอิงผ่านใบวางบิล)
+ */
+export async function repairLinkedTaxInvoicesAfterReceiptCancel(
+  db: Firestore,
+  receipt: Document
+): Promise<number> {
+  if (receipt.docType !== "RECEIPT" || receipt.status !== "CANCELLED") return 0;
+
+  const arPaymentId = receipt.confirmedPayment?.arPaymentId ?? `ARPAY_${receipt.id}`;
+  const arPaymentSnap = await getDoc(doc(db, "arPayments", arPaymentId));
+  const allocations: ArAllocation[] = arPaymentSnap.exists()
+    ? ((arPaymentSnap.data() as { allocations?: ArAllocation[] }).allocations ?? [])
+    : [];
+
+  const refIds = receipt.referencesDocIds || [];
+  const relatedSnaps = new Map<string, DocumentSnapshot>();
+  for (const id of refIds) {
+    relatedSnaps.set(id, await getDoc(doc(db, "documents", id)));
+  }
+
+  const linkedIds = collectLinkedInvoiceIdsFromRefs(refIds, relatedSnaps);
+  for (const alloc of allocations) {
+    if (alloc.invoiceId) linkedIds.add(alloc.invoiceId);
+  }
+
+  const byReceiptDocId = await getDocs(
+    query(collection(db, "documents"), where("receiptDocId", "==", receipt.id))
+  );
+  for (const d of byReceiptDocId.docs) {
+    linkedIds.add(d.id);
+  }
+
+  let fixed = 0;
+  await runTransaction(db, async (transaction) => {
+    for (const invoiceId of linkedIds) {
+      const invRef = doc(db, "documents", invoiceId);
+      const invSnap = await transaction.get(invRef);
+      if (!invSnap.exists()) continue;
+
+      const inv = { id: invSnap.id, ...invSnap.data() } as Document;
+      if (inv.docType !== "TAX_INVOICE" && inv.docType !== "DEBIT_NOTE") continue;
+
+      const stillPaid =
+        inv.status === "PAID" ||
+        inv.status === "PARTIAL" ||
+        inv.receiptDocId === receipt.id ||
+        inv.paymentSummary?.paymentStatus === "PAID";
+      if (!stillPaid) continue;
+
+      const gross = allocationGrossForInvoice(allocations, invoiceId);
+      const obRef = doc(db, "accountingObligations", `AR_${invoiceId}`);
+      const obSnap = await transaction.get(obRef);
+
+      if (obSnap.exists()) {
+        const ob = obSnap.data() as AccountingObligation;
+        const total = typeof ob.amountTotal === "number" ? ob.amountTotal : inv.grandTotal ?? 0;
+        const reverseAmount =
+          gross > 0
+            ? gross
+            : Number(inv.paymentSummary?.paidTotal ?? ob.amountPaid ?? total);
+        const newAmountPaid = Math.max(0, roundMoney((ob.amountPaid || 0) - reverseAmount));
+        const newBalance = Math.max(0, roundMoney(total - newAmountPaid));
+        const payStatus =
+          newBalance <= 0.05 ? "PAID" : newAmountPaid > 0 ? "PARTIAL" : "UNPAID";
+
+        transaction.update(obRef, {
+          amountPaid: newAmountPaid,
+          balance: newBalance,
+          status: payStatus,
+          ...(payStatus === "UNPAID"
+            ? { lastPaymentDate: deleteField(), paidOffDate: deleteField() }
+            : {}),
+          updatedAt: serverTimestamp(),
+        });
+
+        if (payStatus === "UNPAID") {
+          transaction.update(invRef, invoiceResetUpdates(inv));
+          fixed++;
+        } else {
+          transaction.update(invRef, {
+            status: payStatus,
+            arStatus: payStatus,
+            paymentSummary: {
+              paidTotal: newAmountPaid,
+              balance: newBalance,
+              paymentStatus: payStatus,
+            },
+            receiptStatus: deleteField(),
+            receiptDocId: deleteField(),
+            receiptDocNo: deleteField(),
+            accountingEntryId: deleteField(),
+            receivedAccountId: deleteField(),
+            updatedAt: serverTimestamp(),
+          });
+          fixed++;
+        }
+      } else {
+        transaction.update(invRef, invoiceResetUpdates(inv));
+        fixed++;
+      }
+    }
+  });
+
+  return fixed;
 }
 
 /**
@@ -82,21 +242,30 @@ export async function reverseConfirmedReceipt(
       : [];
 
     const refIds = rData.referencesDocIds || [];
-    const invoiceIds = allocations.map((a) => a.invoiceId).filter(Boolean);
-    const allDocIds = Array.from(new Set([...refIds, ...invoiceIds]));
 
     const relatedSnaps = new Map<string, DocumentSnapshot>();
-    for (const id of allDocIds) {
+    for (const id of refIds) {
       relatedSnaps.set(id, await transaction.get(doc(db, "documents", id)));
     }
 
+    const linkedInvoiceIds = collectLinkedInvoiceIdsFromRefs(refIds, relatedSnaps);
+    for (const alloc of allocations) {
+      if (alloc.invoiceId) linkedInvoiceIds.add(alloc.invoiceId);
+    }
+
+    for (const id of linkedInvoiceIds) {
+      if (!relatedSnaps.has(id)) {
+        relatedSnaps.set(id, await transaction.get(doc(db, "documents", id)));
+      }
+    }
+
     const obSnaps = new Map<string, DocumentSnapshot>();
-    for (const invoiceId of invoiceIds) {
+    for (const invoiceId of linkedInvoiceIds) {
       obSnaps.set(invoiceId, await transaction.get(doc(db, "accountingObligations", `AR_${invoiceId}`)));
     }
 
     const jobIdsToCheck = new Set<string>();
-    for (const invoiceId of invoiceIds) {
+    for (const invoiceId of linkedInvoiceIds) {
       const obSnap = obSnaps.get(invoiceId);
       if (obSnap?.exists()) {
         const jobId = (obSnap.data() as AccountingObligation).jobId;
@@ -143,16 +312,23 @@ export async function reverseConfirmedReceipt(
 
     const reversedInvoiceIds = new Set<string>();
 
-    for (const alloc of allocations) {
-      const invoiceId = alloc.invoiceId;
-      const gross = Number(alloc.grossApplied ?? 0);
-      if (!invoiceId || gross <= 0) continue;
-      reversedInvoiceIds.add(invoiceId);
-
-      const obSnap = obSnaps.get(invoiceId);
+    for (const invoiceId of linkedInvoiceIds) {
       const invSnap = relatedSnaps.get(invoiceId);
       if (!invSnap?.exists()) continue;
 
+      const inv = invSnap.data() as Document;
+      if (inv.docType !== "TAX_INVOICE" && inv.docType !== "DEBIT_NOTE") continue;
+      if (inv.status !== "PAID" && inv.status !== "PARTIAL" && inv.receiptDocId !== receipt.id) {
+        continue;
+      }
+
+      reversedInvoiceIds.add(invoiceId);
+
+      const gross =
+        allocationGrossForInvoice(allocations, invoiceId) ||
+        Number(inv.paymentSummary?.paidTotal ?? inv.grandTotal ?? 0);
+
+      const obSnap = obSnaps.get(invoiceId);
       let newAmountPaid = 0;
       let newBalance = 0;
       let payStatus: "UNPAID" | "PARTIAL" | "PAID" = "UNPAID";
@@ -161,7 +337,7 @@ export async function reverseConfirmedReceipt(
       if (obSnap?.exists()) {
         const ob = obSnap.data() as AccountingObligation;
         jobId = ob.jobId;
-        const total = typeof ob.amountTotal === "number" ? ob.amountTotal : 0;
+        const total = typeof ob.amountTotal === "number" ? ob.amountTotal : inv.grandTotal ?? 0;
         newAmountPaid = Math.max(0, roundMoney((ob.amountPaid || 0) - gross));
         newBalance = Math.max(0, roundMoney(total - newAmountPaid));
         payStatus = newBalance <= 0.05 ? "PAID" : newAmountPaid > 0 ? "PARTIAL" : "UNPAID";
@@ -176,24 +352,28 @@ export async function reverseConfirmedReceipt(
           updatedAt: serverTimestamp(),
         });
       } else {
-        newBalance = (invSnap.data() as Document).grandTotal ?? 0;
+        newBalance = inv.grandTotal ?? 0;
       }
 
-      transaction.update(invSnap.ref, {
-        status: payStatus === "UNPAID" ? "APPROVED" : payStatus,
-        arStatus: payStatus,
-        paymentSummary: {
-          paidTotal: newAmountPaid,
-          balance: newBalance,
-          paymentStatus: payStatus,
-        },
-        receiptStatus: deleteField(),
-        receiptDocId: deleteField(),
-        receiptDocNo: deleteField(),
-        accountingEntryId: deleteField(),
-        receivedAccountId: deleteField(),
-        updatedAt: serverTimestamp(),
-      });
+      if (payStatus === "UNPAID") {
+        transaction.update(invSnap.ref, invoiceResetUpdates(inv));
+      } else {
+        transaction.update(invSnap.ref, {
+          status: payStatus,
+          arStatus: payStatus,
+          paymentSummary: {
+            paidTotal: newAmountPaid,
+            balance: newBalance,
+            paymentStatus: payStatus,
+          },
+          receiptStatus: deleteField(),
+          receiptDocId: deleteField(),
+          receiptDocNo: deleteField(),
+          accountingEntryId: deleteField(),
+          receivedAccountId: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      }
 
       if (payStatus === "UNPAID" && jobId) {
         const jobSnap = jobSnaps.get(jobId);
@@ -236,14 +416,7 @@ export async function reverseConfirmedReceipt(
         !reversedInvoiceIds.has(refId) &&
         refData.status === "PAID"
       ) {
-        const total = refData.grandTotal ?? 0;
-        updates.status = "APPROVED";
-        updates.arStatus = "UNPAID";
-        updates.paymentSummary = {
-          paidTotal: 0,
-          balance: total,
-          paymentStatus: "UNPAID",
-        };
+        Object.assign(updates, invoiceResetUpdates(refData));
       }
 
       transaction.update(refSnap.ref, updates);
@@ -262,6 +435,9 @@ export async function reverseConfirmedReceipt(
       })
     );
   });
+
+  const cancelledReceipt = { ...receipt, status: "CANCELLED" as const };
+  await repairLinkedTaxInvoicesAfterReceiptCancel(db, cancelledReceipt);
 }
 
 /** ยกเลิกใบเสร็จที่ยังไม่ confirm — ไม่กระทบ cashbook */

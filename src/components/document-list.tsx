@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useDeferredValue, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, getDocs, deleteField, writeBatch, addDoc } from "firebase/firestore";
 import type { AccountingObligation } from "@/lib/types";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -38,6 +38,7 @@ import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
 import {
   cancelUnconfirmedReceipt,
   isReceiptPaymentConfirmed,
+  repairLinkedTaxInvoicesAfterReceiptCancel,
   reverseConfirmedReceipt,
 } from "@/lib/reverse-confirmed-receipt";
 
@@ -211,6 +212,7 @@ export function DocumentList({
   const [quotationSearchLoading, setQuotationSearchLoading] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm.trim());
   const listFirstLoadRef = useRef(true);
+  const taxInvoiceRepairRanRef = useRef(false);
 
   const [billingReceiptOpen, setBillingReceiptOpen] = useState(false);
   const [billingReceiptSource, setBillingReceiptSource] = useState<Document | null>(null);
@@ -458,6 +460,37 @@ export function DocumentList({
     );
     return () => unsubscribe();
   }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, usesMonthScopedLoad, toast]);
+
+  useEffect(() => {
+    if (!db || docType !== "TAX_INVOICE" || taxInvoiceRepairRanRef.current) return;
+    taxInvoiceRepairRanRef.current = true;
+    (async () => {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, "documents"),
+            where("docType", "==", "RECEIPT"),
+            where("status", "==", "CANCELLED"),
+            limit(100)
+          )
+        );
+        let totalFixed = 0;
+        for (const d of snap.docs) {
+          const rec = { id: d.id, ...d.data() } as Document;
+          if (!rec.reversalEntryId) continue;
+          totalFixed += await repairLinkedTaxInvoicesAfterReceiptCancel(db, rec);
+        }
+        if (totalFixed > 0) {
+          toast({
+            title: "อัปเดตสถานะใบกำกับ",
+            description: `ซ่อมสถานะที่ค้าง "รับเงินแล้ว" หลังยกเลิกใบเสร็จ ${totalFixed} รายการ`,
+          });
+        }
+      } catch (e) {
+        console.error("repairLinkedTaxInvoicesAfterReceiptCancel", e);
+      }
+    })();
+  }, [db, docType, toast]);
 
   useEffect(() => {
     if (!db || !usesMonthScopedLoad || monthFilter === "ALL") {
