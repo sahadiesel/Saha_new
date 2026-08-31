@@ -459,8 +459,9 @@ export async function cancelUnconfirmedReceipt(
     }
 
     const refIds = rData.referencesDocIds || [];
+    const refSnaps = new Map<string, Awaited<ReturnType<typeof transaction.get>>>();
     for (const refId of refIds) {
-      await transaction.get(doc(db, "documents", refId));
+      refSnaps.set(refId, await transaction.get(doc(db, "documents", refId)));
     }
 
     transaction.update(receiptRef, {
@@ -470,7 +471,9 @@ export async function cancelUnconfirmedReceipt(
     });
 
     for (const refId of refIds) {
-      transaction.update(doc(db, "documents", refId), {
+      const refSnap = refSnaps.get(refId);
+      if (!refSnap?.exists()) continue;
+      transaction.update(refSnap.ref, {
         receiptStatus: deleteField(),
         receiptDocId: deleteField(),
         receiptDocNo: deleteField(),

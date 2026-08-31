@@ -1472,7 +1472,9 @@ function AccountingInboxPageContent() {
         const batch = writeBatch(db);
         if (receipt.referencesDocIds && receipt.referencesDocIds.length > 0) {
             for (const docId of receipt.referencesDocIds) {
-                batch.update(doc(db, 'documents', docId), {
+                const refSnap = await getDoc(doc(db, "documents", docId));
+                if (!refSnap.exists()) continue;
+                batch.update(refSnap.ref, {
                     receiptStatus: deleteField(),
                     receiptDocId: deleteField(),
                     receiptDocNo: deleteField(),

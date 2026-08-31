@@ -634,10 +634,12 @@ export function DocumentList({
     docObj.docType !== "DEBIT_NOTE" &&
     docObj.docType !== "RECEIPT";
 
-  const clearReceiptLinksOnSourceDocs = (batch: ReturnType<typeof writeBatch>, receipt: Document) => {
+  const clearReceiptLinksOnSourceDocs = async (batch: ReturnType<typeof writeBatch>, receipt: Document) => {
     if (receipt.docType !== "RECEIPT" || !receipt.referencesDocIds?.length || !db) return;
     for (const refId of receipt.referencesDocIds) {
-      batch.update(doc(db, "documents", refId), {
+      const refSnap = await getDoc(doc(db, "documents", refId));
+      if (!refSnap.exists()) continue;
+      batch.update(refSnap.ref, {
         receiptStatus: deleteField(),
         receiptDocId: deleteField(),
         receiptDocNo: deleteField(),
@@ -747,7 +749,7 @@ export function DocumentList({
     try {
       const batch = writeBatch(db);
       if (docToAction.docType === "RECEIPT") {
-        clearReceiptLinksOnSourceDocs(batch, docToAction);
+        await clearReceiptLinksOnSourceDocs(batch, docToAction);
       }
       if (shouldUnlinkJobOnCancelOrDelete(docToAction)) {
         await unlinkJob(batch, docToAction);
