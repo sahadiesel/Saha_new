@@ -129,6 +129,31 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
     const receiptMeta = taxInvoiceReceiptDisplayMeta(doc);
     if (receiptMeta) return receiptMeta;
 
+    if (doc.docType === "RECEIPT") {
+      if (doc.status === "CANCELLED") {
+        return {
+          key: "CANCELLED",
+          label: "ยกเลิก",
+          description: "ใบเสร็จนี้ถูกยกเลิกแล้ว",
+          variant: "destructive",
+        };
+      }
+      if (isReceiptPaymentConfirmed(doc) || doc.receiptStatus === "CONFIRMED" || doc.status === "CONFIRMED") {
+        return {
+          key: "CONFIRMED",
+          label: "รับเงินเรียบร้อย",
+          description: "ยืนยันรับเงินเข้าบัญชีแล้ว",
+          variant: "default",
+        };
+      }
+      return {
+        key: "ISSUED",
+        label: "รอตรวจสอบเงินจริง",
+        description: "ออกใบเสร็จแล้ว — รอยืนยันเงินเข้าบัญชีจริง",
+        variant: "secondary",
+      };
+    }
+
     const statusKey = String(doc.status ?? "").toUpperCase();
     const label = docStatusLabel(doc.status, doc.docType);
 
@@ -312,9 +337,10 @@ export function DocumentList({
     }
     if (docType === "RECEIPT") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
-      const ordered = base.filter((s) => s !== "ALL" && available.has(s));
-      const extra = Array.from(available).filter((s) => !base.includes(s)).sort();
-      return ["ALL", ...ordered, ...extra];
+      const ordered = ["ALL", "ISSUED", "CONFIRMED", "CANCELLED", "DRAFT"]
+        .filter((s) => s === "ALL" || available.has(s));
+      const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
+      return [...ordered, ...extra];
     }
     if (docType === "WITHHOLDING_TAX") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));

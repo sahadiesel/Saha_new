@@ -1582,34 +1582,45 @@ function AccountingInboxPageContent() {
           <CardContent className="pt-6">
             <TabsContent value="receive" className="mt-0">
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/30">
                   <TableRow>
-                    <TableHead>วันที่</TableHead>
+                    <TableHead>เลขที่บิล</TableHead>
+                    <TableHead>วันที่ออกใบกำกับ</TableHead>
                     <TableHead>ลูกค้า</TableHead>
-                    <TableHead>เอกสาร</TableHead>
-                    <TableHead>ยอดเงิน</TableHead>
+                    <TableHead className="text-right">ยอดก่อนภาษี</TableHead>
+                    <TableHead className="text-right">ยอดภาษี</TableHead>
+                    <TableHead className="text-right">ยอดเงิน</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
                   ) : filteredDocs.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">
+                    <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground italic">
                       ไม่มีรายการรอตรวจสอบ (Cash)
                       {tabCounts.ar > 0 ? " — ลองดูแท็บ รอตัดลูกหนี้ (Credit)" : null}
                       {tabCounts.receipts > 0 ? " หรือแท็บ ขั้นตอนใบเสร็จ (หลังออกใบเสร็จแล้ว)" : null}
                     </TableCell></TableRow>
-                  ) : filteredDocs.map(docItem => (
+                  ) : filteredDocs.map(docItem => {
+                    const beforeTax =
+                      docItem.net ??
+                      Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                    const vat = docItem.vatAmount ?? 0;
+                    return (
                     <TableRow key={docItem.id}>
-                      <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
-                      <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                       <TableCell>
-                        <div className="font-medium">{docItem.docNo}</div>
+                        <div className="font-mono text-xs font-medium">{docItem.docNo}</div>
                         <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
                       </TableCell>
-                      <TableCell className="font-bold text-primary">
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {docItem.docDate ? safeFormat(new Date(docItem.docDate)) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">{docItem.customerSnapshot?.name || '--'}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(beforeTax)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(vat)}</TableCell>
+                      <TableCell className="text-right font-bold text-primary">
                         {formatCurrency(inboxListAmountForDoc(docItem, "receive"))}
                       </TableCell>
                       <TableCell className="text-right">
@@ -1650,32 +1661,38 @@ function AccountingInboxPageContent() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TabsContent>
             <TabsContent value="ar" className="mt-0">
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/30">
                   <TableRow>
-                    <TableHead>วันที่</TableHead>
+                    <TableHead>เลขที่บิล</TableHead>
+                    <TableHead>วันที่ออกใบกำกับ</TableHead>
                     <TableHead>ลูกค้า</TableHead>
-                    <TableHead>เอกสาร</TableHead>
-                    <TableHead>ยอดเงิน</TableHead>
+                    <TableHead className="text-right">ยอดก่อนภาษี</TableHead>
+                    <TableHead className="text-right">ยอดภาษี</TableHead>
+                    <TableHead className="text-right">ยอดเงิน</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center h-24"><Loader2 className="animate-spin mx-auto" /></TableCell></TableRow>
                   ) : filteredDocs.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตั้งลูกหนี้ (Credit)</TableCell></TableRow>
-                  ) : filteredDocs.map(docItem => (
+                    <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตั้งลูกหนี้ (Credit)</TableCell></TableRow>
+                  ) : filteredDocs.map(docItem => {
+                    const beforeTax =
+                      docItem.net ??
+                      Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                    const vat = docItem.vatAmount ?? 0;
+                    return (
                     <TableRow key={docItem.id}>
-                      <TableCell>{safeFormat(new Date(docItem.docDate))}</TableCell>
-                      <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                       <TableCell>
-                        <div className="font-medium">{docItem.docNo}</div>
+                        <div className="font-mono text-xs font-medium">{docItem.docNo}</div>
                         <div className="text-xs text-muted-foreground">{docTypeThaiLabel(docItem.docType)}</div>
                         {docItem.jobId && <Badge variant="outline" className="text-[8px] h-4 mt-1 bg-blue-50">มี Job ผูกอยู่</Badge>}
                         {docItem.docType === "DELIVERY_NOTE" &&
@@ -1686,7 +1703,13 @@ function AccountingInboxPageContent() {
                             </Badge>
                           )}
                       </TableCell>
-                      <TableCell className="font-bold text-amber-600">
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {docItem.docDate ? safeFormat(new Date(docItem.docDate)) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">{docItem.customerSnapshot?.name || '--'}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(beforeTax)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(vat)}</TableCell>
+                      <TableCell className="text-right font-bold text-amber-600">
                         {formatCurrency(inboxListAmountForDoc(docItem, "ar"))}
                       </TableCell>
                       <TableCell className="text-right">
@@ -1744,7 +1767,8 @@ function AccountingInboxPageContent() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TabsContent>

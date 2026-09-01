@@ -157,6 +157,12 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
         if (s === 'CANCELLED') return 'ยกเลิก';
     }
 
+    // ใบเสร็จรับเงิน
+    if (docType === 'RECEIPT') {
+        if (s === 'ISSUED' || s === 'ISSUED_NOT_CONFIRMED') return 'รอตรวจสอบเงินจริง';
+        if (s === 'CONFIRMED' || s === 'PAID') return 'รับเงินเรียบร้อย';
+    }
+
     // ใบลดหนี้ — จบที่ตรวจสอบแล้ว ไม่ต้องออกใบเสร็จ
     if (docType === 'CREDIT_NOTE' && s === 'APPROVED') {
         return 'ตรวจสอบแล้ว';
