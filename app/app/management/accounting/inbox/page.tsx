@@ -49,6 +49,11 @@ import {
   INBOX_ACTIVE_STATUSES,
   isDocumentAwaitingReceipt,
 } from "@/lib/accounting-receipt-inbox";
+import { receiptAwaitingPaymentConfirm, repairActiveReceiptTaxInvoiceLinks, resyncConfirmedReceiptState } from "@/lib/receipt-tax-invoice-link";
+import {
+  isReceiptPaymentConfirmed,
+  cancelUnconfirmedReceipt,
+} from "@/lib/reverse-confirmed-receipt";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -112,7 +117,7 @@ const filterDocumentsNeedingReview = (all: WithId<DocumentType>[]) =>
       return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
     if (d.docType === "CREDIT_NOTE" || d.docType === "DEBIT_NOTE")
       return ["PENDING_REVIEW", "APPROVED", "UNPAID", "PARTIAL"].includes(statusKey);
-    if (d.docType === "RECEIPT") return d.status !== "CANCELLED" && d.receiptStatus !== "CONFIRMED";
+    if (d.docType === "RECEIPT") return receiptAwaitingPaymentConfirm(d);
     return false;
   });
 
@@ -247,7 +252,7 @@ function matchesArInboxTab(doc: WithId<DocumentType>): boolean {
 }
 
 function matchesReceiptsInboxTab(doc: WithId<DocumentType>): boolean {
-  return doc.docType === "RECEIPT";
+  return doc.docType === "RECEIPT" && receiptAwaitingPaymentConfirm(doc);
 }
 
 function InboxTabCountBadge({ count }: { count: number }) {
@@ -294,6 +299,7 @@ function AccountingInboxPageContent() {
   const [selectedPaymentDate, setSelectedPaymentDate] = useState("");
   const [suggestedPayments, setSuggestedPayments] = useState<{accountId: string, amount: number}[]>([]);
   const [arDocToConfirm, setArDocToConfirm] = useState<WithId<DocumentType> | null>(null);
+  const [isRepairingStuckReceipts, setIsRepairingStuckReceipts] = useState(false);
 
   const isUserAdmin = profile?.role === 'ADMIN' || profile?.role === 'MANAGER';
   const isStrictAdmin = profile?.role === 'ADMIN';
@@ -666,7 +672,7 @@ function AccountingInboxPageContent() {
   }, [approvedDocs, searchTerm]);
 
   const receiptDocsInInbox = useMemo(
-    () => mergedInboxDocuments.filter((d) => d.docType === "RECEIPT"),
+    () => mergedInboxDocuments.filter((d) => receiptAwaitingPaymentConfirm(d)),
     [mergedInboxDocuments]
   );
 
@@ -1463,32 +1469,74 @@ function AccountingInboxPageContent() {
     }
   };
 
-  const handleDeleteReceipt = async (receipt: WithId<DocumentType>) => {
-    if (!db || !profile || !isUserAdmin) return;
-    if (!confirm(`ยืนยันการลบใบเสร็จเลขที่ ${receipt.docNo} ใช่หรือไม่?`)) return;
-    
+  const handleRepairStuckReceipts = async () => {
+    if (!db) return;
+    setIsRepairingStuckReceipts(true);
+    try {
+      const fixed = await repairActiveReceiptTaxInvoiceLinks(db);
+      toast({
+        title: fixed > 0 ? "ซ่อมสถานะสำเร็จ" : "ไม่พบรายการที่ต้องซ่อม",
+        description:
+          fixed > 0
+            ? `อัปเดต ${fixed} รายการ — ใบเสร็จที่มีเงินในบัญชีแล้วจะหายจากรายการรอตรวจสอบ`
+            : "สถานะเอกสารตรงกับบัญชีอยู่แล้ว",
+      });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ซ่อมไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsRepairingStuckReceipts(false);
+    }
+  };
+
+  const handleResyncOneReceipt = async (receipt: WithId<DocumentType>) => {
+    if (!db) return;
     setIsSubmitting(true);
     try {
-        const batch = writeBatch(db);
-        if (receipt.referencesDocIds && receipt.referencesDocIds.length > 0) {
-            for (const docId of receipt.referencesDocIds) {
-                const refSnap = await getDoc(doc(db, "documents", docId));
-                if (!refSnap.exists()) continue;
-                batch.update(refSnap.ref, {
-                    receiptStatus: deleteField(),
-                    receiptDocId: deleteField(),
-                    receiptDocNo: deleteField(),
-                    updatedAt: serverTimestamp()
-                });
-            }
-        }
-        batch.delete(doc(db, 'documents', receipt.id));
-        await batch.commit();
-        toast({ title: "ลบใบเสร็จเรียบร้อยแล้ว" });
+      const result = await resyncConfirmedReceiptState(db, receipt.id);
+      toast({
+        title: result.fixed ? "ซ่อมสถานะสำเร็จ" : "ไม่ต้องซ่อม",
+        description: result.reason,
+      });
     } catch (e: any) {
-        toast({ variant: 'destructive', title: "ลบไม่สำเร็จ", description: e.message });
+      toast({ variant: "destructive", title: "ซ่อมไม่สำเร็จ", description: e.message });
     } finally {
-        setIsSubmitting(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteReceipt = async (receipt: WithId<DocumentType>) => {
+    if (!db || !profile || !isUserAdmin) return;
+
+    const entryId = receipt.accountingEntryId || `RECEIPT_${receipt.id}`;
+    const entrySnap = await getDoc(doc(db, "accountingEntries", entryId));
+    const hasCashbook = isReceiptPaymentConfirmed(receipt) || entrySnap.exists();
+
+    if (hasCashbook) {
+      toast({
+        variant: "destructive",
+        title: "ห้ามลบใบเสร็จที่มีรายการในบัญชี",
+        description:
+          `ใบเสร็จ ${receipt.docNo} มีเงินเข้า cashbook แล้ว — ไปที่เมนู「ใบเสร็จรับเงิน」แล้วกด「ยกเลิก」เพื่อตัดรายรับออกจากบัญชี (อย่าใช้ลบ)`,
+      });
+      return;
+    }
+
+    if (!confirm(`ยืนยันการลบใบเสร็จเลขที่ ${receipt.docNo} ใช่หรือไม่?`)) return;
+
+    setIsSubmitting(true);
+    try {
+      await cancelUnconfirmedReceipt(db, receipt, {
+        uid: profile.uid,
+        displayName: profile.displayName || "Admin",
+      });
+      toast({
+        title: "ยกเลิกใบเสร็จเรียบร้อยแล้ว",
+        description: "ล้างลิงก์บนใบกำกับแล้ว — ไม่มีรายการ cashbook ให้ตัด",
+      });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: e.message });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1713,17 +1761,30 @@ function AccountingInboxPageContent() {
                     <TableHeader className="bg-muted/30">
                         <TableRow>
                             <TableHead>เลขที่บิล</TableHead>
+                            <TableHead>วันที่ออกใบกำกับ</TableHead>
                             <TableHead>ลูกค้า</TableHead>
+                            <TableHead className="text-right">ยอดก่อนภาษี</TableHead>
+                            <TableHead className="text-right">ยอดภาษี</TableHead>
                             <TableHead className="text-right">ยอดเงิน</TableHead>
                             <TableHead className="text-right">จัดการ</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {filteredApprovedDocs.length > 0 ? (
-                          filteredApprovedDocs.map((docItem) => (
+                          filteredApprovedDocs.map((docItem) => {
+                            const beforeTax =
+                              docItem.net ??
+                              Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                            const vat = docItem.vatAmount ?? 0;
+                            return (
                             <TableRow key={docItem.id}>
                                 <TableCell className="font-mono text-xs">{docItem.docNo}</TableCell>
+                                <TableCell className="text-xs whitespace-nowrap">
+                                  {docItem.docDate ? safeFormat(new Date(docItem.docDate)) : "—"}
+                                </TableCell>
                                 <TableCell className="text-sm">{docItem.customerSnapshot?.name}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(beforeTax)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(vat)}</TableCell>
                                 <TableCell className="text-right font-bold">{formatCurrency(docItem.grandTotal)}</TableCell>
                                 <TableCell className="text-right">
                                     <Button asChild size="sm" variant="default" className="h-8">
@@ -1733,26 +1794,42 @@ function AccountingInboxPageContent() {
                                     </Button>
                                 </TableCell>
                             </TableRow>
-                          ))
+                            );
+                          })
                         ) : approvedDocs.length > 0 ? (
                             <TableRow>
-                              <TableCell colSpan={4} className="h-20 text-center text-muted-foreground italic text-xs">
+                              <TableCell colSpan={7} className="h-20 text-center text-muted-foreground italic text-xs">
                                 ไม่พบรายการที่ตรงกับ &quot;{searchTerm.trim()}&quot; — ลองเลขที่บิลหรือชื่อลูกค้า
                               </TableCell>
                             </TableRow>
                         ) : (
-                            <TableRow><TableCell colSpan={4} className="h-20 text-center text-muted-foreground italic text-xs">ไม่มีบิลค้างในขั้นตอนนี้</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={7} className="h-20 text-center text-muted-foreground italic text-xs">ไม่มีบิลค้างในขั้นตอนนี้</TableCell></TableRow>
                         )}
                     </TableBody>
                 </Table>
               </div>
 
               <div className="space-y-4 pt-4 border-t">
-                <div className="flex items-center justify-between border-b pb-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2">
                     <h3 className="font-bold text-lg flex items-center gap-2"><CheckCircle className="h-5 w-5 text-green-600"/> 2. ใบเสร็จที่รอตรวจสอบรับเงินจริง</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isRepairingStuckReceipts || !db}
+                      onClick={() => void handleRepairStuckReceipts()}
+                    >
+                      {isRepairingStuckReceipts ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      ซ่อมสถานะใบเสร็จค้าง
+                    </Button>
                 </div>
                 <p className="text-xs text-muted-foreground -mt-2">
                   หลังออกใบเสร็จจากหน้านี้หรือจากหน้าลูกหนี้ รายการจะมาอยู่ที่นี่เหมือนกัน
+                  — ถ้ามีเงินเข้าบัญชีแล้วแต่รายการยังค้าง ให้กด「ซ่อมสถานะใบเสร็จค้าง」
                 </p>
                 <Table>
                     <TableHeader>
@@ -1795,6 +1872,9 @@ function AccountingInboxPageContent() {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => router.push(`/app/management/accounting/documents/receipt/${docItem.id}/confirm`)} className="text-green-600 focus:text-green-600 font-bold">
                                         <CheckCircle2 className="mr-2 h-4 w-4" /> ยืนยันรับเงินจริง
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => void handleResyncOneReceipt(docItem)}>
+                                        <RefreshCw className="mr-2 h-4 w-4" /> ซ่อมสถานะ (มีเงินในบัญชีแล้ว)
                                     </DropdownMenuItem>
                                     {isUserAdmin && (
                                         <>

@@ -34,7 +34,10 @@ import {
   docNoMatchesQuotationSearch,
 } from "@/lib/quotation-picker";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
-import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
+import {
+  repairActiveReceiptTaxInvoiceLinks,
+  taxInvoiceReceiptDisplayMeta,
+} from "@/lib/receipt-tax-invoice-link";
 import {
   cancelUnconfirmedReceipt,
   isReceiptPaymentConfirmed,
@@ -51,7 +54,7 @@ function cancelReceiptDialogDescription(doc: Document): string {
   }
   return (
     "ยกเลิกเฉพาะใบเสร็จรับเงินนี้ — ใบกำกับภาษีหรือใบวางบิลที่อ้างอิงไม่ถูกยกเลิก " +
-    "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
+    "ระบบจะล้างสถานะ \"ตรวจสอบการรับเงินจากใบเสร็จ\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
   );
 }
 
@@ -89,7 +92,7 @@ function deleteDialogDescription(doc: Document): string {
     }
     return (
       "ลบใบเสร็จรับเงินนี้อย่างถาวร — ใบกำกับภาษีที่อ้างอิงไม่ถูกลบ " +
-      "ระบบจะล้างสถานะ \"ออกใบเสร็จแล้ว\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
+      "ระบบจะล้างสถานะ \"ตรวจสอบการรับเงินจากใบเสร็จ\" บนใบกำกับ เพื่อให้ออกใบเสร็จใหม่ได้"
     );
   }
   return 'ต้องการลบเอกสารนี้อย่างถาวรใช่หรือไม่? การลบจะล้างลิงก์ในจ๊อบและย้อนสถานะจ๊อบกลับเป็น "ทำเสร็จ" ให้ทันทีค่ะ';
@@ -122,6 +125,9 @@ function documentMonthBounds(yyyyMm: string): { start: string; end: string } {
 }
 
 const getDocDisplayStatus = (doc: Document): { key: string; label: string; description: string; variant: "default" | "secondary" | "destructive" | "outline" } => {
+    const receiptMeta = taxInvoiceReceiptDisplayMeta(doc);
+    if (receiptMeta) return receiptMeta;
+
     const statusKey = String(doc.status ?? "").toUpperCase();
     const label = docStatusLabel(doc.status, doc.docType);
 
@@ -296,6 +302,13 @@ export function DocumentList({
       }
     }
     if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");
+    if (docType === "TAX_INVOICE" || docType === "DEBIT_NOTE") {
+      const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
+      const ordered = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "RECEIPT_ISSUED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"]
+        .filter((s) => s === "ALL" || available.has(s));
+      const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
+      return [...ordered, ...extra];
+    }
     if (docType === "RECEIPT") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
       const ordered = base.filter((s) => s !== "ALL" && available.has(s));
@@ -484,6 +497,13 @@ export function DocumentList({
           toast({
             title: "อัปเดตสถานะใบกำกับ",
             description: `ซ่อมสถานะที่ค้าง "รับเงินแล้ว" หลังยกเลิกใบเสร็จ ${totalFixed} รายการ`,
+          });
+        }
+        const linkFixed = await repairActiveReceiptTaxInvoiceLinks(db);
+        if (linkFixed > 0) {
+          toast({
+            title: "ซิงก์ใบกำกับกับใบเสร็จ",
+            description: `อัปเดตลิงก์ใบเสร็จ/สถานะ ${linkFixed} รายการ`,
           });
         }
       } catch (e) {

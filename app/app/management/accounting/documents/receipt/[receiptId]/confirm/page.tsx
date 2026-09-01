@@ -40,6 +40,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import {
+  receiptCashbookEntryId,
+  receiptHasCashbookEntry,
+  resyncConfirmedReceiptState,
+} from "@/lib/receipt-tax-invoice-link";
+import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 
 const confirmReceiptSchema = z.object({
   accountId: z.string().min(1, "กรุณาเลือกบัญชีที่รับเงิน"),
@@ -61,6 +67,8 @@ function ConfirmReceiptPageContent() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [alreadySynced, setAlreadySynced] = useState<{ docNo: string; message: string } | null>(null);
+  const [isRepairing, setIsRepairing] = useState(false);
 
   const [receipt, setReceipt] = useState<WithId<DocumentType> | null>(null);
   const [invoices, setInvoices] = useState<WithId<DocumentType>[]>([]);
@@ -99,8 +107,15 @@ function ConfirmReceiptPageContent() {
         }
 
         const receiptData = { id: receiptSnap.id, ...receiptSnap.data() } as WithId<DocumentType>;
-        if (receiptData.status === 'CONFIRMED' || receiptData.receiptStatus === 'CONFIRMED') {
-          setError("ใบเสร็จนี้ถูกยืนยันการรับเงินไปก่อนหน้านี้แล้ว");
+        const hasCash = await receiptHasCashbookEntry(db, receiptData);
+        if (isReceiptPaymentConfirmed(receiptData) || hasCash) {
+          const sync = await resyncConfirmedReceiptState(db, receiptData.id);
+          setAlreadySynced({
+            docNo: receiptData.docNo,
+            message:
+              sync.reason ||
+              "ใบเสร็จนี้มีรายการในบัญชีแล้ว — ซ่อมสถานะเอกสารและใบกำกับเรียบร้อย",
+          });
           setIsLoading(false);
           return;
         }
@@ -221,7 +236,7 @@ function ConfirmReceiptPageContent() {
             const rData = receiptSnap.data() as DocumentType;
             
             if (rData.status === 'CONFIRMED' || rData.accountingEntryId) {
-                throw new Error("รายการนี้ถูกยืนยันไปก่อนหน้านี้แล้ว");
+                throw new Error("ALREADY_CONFIRMED");
             }
 
             const parentReferenceIds = rData.referencesDocIds || [];
@@ -237,8 +252,12 @@ function ConfirmReceiptPageContent() {
 
             const arPaymentId = `ARPAY_${receipt.id}`;
             const arPaymentRef = doc(db, 'arPayments', arPaymentId);
-            const entryId = `RECEIPT_${receipt.id}`;
+            const entryId = receiptCashbookEntryId(receipt.id);
             const entryRef = doc(db, 'accountingEntries', entryId);
+            const existingEntrySnap = await transaction.get(entryRef);
+            if (existingEntrySnap.exists()) {
+                throw new Error("ALREADY_CONFIRMED");
+            }
 
             const customerName =
               rData.customerSnapshot?.taxName ||
@@ -297,7 +316,13 @@ function ConfirmReceiptPageContent() {
             
             for (const pSnap of parentSnaps) {
                 if (pSnap.exists()) {
-                    transaction.update(pSnap.ref, { status: 'PAID', updatedAt: serverTimestamp() });
+                    transaction.update(pSnap.ref, {
+                        status: 'PAID',
+                        receiptDocId: receipt.id,
+                        receiptDocNo: receiptDocNo,
+                        receiptStatus: 'CONFIRMED',
+                        updatedAt: serverTimestamp(),
+                    });
                 }
             }
 
@@ -320,6 +345,9 @@ function ConfirmReceiptPageContent() {
                     transaction.update(doc(db, 'documents', a.invoiceId), {
                         status: newStatus,
                         arStatus: newStatus,
+                        receiptDocId: receipt.id,
+                        receiptDocNo: receiptDocNo,
+                        receiptStatus: 'CONFIRMED',
                         paymentSummary: {
                             paidTotal: newAmountPaid,
                             balance: newBalance,
@@ -356,7 +384,30 @@ function ConfirmReceiptPageContent() {
         toast({ title: "ยืนยันการรับเงินสำเร็จ", description: "ข้อมูลบัญชีและลูกหนี้ถูกปรับปรุงเรียบร้อยแล้วค่ะ" });
         router.push('/app/management/accounting/inbox');
     } catch (err: any) {
-        toast({ variant: 'destructive', title: "ไม่สามารถยืนยันได้", description: err.message });
+        if (err?.message === "ALREADY_CONFIRMED" && db && receipt) {
+          setIsRepairing(true);
+          try {
+            const sync = await resyncConfirmedReceiptState(db, receipt.id);
+            setAlreadySynced({
+              docNo: receipt.docNo,
+              message: sync.reason || "มีรายการในบัญชีแล้ว — ซ่อมสถานะเอกสารเรียบร้อย",
+            });
+            toast({
+              title: "ซ่อมสถานะสำเร็จ",
+              description: "เงินเข้าบัญชีอยู่แล้ว จึงซ่อมสถานะใบเสร็จ/ใบกำกับให้ตรงกัน",
+            });
+          } catch (syncErr: any) {
+            toast({
+              variant: "destructive",
+              title: "ไม่สามารถยืนยันได้",
+              description: syncErr?.message || "รายการนี้ถูกยืนยันไปก่อนหน้านี้แล้ว",
+            });
+          } finally {
+            setIsRepairing(false);
+          }
+        } else {
+          toast({ variant: 'destructive', title: "ไม่สามารถยืนยันได้", description: err.message });
+        }
     } finally {
         setIsLoading(false);
     }
@@ -371,7 +422,33 @@ function ConfirmReceiptPageContent() {
       setShowFinalConfirm(true);
   }
 
-  if (isLoading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
+  if (isLoading || isRepairing) return <div className="flex justify-center p-8"><Loader2 className="animate-spin h-8 w-8" /></div>;
+  if (alreadySynced) {
+    return (
+      <div className="space-y-6 max-w-xl">
+        <PageHeader
+          title="ใบเสร็จยืนยันรับเงินแล้ว"
+          description={`เลขที่ ${alreadySynced.docNo}`}
+        />
+        <Alert className="border-green-200 bg-green-50">
+          <Check className="h-4 w-4 text-green-700" />
+          <AlertTitle className="text-green-800">ซ่อมสถานะเรียบร้อย</AlertTitle>
+          <AlertDescription className="text-green-900 text-sm space-y-2">
+            <p>{alreadySynced.message}</p>
+            <p>ไม่ต้องยืนยันซ้ำ — เงินอยู่ในบัญชีแล้ว และใบกำกับถูกอัปเดตเป็น「รับเงินแล้ว」</p>
+          </AlertDescription>
+        </Alert>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => router.push("/app/management/accounting/inbox?tab=receipts")}>
+            <ArrowLeft className="mr-2 h-4 w-4" /> กลับ Inbox ใบเสร็จ
+          </Button>
+          <Button onClick={() => router.push("/app/office/documents/tax-invoice")}>
+            เปิดรายการใบกำกับภาษี
+          </Button>
+        </div>
+      </div>
+    );
+  }
   if (error) return <PageHeader title="เกิดข้อผิดพลาด" description={error} />;
 
   return (

@@ -914,7 +914,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                                           disabled={isReceiptIssued}
                                           onSelect={() => router.push(receiptHref)}
                                         >
-                                          {isReceiptIssued ? `ออกใบเสร็จแล้ว (${details?.receiptStatus})` : "ออกใบเสร็จ"}
+                                          {isReceiptIssued ? "ตรวจสอบการรับเงินจากใบเสร็จ" : "ออกใบเสร็จ"}
                                         </DropdownMenuItem>
                                       )}
                                       {type === "AR" ? (

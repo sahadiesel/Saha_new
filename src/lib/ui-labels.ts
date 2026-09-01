@@ -60,6 +60,7 @@ export const DOC_STATUS_LABELS: Record<string, string> = {
     WAITING_CUSTOMER_PICKUP: 'รอลูกค้ารับ',
     SUBMITTED: 'ส่งแล้ว',
     APPROVED: 'ตรวจสอบแล้ว (รอใบเสร็จ)',
+    RECEIPT_ISSUED: 'ตรวจสอบการรับเงินจากใบเสร็จ',
     UNPAID: 'ยังไม่จ่าย (เครดิต)',
     PENDING_REVIEW: "รอบัญชีตรวจสอบ",
     REJECTED: "ตีกลับเพื่อแก้ไข",

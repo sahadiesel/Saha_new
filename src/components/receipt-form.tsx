@@ -45,6 +45,10 @@ import { safeFormat } from "@/lib/date-utils";
 import { buildReceiptLineDescription } from "@/lib/receipt-line-description";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 import {
+  isReceiptLinkActive,
+  sourceDocBlocksNewReceipt,
+} from "@/lib/receipt-tax-invoice-link";
+import {
   pickSourceDocumentForReceiptCustomer,
   receiptCustomerFromSourceSnapshot,
   taxDocumentCustomerDisplayName,
@@ -352,7 +356,7 @@ export function ReceiptForm() {
       allDocs.filter((doc) => {
         if (doc.status === "CANCELLED" || doc.status === "PAID") return false;
         if (doc.receiptStatus === "CONFIRMED") return false;
-        if (doc.receiptDocId && doc.receiptDocId !== editDocId) return false;
+        if (sourceDocBlocksNewReceipt(doc, editDocId)) return false;
         if (doc.docType === "TAX_INVOICE" && doc.billingRequired && !doc.billingNoteId) {
           return false;
         }
@@ -628,6 +632,19 @@ export function ReceiptForm() {
       });
       return;
     }
+
+    for (const sourceDoc of selectedDocs) {
+      if (!sourceDocBlocksNewReceipt(sourceDoc, editDocId)) continue;
+      const stillActive = await isReceiptLinkActive(db, sourceDoc.receiptDocId!);
+      if (stillActive) {
+        toast({
+          variant: "destructive",
+          title: "ออกใบเสร็จซ้ำไม่ได้",
+          description: `ใบกำกับ ${sourceDoc.docNo} มีใบเสร็จ ${sourceDoc.receiptDocNo || sourceDoc.receiptDocId} แล้ว — ยกเลิกใบเสร็จเดิมก่อนออกใหม่`,
+        });
+        return;
+      }
+    }
     
     setIsSubmitting(true);
     const amount2dec = Math.round(data.amount * 100) / 100;
@@ -674,13 +691,18 @@ export function ReceiptForm() {
       let finalDocNo: string;
 
       if (editDocId) {
+          const preserveConfirmed = docToEdit && isReceiptPaymentConfirmed(docToEdit);
           await updateDoc(
             doc(db, "documents", editDocId),
             sanitizeForFirestore({
               ...docData,
               checkDueDate: deleteField(),
-              status: "ISSUED",
-              receiptStatus: "ISSUED_NOT_CONFIRMED",
+              ...(preserveConfirmed
+                ? {}
+                : {
+                    status: "ISSUED",
+                    receiptStatus: "ISSUED_NOT_CONFIRMED",
+                  }),
               updatedAt: serverTimestamp(),
             })
           );
@@ -724,10 +746,10 @@ export function ReceiptForm() {
 
       toast({
         title: "ออกใบเสร็จรับเงินสำเร็จ",
-        description: `เลขที่ ${finalDocNo} — ไปขั้นตอนยืนยันรับเงินเข้าบัญชี (บันทึกรายรับ / ปิดลูกหนี้ / ปิดงาน)`,
+        description: `เลขที่ ${finalDocNo} — รอตรวจสอบเงินเข้าธนาคารจริงก่อนกด「ยืนยันรับเงิน」ที่ Inbox ใบเสร็จ`,
       });
       setIsSubmitting(false);
-      router.push(`/app/management/accounting/documents/receipt/${finalDocId}/confirm`);
+      router.push(`/app/management/accounting/inbox?tab=receipts`);
     } catch (error: any) {
       toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: error.message });
       setIsSubmitting(false);
