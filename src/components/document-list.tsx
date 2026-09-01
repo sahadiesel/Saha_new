@@ -38,6 +38,7 @@ import {
   repairActiveReceiptTaxInvoiceLinks,
   taxInvoiceReceiptDisplayMeta,
 } from "@/lib/receipt-tax-invoice-link";
+import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
 import {
   cancelUnconfirmedReceipt,
   isReceiptPaymentConfirmed,
