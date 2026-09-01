@@ -225,7 +225,8 @@
   .printable-document tbody tr.print-doc-footer-row td,
   .printable-document tbody tr.print-doc-footer-row th {
     border: none !important;
-    padding: 0 !important;
+    /* เว้นจากรายการประมาณ 2 บรรทัด ก่อนบล็อกหมายเหตุ/ยอดรวม */
+    padding: 2em 0 0 0 !important;
     vertical-align: top !important;
   }
   .printable-document tbody tr.print-doc-footer-row {

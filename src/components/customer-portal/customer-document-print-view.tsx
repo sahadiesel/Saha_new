@@ -4,6 +4,7 @@ import type { Document } from "@/lib/types";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
 import { docStatusLabel } from "@/lib/ui-labels";
+import { documentPrintMoneyLines } from "@/lib/document-amounts";
 
 const DOC_TITLE: Partial<Record<Document["docType"], string>> = {
   QUOTATION: "ใบเสนอราคา",
@@ -20,6 +21,7 @@ const DOC_TITLE: Partial<Record<Document["docType"], string>> = {
 export function CustomerDocumentPrintView({ document: d }: { document: Document }) {
   const title = DOC_TITLE[d.docType] || d.docType;
   const customerName = d.customerSnapshot?.taxName || d.customerSnapshot?.name || "—";
+  const money = documentPrintMoneyLines(d);
 
   return (
     <div className="printable-document mx-auto max-w-[210mm] border bg-white p-6 text-black shadow-sm print:border-0 print:shadow-none">
@@ -75,17 +77,17 @@ export function CustomerDocumentPrintView({ document: d }: { document: Document 
         <div className="w-full max-w-xs space-y-1 text-sm">
           <div className="flex justify-between">
             <span>ยอดก่อนภาษี</span>
-            <span className="font-mono">{(d.net ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
+            <span className="font-mono">{money.beforeTax.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
           </div>
           {d.withTax ? (
             <div className="flex justify-between">
               <span>ภาษี</span>
-              <span className="font-mono">{(d.vatAmount ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
+              <span className="font-mono">{money.vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
             </div>
           ) : null}
           <div className="flex justify-between border-t pt-2 text-base font-bold">
             <span>ยอดสุทธิ</span>
-            <span className="font-mono text-primary">{(d.grandTotal ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
+            <span className="font-mono text-primary">{money.grand.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
           </div>
         </div>
       </div>

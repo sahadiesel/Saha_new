@@ -24,15 +24,50 @@ function resolveDocCustomerId(doc: ReceiptSourceDoc): string {
   return doc.customerId || doc.customerSnapshot?.id || "";
 }
 
-/** คำอธิบายรายการใบเสร็จ — บรรทัด 2 ระบุเลขที่และวันที่ใบกำกับ/ใบวางบิล */
+/** คำอธิบายรายการใบเสร็จ — บรรทัด 2 ใส่เลขที่และวันที่ใบกำกับ/ใบวางบิล */
 export function buildReceiptLineDescription(
+  sourceDoc: ReceiptSourceDoc,
+  options?: { customerLabel?: string; includeDate?: boolean }
+): string {
+  const customerLabel = options?.customerLabel ?? "";
+  const includeDate = options?.includeDate !== false;
+  const dateStr = includeDate ? formatSourceDocDate(sourceDoc.docDate) : "";
+  const datePart = dateStr ? ` วันที่ ${dateStr}` : "";
+  return `ชำระค่าสินค้า/บริการ${customerLabel} ตาม${docTypeLabel(sourceDoc.docType)}\nเลขที่ ${sourceDoc.docNo}${datePart}`;
+}
+
+/** คำอธิบายสั้นสำหรับฟอร์ม — ไม่ซ้ำวันที่ (มีคอลัมน์วันที่แยก) */
+export function buildReceiptLineDescriptionForEdit(
   sourceDoc: ReceiptSourceDoc,
   options?: { customerLabel?: string }
 ): string {
-  const customerLabel = options?.customerLabel ?? "";
-  const dateStr = formatSourceDocDate(sourceDoc.docDate);
-  const datePart = dateStr ? ` วันที่ ${dateStr}` : "";
-  return `ชำระค่าสินค้า/บริการ${customerLabel} ตาม${docTypeLabel(sourceDoc.docType)}\nเลขที่ ${sourceDoc.docNo}${datePart}`;
+  return buildReceiptLineDescription(sourceDoc, {
+    ...options,
+    includeDate: false,
+  });
+}
+
+/** ตัดส่วน "วันที่ dd/mm/yyyy" ออกจากคำอธิบายที่ซ้ำกับคอลัมน์วันที่ */
+export function stripReceiptDescriptionDate(description: string): string {
+  return description
+    .replace(/\s*วันที่\s+\d{1,2}\/\d{1,2}\/\d{2,4}/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+/** ดึงวันที่จากข้อความรายการใบเสร็จ → YYYY-MM-DD */
+export function extractDateFromReceiptDescription(description: string): string | null {
+  const m = description.match(/วันที่\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return null;
+  let year = Number(m[3]);
+  if (!Number.isFinite(year)) return null;
+  if (year < 100) year += 2000;
+  const month = String(Number(m[2])).padStart(2, "0");
+  const day = String(Number(m[1])).padStart(2, "0");
+  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > 31) {
+    return null;
+  }
+  return `${year}-${month}-${day}`;
 }
 
 function extractReceiptCustomerLabel(description: string): string {

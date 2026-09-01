@@ -54,6 +54,7 @@ import {
   isReceiptPaymentConfirmed,
   cancelUnconfirmedReceipt,
 } from "@/lib/reverse-confirmed-receipt";
+import { documentAmountBeforeTax } from "@/lib/document-amounts";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -1603,9 +1604,7 @@ function AccountingInboxPageContent() {
                       {tabCounts.receipts > 0 ? " หรือแท็บ ขั้นตอนใบเสร็จ (หลังออกใบเสร็จแล้ว)" : null}
                     </TableCell></TableRow>
                   ) : filteredDocs.map(docItem => {
-                    const beforeTax =
-                      docItem.net ??
-                      Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                    const beforeTax = documentAmountBeforeTax(docItem);
                     const vat = docItem.vatAmount ?? 0;
                     return (
                     <TableRow key={docItem.id}>
@@ -1685,9 +1684,7 @@ function AccountingInboxPageContent() {
                   ) : filteredDocs.length === 0 ? (
                     <TableRow><TableCell colSpan={7} className="text-center h-24 text-muted-foreground italic">ไม่มีรายการรอตั้งลูกหนี้ (Credit)</TableCell></TableRow>
                   ) : filteredDocs.map(docItem => {
-                    const beforeTax =
-                      docItem.net ??
-                      Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                    const beforeTax = documentAmountBeforeTax(docItem);
                     const vat = docItem.vatAmount ?? 0;
                     return (
                     <TableRow key={docItem.id}>
@@ -1796,9 +1793,7 @@ function AccountingInboxPageContent() {
                     <TableBody>
                         {filteredApprovedDocs.length > 0 ? (
                           filteredApprovedDocs.map((docItem) => {
-                            const beforeTax =
-                              docItem.net ??
-                              Math.max(0, (docItem.grandTotal || 0) - (docItem.vatAmount || 0));
+                            const beforeTax = documentAmountBeforeTax(docItem);
                             const vat = docItem.vatAmount ?? 0;
                             return (
                             <TableRow key={docItem.id}>

@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, CalendarDays, ArrowLeft, UserPlus, X } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, ArrowLeft, UserPlus, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -36,14 +36,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Calendar } from "@/components/ui/calendar";
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns";
 
 import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
-import { buildReceiptLineDescription } from "@/lib/receipt-line-description";
+import { buildReceiptLineDescription, extractDateFromReceiptDescription } from "@/lib/receipt-line-description";
+import { transferConfirmedReceiptAccount } from "@/lib/receipt-account-transfer";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
+import { documentAmountBeforeTax } from "@/lib/document-amounts";
 import {
   isReceiptLinkActive,
   sourceDocBlocksNewReceipt,
@@ -67,6 +68,14 @@ type ReceiptFormData = z.infer<typeof receiptFormSchema>;
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+type EditableReceiptLine = {
+  key: string;
+  sourceDocId?: string;
+  date: string;
+  description: string;
+  amount: number;
 };
 
 export function ReceiptForm() {
@@ -106,6 +115,8 @@ export function ReceiptForm() {
   const urlBillingNoteId = searchParams.get("billingNoteId") || "";
   /** เอกสารแรกจากลิงก์ (sourceDocId) — ใช้ซิงก์ customerId / แสดงชื่อเมื่อไม่มีใน collection customers */
   const [bootstrapSourceDoc, setBootstrapSourceDoc] = useState<DocumentType | null>(null);
+  const [editableLines, setEditableLines] = useState<EditableReceiptLine[]>([]);
+  const [linesSourceKey, setLinesSourceKey] = useState("");
 
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -425,25 +436,140 @@ export function ReceiptForm() {
   }, [db, watchedSourceDocIds, sourceDocs, form]);
   
   useEffect(() => {
-    const selected = displaySourceDocs.filter(d => watchedSourceDocIds.includes(d.id));
-    const total = selected.reduce((sum, d) => sum + (d.paymentSummary?.balance ?? d.grandTotal), 0);
+    // ยอดรวมผูกกับตารางรายการที่แก้ไขได้
+    if (editableLines.length > 0) return;
+
+    const selected = displaySourceDocs.filter((d) => watchedSourceDocIds.includes(d.id));
+
+    // แก้ไขใบเสร็จ: คงยอดตามใบเสร็จเดิม — อย่าคำนวณจากยอดคงค้าง (มักเป็น 0 หลังรับเงินแล้ว)
+    if (editDocId && docToEdit) {
+      const receiptAmount = Math.round((docToEdit.grandTotal || 0) * 100) / 100;
+      if (receiptAmount > 0) {
+        form.setValue("amount", receiptAmount);
+        return;
+      }
+    }
+
+    const total = selected.reduce((sum, d) => {
+      const balance = d.paymentSummary?.balance;
+      const bill = d.grandTotal ?? 0;
+      // ใช้ยอดคงค้างถ้ามีค้างจริง ไม่งั้นใช้ยอดตามบิล
+      const line =
+        typeof balance === "number" && balance > 0.009 ? balance : bill;
+      return sum + line;
+    }, 0);
     const rounded = Math.round(total * 100) / 100;
     if (presetAmountParam && selected.length === 1) {
       const p = parseFloat(presetAmountParam);
       if (Number.isFinite(p)) {
         form.setValue("amount", Math.round(p * 100) / 100);
-        if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId') && !editDocId) {
-          form.setValue('accountId', selected[0].suggestedAccountId);
+        if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues("accountId") && !editDocId) {
+          form.setValue("accountId", selected[0].suggestedAccountId);
         }
         return;
       }
     }
-    form.setValue('amount', rounded);
-    
-    if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues('accountId') && !editDocId) {
-        form.setValue('accountId', selected[0].suggestedAccountId);
+    form.setValue("amount", rounded);
+
+    if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues("accountId") && !editDocId) {
+      form.setValue("accountId", selected[0].suggestedAccountId);
     }
-  }, [watchedSourceDocIds, displaySourceDocs, form, editDocId, presetAmountParam]);
+  }, [watchedSourceDocIds, displaySourceDocs, form, editDocId, docToEdit, presetAmountParam, editableLines.length]);
+
+  // สร้างรายการแก้ไขได้เมื่อเลือกบิล/โหลดใบเสร็จ — ไม่ทับการแก้ของผู้ใช้จนกว่าชุดบิลจะเปลี่ยน
+  useEffect(() => {
+    const selected = displaySourceDocs.filter((d) => watchedSourceDocIds.includes(d.id));
+    const refIds = editDocId ? docToEdit?.referencesDocIds || [] : watchedSourceDocIds;
+    const sourcesReady =
+      refIds.length === 0 ||
+      refIds.every((id) => displaySourceDocs.some((d) => d.id === id));
+    const key = editDocId
+      ? `edit:${editDocId}:${refIds.join("|")}:${sourcesReady ? "ready" : "pending"}`
+      : `new:${watchedSourceDocIds.join("|")}`;
+
+    if (!watchedSourceDocIds.length) {
+      setEditableLines([]);
+      setLinesSourceKey("");
+      return;
+    }
+    // รอโหลดเอกสารอ้างอิงก่อน แล้วค่อยล็อกเป็นข้อมูลเดียวกับใบเสร็จ
+    if (editDocId && docToEdit?.items?.length && !sourcesReady) {
+      return;
+    }
+    if (key === linesSourceKey) return;
+
+    if (editDocId && docToEdit?.items?.length) {
+      const lines = docToEdit.items.map((item, index) => {
+        const refId = docToEdit.referencesDocIds?.[index];
+        const source = refId
+          ? displaySourceDocs.find((d) => d.id === refId)
+          : selected[index];
+        const fromDescription = extractDateFromReceiptDescription(item.description || "");
+        return {
+          key: `receipt-item-${index}`,
+          sourceDocId: refId || source?.id,
+          // วันที่ของบิลต้นทาง — ไม่ใช้วันออกใบเสร็จ
+          date: source?.docDate || fromDescription || "",
+          // ใช้ข้อความเดียวกับที่บันทึกบนใบเสร็จ (หน้าแสดง/พิมพ์)
+          description: item.description || "",
+          amount: Math.round((item.total ?? item.unitPrice ?? 0) * 100) / 100,
+        };
+      });
+      setEditableLines(lines);
+      setLinesSourceKey(key);
+      const total = Math.round(lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+      if (total > 0) form.setValue("amount", total);
+      return;
+    }
+
+    if (!selected.length) return;
+
+    const lines = selected.map((sourceDoc) => {
+      const docCustomerId = resolveDocCustomerId(sourceDoc);
+      const docCustomerName =
+        customerNameById.get(docCustomerId) ||
+        taxDocumentCustomerDisplayName(sourceDoc.customerSnapshot) ||
+        "";
+      const customerLabel =
+        allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
+      const balance = sourceDoc.paymentSummary?.balance;
+      const amount =
+        typeof balance === "number" && balance > 0.009
+          ? balance
+          : sourceDoc.grandTotal ?? 0;
+      return {
+        key: sourceDoc.id,
+        sourceDocId: sourceDoc.id,
+        date: sourceDoc.docDate || "",
+        // สร้างข้อความแบบเดียวกับที่จะโชว์บนใบเสร็จ
+        description: buildReceiptLineDescription(sourceDoc, { customerLabel }),
+        amount: Math.round(amount * 100) / 100,
+      };
+    });
+    setEditableLines(lines);
+    setLinesSourceKey(key);
+  }, [
+    editDocId,
+    docToEdit,
+    displaySourceDocs,
+    watchedSourceDocIds,
+    customerNameById,
+    allCustomerIds,
+    linesSourceKey,
+    form,
+  ]);
+
+  const updateEditableLine = (
+    key: string,
+    patch: Partial<Pick<EditableReceiptLine, "date" | "description" | "amount">>
+  ) => {
+    setEditableLines((prev) => {
+      const next = prev.map((line) => (line.key === key ? { ...line, ...patch } : line));
+      const total = Math.round(next.reduce((s, l) => s + (Number(l.amount) || 0), 0) * 100) / 100;
+      form.setValue("amount", total);
+      return next;
+    });
+  };
 
   const customerDisplayName = useMemo(() => {
     if (!selectedCustomerId) return "";
@@ -565,34 +691,69 @@ export function ReceiptForm() {
           throw new Error("ไม่พบข้อมูลลูกค้าของใบเสร็จ");
         }
 
-        const customerIds = new Set(
-          sourceDocs.map((d) => resolveDocCustomerId(d)).filter(Boolean)
-        );
-        const multiCustomer = customerIds.size > 1;
-
-        const items = sourceDocs.map((sourceDoc, index) => {
-          const existing = docToEdit.items?.[index];
-          const docCustomerId = resolveDocCustomerId(sourceDoc);
-          const docCustomerName =
-            customerNameById.get(docCustomerId) ||
-            taxDocumentCustomerDisplayName(sourceDoc.customerSnapshot) ||
-            "";
-          const customerLabel =
-            multiCustomer && docCustomerName ? ` (${docCustomerName})` : "";
+        const items = editableLines.map((line) => {
+          const amount = Math.round((Number(line.amount) || 0) * 100) / 100;
+          let description = (line.description || "").trim() || "—";
+          // คงข้อความตามที่ผู้ใช้เห็น/แก้ — เติมวันที่เฉพาะเมื่อยังไม่มีในข้อความ
+          if (line.date && !/วันที่\s+\d{1,2}\/\d{1,2}\/\d{2,4}/.test(description)) {
+            try {
+              const dateLabel = safeFormat(new Date(line.date), "dd/MM/yyyy");
+              if (dateLabel && dateLabel !== "Invalid Date") {
+                description = `${description} วันที่ ${dateLabel}`;
+              }
+            } catch {
+              /* keep description */
+            }
+          }
           return {
-            description: buildReceiptLineDescription(sourceDoc, { customerLabel }),
-            quantity: existing?.quantity ?? 1,
-            unitPrice: existing?.unitPrice ?? docToEdit.grandTotal,
-            total: existing?.total ?? docToEdit.grandTotal,
+            description,
+            quantity: 1,
+            unitPrice: amount,
+            total: amount,
           };
         });
+
+        const amount2dec = Math.round(items.reduce((s, i) => s + i.total, 0) * 100) / 100;
+        if (amount2dec < 0.01) {
+          throw new Error("ยอดเงินรวมต้องมากกว่า 0");
+        }
+
+        const withTax = Boolean(docToEdit.withTax) || (Number(docToEdit.vatAmount) || 0) > 0.009;
+        const vatAmount = withTax
+          ? Math.round(((amount2dec / 1.07) * 0.07) * 100) / 100
+          : 0;
+        const netBeforeTax = withTax
+          ? Math.round((amount2dec - vatAmount) * 100) / 100
+          : amount2dec;
+
+        const oldAccountId =
+          docToEdit.confirmedPayment?.accountId || docToEdit.receivedAccountId || "";
+        const newAccountId = data.accountId;
+        let transferNote = "";
+
+        if (newAccountId && newAccountId !== oldAccountId) {
+          const transfer = await transferConfirmedReceiptAccount(
+            db,
+            docToEdit,
+            newAccountId,
+            { uid: profile.uid, displayName: profile.displayName || "User" }
+          );
+          if (transfer.transferred) {
+            transferNote = ` และย้ายเงิน ฿${transfer.amount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} ไปบัญชีใหม่แล้ว`;
+          }
+        }
 
         await updateDoc(
           doc(db, "documents", editDocId),
           sanitizeForFirestore({
-            docDate: data.paymentDate,
             notes: data.notes,
             items,
+            subtotal: netBeforeTax,
+            net: netBeforeTax,
+            withTax,
+            vatAmount,
+            grandTotal: amount2dec,
+            receivedAccountId: newAccountId || oldAccountId,
             customerSnapshot: { ...customer, id: canonicalCustomerId },
             storeSnapshot: { ...storeSettings },
             updatedAt: serverTimestamp(),
@@ -601,7 +762,7 @@ export function ReceiptForm() {
 
         toast({
           title: "บันทึกการแก้ไขสำเร็จ",
-          description: `ใบเสร็จ ${docToEdit.docNo} — ยืนยันรับเงินแล้ว จึงบันทึกเฉพาะข้อมูลเอกสาร`,
+          description: `ใบเสร็จ ${docToEdit.docNo} — บันทึกข้อมูลเอกสารแล้ว${transferNote}`,
         });
         router.push(`/app/office/documents/${editDocId}`);
       } catch (error: any) {
@@ -647,37 +808,72 @@ export function ReceiptForm() {
     }
     
     setIsSubmitting(true);
-    const amount2dec = Math.round(data.amount * 100) / 100;
+    const itemsFromLines = editableLines.map((line) => {
+      const amount = Math.round((Number(line.amount) || 0) * 100) / 100;
+      let description = (line.description || "").trim() || "—";
+      if (line.date && !/วันที่\s+\d{1,2}\/\d{1,2}\/\d{2,4}/.test(description)) {
+        try {
+          const dateLabel = safeFormat(new Date(line.date), "dd/MM/yyyy");
+          if (dateLabel && dateLabel !== "Invalid Date") {
+            description = `${description} วันที่ ${dateLabel}`;
+          }
+        } catch {
+          /* keep description */
+        }
+      }
+      return {
+        description,
+        quantity: 1,
+        unitPrice: amount,
+        total: amount,
+      };
+    });
+    const amount2dec =
+      Math.round(itemsFromLines.reduce((s, i) => s + i.total, 0) * 100) / 100 ||
+      Math.round(data.amount * 100) / 100;
     const payInstrument = account.type === "CASH" ? "CASH" : "TRANSFER";
     const payMethodLegacy = payInstrument === "CASH" ? "CASH" : "TRANSFER";
 
-    const items = selectedDocs.map(doc => {
+    const items = itemsFromLines.length > 0 ? itemsFromLines : selectedDocs.map(doc => {
       const docCustomerId = resolveDocCustomerId(doc);
       const docCustomerName =
         customerNameById.get(docCustomerId) ||
         taxDocumentCustomerDisplayName(doc.customerSnapshot) ||
         "";
       const customerLabel = allCustomerIds.length > 1 && docCustomerName ? ` (${docCustomerName})` : "";
+      const balance = doc.paymentSummary?.balance;
+      const lineAmount =
+        typeof balance === "number" && balance > 0.009
+          ? balance
+          : doc.grandTotal ?? 0;
       return {
         description: buildReceiptLineDescription(doc, { customerLabel }),
         quantity: 1,
-        unitPrice: doc.paymentSummary?.balance ?? doc.grandTotal,
-        total: doc.paymentSummary?.balance ?? doc.grandTotal,
+        unitPrice: lineAmount,
+        total: lineAmount,
       };
     });
 
     try {
+      const withTax = selectedDocs.some((d) => d.withTax);
+      const vatAmount = withTax
+        ? Math.round(((amount2dec / 1.07) * 0.07) * 100) / 100
+        : 0;
+      const netBeforeTax = withTax
+        ? Math.round((amount2dec - vatAmount) * 100) / 100
+        : amount2dec;
+
       const docData = {
         docDate: data.paymentDate,
         customerId: canonicalCustomerId,
         customerSnapshot: { ...customer, id: canonicalCustomerId },
         storeSnapshot: { ...storeSettings },
         items,
-        subtotal: amount2dec,
+        subtotal: netBeforeTax,
         discountAmount: 0,
-        net: amount2dec,
-        withTax: selectedDocs.some(d => d.withTax),
-        vatAmount: selectedDocs.some(d => d.withTax) ? Math.round(((amount2dec / 1.07) * 0.07) * 100) / 100 : 0,
+        net: netBeforeTax,
+        withTax,
+        vatAmount,
         grandTotal: amount2dec,
         notes: data.notes,
         referencesDocIds: data.sourceDocIds,
@@ -863,7 +1059,7 @@ export function ReceiptForm() {
           <Alert className="border-amber-200 bg-amber-50 text-amber-950">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              ใบเสร็จนี้ยืนยันรับเงินเข้าบัญชีแล้ว — แก้ไขได้เฉพาะวันที่ออกใบเสร็จ หมายเหตุ และข้อมูลที่แสดงบนเอกสาร
+              ใบเสร็จนี้ยืนยันรับเงินเข้าบัญชีแล้ว — แก้ไขรายการ/หมายเหตุได้ และเปลี่ยนบัญชีได้ถ้าระบุผิด (ระบบย้ายเงินใน cashbook ให้)
               ระบบจะไม่บันทึกรายรับซ้ำ
             </AlertDescription>
           </Alert>
@@ -1035,12 +1231,22 @@ export function ReceiptForm() {
                                     {showCustomerColumn && <TableHead>ลูกค้า</TableHead>}
                                     <TableHead>เลขที่เอกสาร</TableHead>
                                     <TableHead>วันที่</TableHead>
+                                    <TableHead className="text-right">ยอดก่อนภาษี</TableHead>
+                                    <TableHead className="text-right">ภาษี</TableHead>
+                                    <TableHead className="text-right">ยอดตามบิล</TableHead>
                                     <TableHead className="text-right">ยอดคงค้าง</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {tableDocs.length > 0 ? tableDocs.map(doc => {
                                     const selectable = isDocSelectable(doc);
+                                    const billTotal = doc.grandTotal ?? 0;
+                                    const beforeTax = documentAmountBeforeTax(doc);
+                                    const vat = doc.vatAmount ?? 0;
+                                    const outstanding =
+                                      typeof doc.paymentSummary?.balance === "number"
+                                        ? doc.paymentSummary.balance
+                                        : billTotal;
                                     return (
                                     <TableRow
                                       key={doc.id}
@@ -1069,14 +1275,23 @@ export function ReceiptForm() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-xs">{safeFormat(new Date(doc.docDate), "dd/MM/yy")}</TableCell>
+                                        <TableCell className="text-right">
+                                            {formatCurrency(beforeTax)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            {formatCurrency(vat)}
+                                        </TableCell>
+                                        <TableCell className="text-right font-medium">
+                                            {formatCurrency(billTotal)}
+                                        </TableCell>
                                         <TableCell className="text-right font-bold text-primary">
-                                            {formatCurrency(doc.paymentSummary?.balance ?? doc.grandTotal)}
+                                            {formatCurrency(outstanding)}
                                         </TableCell>
                                     </TableRow>
                                     );
                                 }) : (
                                     <TableRow>
-                                        <TableCell colSpan={showCustomerColumn ? 5 : 4} className="h-24 text-sm text-muted-foreground text-center italic">
+                                        <TableCell colSpan={showCustomerColumn ? 8 : 7} className="h-24 text-sm text-muted-foreground text-center italic">
                                             {isBillingNoteMode
                                               ? "ไม่พบรายการในใบวางบิลนี้"
                                               : "ไม่พบเอกสารค้างชำระที่สามารถออกใบเสร็จได้"}
@@ -1095,66 +1310,139 @@ export function ReceiptForm() {
         <Card className="animate-in zoom-in-95">
             <CardHeader><CardTitle className="text-base">2. รายละเอียดใบเสร็จ{isEditingConfirmedReceipt ? "" : " (บันทึกบัญชีจริงเมื่อรับเงินที่หน้าลูกหนี้)"}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="paymentDate"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>วันที่ออกใบเสร็จ</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full pl-3 text-left font-normal h-10",
-                                !field.value && "text-muted-foreground"
-                              )}
+            <div className="space-y-2">
+              <FormLabel>รายการในใบเสร็จ</FormLabel>
+              <div className="border rounded-md overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[140px]">วันที่</TableHead>
+                      <TableHead>รายการ</TableHead>
+                      <TableHead className="text-right w-[140px]">ยอดเงิน</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {editableLines.length > 0 ? (
+                      editableLines.map((line) => (
+                        <TableRow key={line.key}>
+                          <TableCell className="align-top">
+                            <Input
+                              type="date"
+                              value={line.date || ""}
                               disabled={isSubmitting}
-                            >
-                              {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
-                              <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value ? parseISO(field.value) : undefined}
-                            onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField name="amount" render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>ยอดเงินรวมตามใบเสร็จ (บาท)</FormLabel>
-                        <FormControl><Input type="number" step="0.01" {...field} className="font-black text-xl text-primary" readOnly /></FormControl>
-                        <FormDescription className="text-right text-[10px]">รวมยอดจากบิล {watchedSourceDocIds.length} รายการ</FormDescription>
-                        <FormMessage />
-                    </FormItem>
-                )} />
+                              className="h-9 text-xs"
+                              onChange={(e) => updateEditableLine(line.key, { date: e.target.value })}
+                            />
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <Textarea
+                              value={line.description}
+                              disabled={isSubmitting}
+                              rows={2}
+                              className="min-h-[64px] text-sm leading-snug"
+                              onChange={(e) => updateEditableLine(line.key, { description: e.target.value })}
+                            />
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={line.amount}
+                              disabled={isSubmitting}
+                              className="h-9 text-right font-bold text-primary"
+                              onChange={(e) =>
+                                updateEditableLine(line.key, {
+                                  amount: Math.round((parseFloat(e.target.value) || 0) * 100) / 100,
+                                })
+                              }
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={3} className="h-16 text-center text-sm text-muted-foreground italic">
+                          ยังไม่มีรายการในใบเสร็จ
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {editableLines.length > 0 && (
+                      <TableRow className="bg-muted/30">
+                        <TableCell colSpan={2} className="text-right text-sm font-medium">
+                          ยอดเงินรวมตามใบเสร็จ
+                        </TableCell>
+                        <TableCell className="text-right font-black text-primary text-base">
+                          {formatCurrency(
+                            editableLines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-[10px] text-muted-foreground text-right">
+                {editDocId
+                  ? `แก้ไขรายการใบเสร็จ ${docToEdit?.docNo || ""} ได้โดยตรง — ยอดรวมคำนวณจากตาราง`
+                  : "แก้ไขข้อความ/ยอดในตารางได้ — ยอดรวมคำนวณอัตโนมัติ"}
+              </p>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField name="accountId" render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>เข้าบัญชี (คาดการณ์)</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value} disabled={isSubmitting || isEditingConfirmedReceipt}>
-                            <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชีที่จะนำเงินเข้า..." /></SelectTrigger></FormControl>
-                            <SelectContent>
-                                {accounts.map(acc => <SelectItem key={acc.id} value={acc.id}>{acc.name} ({acc.type === 'CASH' ? 'เงินสด' : 'ธนาคาร'})</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <FormMessage />
-                    </FormItem>
-                )} />
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>บันทึกเพิ่มเติม</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        {...field}
+                        placeholder="ระบุรายละเอียดเพิ่มเติม (ถ้ามี)..."
+                        disabled={isSubmitting}
+                        className="min-h-[100px]"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                name="accountId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>เข้าบัญชี</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value}
+                      disabled={isSubmitting}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="เลือกบัญชีที่เงินเข้า..." />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {accounts.map((acc) => (
+                          <SelectItem key={acc.id} value={acc.id}>
+                            {acc.name} ({acc.type === "CASH" ? "เงินสด" : "ธนาคาร"})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {isEditingConfirmedReceipt && (
+                      <p className="text-[10px] text-muted-foreground">
+                        เปลี่ยนบัญชีได้เมื่อระบุผิด — ระบบจะย้ายเงินออกจากบัญชีเดิมและเข้าบัญชีใหม่ใน cashbook
+                      </p>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-            <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>บันทึกเพิ่มเติม</FormLabel><FormControl><Textarea {...field} placeholder="ระบุรายละเอียดเพิ่มเติม (ถ้ามี)..." disabled={isSubmitting} /></FormControl></FormItem>)} />
+            {/* sync hidden amount / paymentDate for zod validation */}
+            <input type="hidden" {...form.register("amount", { valueAsNumber: true })} />
+            <input type="hidden" {...form.register("paymentDate")} />
             </CardContent>
         </Card>
         )}
