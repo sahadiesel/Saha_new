@@ -15,7 +15,12 @@ export function applyPrintDocumentTitle(docNo: string): void {
 }
 
 /** เอกสารที่แบ่ง 2 หน้าเมื่อพิมพ์ — หน้า 1 เฉพาะรายการ, หน้า 2 รายการต่อ + หมายเหตุ/ยอด/ลายเซ็น */
-export const PRINT_MULTI_PAGE_DOC_TYPES = ["TAX_INVOICE", "DELIVERY_NOTE", "BILLING_NOTE"] as const;
+export const PRINT_MULTI_PAGE_DOC_TYPES = [
+  "TAX_INVOICE",
+  "DELIVERY_NOTE",
+  "BILLING_NOTE",
+  "QUOTATION",
+] as const;
 
 /** ประมาณจำนวนแถวรายการในหน้าแรก (หัวเอกสาร ~85mm บน A4) */
 export const PRINT_FIRST_PAGE_MAX_ITEMS = 17;

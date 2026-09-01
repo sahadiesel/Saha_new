@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2 } from "lucide-react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
 import { applyPrintDocumentTitle, getPrintFirstPageItemCount, shouldSplitPrintPages } from "@/lib/print-document";
@@ -452,10 +452,10 @@ function DocumentView({
                         ))}
                     </TableBody>
                     {showFooter && (
-                    <TableFooter className="border-0 bg-transparent print:border-0 print:bg-transparent">
+                    <TableBody className="border-0 [&_tr]:border-0">
                         {/*
-                          หมายเหตุ/ยอด/ลายเซ็นอยู่ tfoot — รายการอยู่ tbody เพียงอย่างเดียว
-                          ทำให้ thead (หัวร้าน/ลูกค้า/คอลัมน์) ซ้ำทุกหน้าเมื่อรายการยาว
+                          หมายเหตุ/ยอด/ลายเซ็นอยู่ท้าย tbody (ไม่ใช่ tfoot)
+                          — ถ้าอยู่ tfoot เบราว์เซอร์จะซ้ำสรุปยอดทุกหน้าเมื่อพิมพ์หลายหน้า
                         */}
                         <TableRow className="print-doc-footer-row border-0 hover:bg-transparent">
                             <TableCell
@@ -561,7 +561,7 @@ function DocumentView({
                                 )}
                             </TableCell>
                         </TableRow>
-                    </TableFooter>
+                    </TableBody>
                     )}
                 </Table>
     );
