@@ -69,6 +69,7 @@ import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { ReceiveArPaymentDialog } from "@/components/accounting/receive-ar-payment-dialog";
+import { ApBillDetailDialog } from "@/components/accounting/ap-bill-detail-dialog";
 import {
   arInvoiceDedupeKey,
   dedupeArBySalesDocNo,
@@ -88,6 +89,31 @@ const formatCurrency = (value: number | null | undefined) => {
     maximumFractionDigits: 2,
   });
 };
+
+/** ชื่อร้านเต็มสำหรับเจ้าหนี้ — ไม่ใช้ตัวย่อเป็นหลัก */
+function apVendorFullName(
+  ob: Pick<AccountingObligation, "vendorId" | "vendorNameSnapshot" | "vendorShortNameSnapshot">,
+  vendors: WithId<Vendor>[]
+): string {
+  const fromVendor = ob.vendorId
+    ? vendors.find((v) => v.id === ob.vendorId)?.companyName
+    : undefined;
+  return (
+    (ob.vendorNameSnapshot || "").trim() ||
+    (fromVendor || "").trim() ||
+    (ob.vendorShortNameSnapshot || "").trim() ||
+    "—"
+  );
+}
+
+function apVendorContactName(
+  ob: Pick<AccountingObligation, "vendorId">,
+  vendors: WithId<Vendor>[]
+): string {
+  if (!ob.vendorId) return "—";
+  const name = vendors.find((v) => v.id === ob.vendorId)?.contactName?.trim();
+  return name || "—";
+}
 
 const roundMoney2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -187,7 +213,7 @@ function EditApTermsDialog({
         <DialogHeader>
           <DialogTitle>แก้ไขกำหนดจ่าย / บัญชีที่คาดจ่าย</DialogTitle>
           <DialogDescription>
-            {obligation.invoiceNo || obligation.sourceDocNo} — {obligation.vendorShortNameSnapshot || obligation.vendorNameSnapshot}
+            {obligation.invoiceNo || obligation.sourceDocNo} — {obligation.vendorNameSnapshot || obligation.vendorShortNameSnapshot}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -322,6 +348,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
     const [payingAR, setPayingAR] = useState<WithId<AccountingObligation> | null>(null);
     const [payingAP, setPayingAP] = useState<WithId<AccountingObligation> | null>(null);
     const [editingAp, setEditingAp] = useState<WithId<AccountingObligation> | null>(null);
+    const [viewingAp, setViewingAp] = useState<WithId<AccountingObligation> | null>(null);
     const [obToDelete, setObToDelete] = useState<WithId<AccountingObligation> | null>(null);
     const [isDeletingOb, setIsDeletingOb] = useState(false);
     const { toast } = useToast();
@@ -747,10 +774,14 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
             const lowerSearch = searchTerm.toLowerCase();
             result = result.filter((ob) => {
                 const det = docDetails[ob.sourceDocId || ""];
+                const vendor = ob.vendorId ? vendors.find((v) => v.id === ob.vendorId) : undefined;
                 const names = [
                     ob.customerNameSnapshot,
                     ob.vendorShortNameSnapshot,
                     ob.vendorNameSnapshot,
+                    vendor?.companyName,
+                    vendor?.contactName,
+                    vendor?.shortName,
                     det?.customerNameFromDoc,
                     det?.customerTaxNameFromDoc,
                 ]
@@ -783,7 +814,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
             });
         }
         return result;
-    }, [obligations, searchTerm, monthFilter, paymentFilter, docDetails, type]);
+    }, [obligations, searchTerm, monthFilter, paymentFilter, docDetails, type, vendors]);
 
     useEffect(() => {
         let paidNet = 0;
@@ -830,7 +861,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
     return (
         <>
             <div className="border rounded-md overflow-hidden">
-                <Table className="w-full table-fixed"><TableHeader><TableRow><TableHead className="w-[10%] whitespace-nowrap">วันที่</TableHead><TableHead className="w-[14%] whitespace-nowrap">{type === 'AR' ? 'เลขที่เอกสาร' : 'เลขที่บิล'}</TableHead><TableHead className="w-[18%]">{type === 'AR' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดก่อนภาษี</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ภาษี</TableHead><TableHead className="w-[11%] whitespace-nowrap text-right">ยอดรวม</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">ชำระแล้ว</TableHead><TableHead className="w-[12%] whitespace-nowrap text-right">ยอดคงค้าง</TableHead><TableHead className="w-[8%] whitespace-nowrap text-right">จัดการ</TableHead></TableRow></TableHeader>
+                <Table className="w-full table-fixed"><TableHeader><TableRow><TableHead className="w-[9%] whitespace-nowrap">วันที่</TableHead><TableHead className="w-[12%] whitespace-nowrap">{type === 'AR' ? 'เลขที่เอกสาร' : 'เลขที่บิล'}</TableHead><TableHead className={type === 'AP' ? 'w-[16%]' : 'w-[18%]'}>{type === 'AR' ? 'ลูกค้า' : 'ร้านค้า'}</TableHead>{type === 'AP' ? (<TableHead className="w-[10%]">ชื่อผู้ติดต่อ</TableHead>) : null}<TableHead className="w-[10%] whitespace-nowrap text-right">ยอดก่อนภาษี</TableHead><TableHead className="w-[7%] whitespace-nowrap text-right">ภาษี</TableHead><TableHead className="w-[10%] whitespace-nowrap text-right">ยอดรวม</TableHead><TableHead className="w-[7%] whitespace-nowrap text-right">ชำระแล้ว</TableHead><TableHead className="w-[10%] whitespace-nowrap text-right">ยอดคงค้าง</TableHead><TableHead className="w-[7%] whitespace-nowrap text-right">จัดการ</TableHead></TableRow></TableHeader>
                     <TableBody>{filteredObligations.length > 0 ? filteredObligations.map(ob => {
                             const details = docDetails[ob.sourceDocId || ''];
                             const amounts = splitObligationPaidOutstanding(ob, details, type);
@@ -856,6 +887,8 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                               return `/app/management/accounting/documents/receipt?${q.toString()}`;
                             })();
                             const apPayDisabled = type === "AP" && (ob.status === "PAID" || outstandingBalance <= 0.009);
+                            const apVendorName = type === "AP" ? apVendorFullName(ob, vendors) : "";
+                            const apContact = type === "AP" ? apVendorContactName(ob, vendors) : "";
                             return (
                               <TableRow key={ob.id} className="hover:bg-muted/30">
                                 <TableCell className="text-xs whitespace-nowrap">{billDateRaw ? safeFormat(new Date(billDateRaw), APP_DATE_FORMAT) : '-'}</TableCell>
@@ -884,11 +917,16 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                                 </TableCell>
                                 <TableCell className="text-sm truncate" title={type === 'AR'
                                     ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
-                                    : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}>
+                                    : apVendorName}>
                                   {type === 'AR'
                                     ? ob.customerNameSnapshot || details?.customerNameFromDoc || details?.customerTaxNameFromDoc || '—'
-                                    : ob.vendorShortNameSnapshot || ob.vendorNameSnapshot}
+                                    : apVendorName}
                                 </TableCell>
+                                {type === "AP" ? (
+                                  <TableCell className="text-sm truncate" title={apContact}>
+                                    {apContact}
+                                  </TableCell>
+                                ) : null}
                                 <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(amounts.net)}</TableCell>
                                 <TableCell className="text-right text-xs whitespace-nowrap">{amounts.vat > 0 ? formatCurrency(amounts.vat) : ""}</TableCell>
                                 <TableCell className="text-right text-xs whitespace-nowrap">{formatCurrency(amounts.grand)}</TableCell>
@@ -926,6 +964,9 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                                         </DropdownMenuItem>
                                       ) : (
                                         <>
+                                          <DropdownMenuItem onSelect={() => setViewingAp(ob)}>
+                                            ดูรายละเอียด
+                                          </DropdownMenuItem>
                                           <DropdownMenuItem disabled={apPayDisabled} onSelect={() => setPayingAP(ob)}>
                                             {apPayDisabled ? "ชำระครบแล้ว" : "จ่ายบิล"}
                                           </DropdownMenuItem>
@@ -945,13 +986,14 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                                 </TableCell>
                               </TableRow>
                             );
-                        }) : (<TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ในช่วงที่เลือก (รวมทั้งชำระแล้ว)</TableCell></TableRow>)}
+                        }) : (<TableRow><TableCell colSpan={type === 'AP' ? 10 : 9} className="h-24 text-center text-muted-foreground italic">ไม่พบรายการ{type === 'AR' ? 'ลูกหนี้' : 'เจ้าหนี้'}ในช่วงที่เลือก (รวมทั้งชำระแล้ว)</TableCell></TableRow>)}
                     </TableBody>
                 </Table>
             </div>
             {payingAR && (<ReceiveArPaymentDialog isOpen={!!payingAR} onClose={() => setPayingAR(null)} obligation={payingAR} accounts={accounts} />)}
             {payingAP && (<PayCreditorDialog isOpen={!!payingAP} onClose={() => setPayingAP(null)} obligation={payingAP} accounts={accounts} />)}
             <EditApTermsDialog obligation={editingAp} accounts={accounts} isOpen={!!editingAp} onClose={() => setEditingAp(null)} />
+            <ApBillDetailDialog obligation={viewingAp} isOpen={!!viewingAp} onClose={() => setViewingAp(null)} />
             <AlertDialog open={!!obToDelete} onOpenChange={(open) => !open && !isDeletingOb && setObToDelete(null)}>
               <AlertDialogContent>
                 <AlertDialogHeader>

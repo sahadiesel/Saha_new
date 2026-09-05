@@ -29,6 +29,7 @@ import {
   billingRowUiStatus,
   billingSignedGrandTotal,
   billingRowPreviewItems,
+  billingRowNoteNumbers,
   billingTargetBucket,
   billingRowMatchesTarget,
   billingRowIsMergeSelectable,
@@ -118,6 +119,7 @@ function BillingNoteBatchTab() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [customerData, setCustomerData] = useState<GroupedCustomerData[]>([]);
+  const [billingNoteNoById, setBillingNoteNoById] = useState<Record<string, string>>({});
   
   const [editingCustomerData, setEditingCustomerData] = useState<GroupedCustomerData | null>(null);
   const [billingRun, setBillingRun] = useState<WithId<BillingRun> | null>(null);
@@ -255,6 +257,28 @@ function BillingNoteBatchTab() {
 
       const finalData = rowsBeforeExplode.flatMap((row) => explodeSeparateSubRows(row));
 
+      const noteIds = new Set<string>();
+      for (const notes of Object.values(activeBillingRun?.createdBillingNotes || {})) {
+        if (notes?.main) noteIds.add(notes.main);
+        for (const sid of Object.values(notes?.separate || {})) {
+          if (sid) noteIds.add(sid);
+        }
+      }
+      const noteNoById: Record<string, string> = {};
+      await Promise.all(
+        Array.from(noteIds).map(async (id) => {
+          try {
+            const snap = await getDoc(doc(db, "documents", id));
+            if (snap.exists()) {
+              const no = String((snap.data() as Document).docNo || "").trim();
+              if (no) noteNoById[id] = no;
+            }
+          } catch {
+            /* ignore missing note */
+          }
+        })
+      );
+      setBillingNoteNoById(noteNoById);
       setCustomerData(finalData);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error fetching data', description: error.message });
@@ -936,10 +960,10 @@ function BillingNoteBatchTab() {
         <Card>
           <CardContent className="pt-6">
             <Table>
-              <TableHeader><TableRow><TableHead className="w-10" /><TableHead>ลูกค้า (Customer)</TableHead><TableHead className="text-center">จำนวนบิล</TableHead><TableHead className="text-right">ยอดรวมสะสม</TableHead><TableHead>สถานะ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="w-10" /><TableHead className="text-center w-[88px]">จำนวนบิล</TableHead><TableHead>ลูกค้า (Customer)</TableHead><TableHead className="text-right">ยอดรวมสะสม</TableHead><TableHead>สถานะ</TableHead><TableHead>เลขที่ใบวางบิล</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow><TableCell colSpan={6} className="h-24 text-center"><Loader2 className="animate-spin" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="h-24 text-center"><Loader2 className="animate-spin" /></TableCell></TableRow>
                 ) : customerData.length > 0 ? (
                   customerData.map((data) => {
                     const rowStatus = billingRowUiStatus(data);
@@ -947,6 +971,11 @@ function BillingNoteBatchTab() {
                     const canEditGrouping = billingRowCanEditGrouping(data, customerData);
                     const canCreate = billingRowCanCreateNote(data);
                     const previewItems = billingRowPreviewItems(data);
+                    const noteNos = billingRowNoteNumbers(data, billingNoteNoById);
+                    const billCount =
+                      data.includedInvoices.length +
+                      data.deferredInvoices.length +
+                      Object.values(data.separateGroups).flat().length;
                     return (
                     <TableRow key={data.customer.id} className="hover:bg-muted/30 transition-colors">
                       <TableCell className="align-middle" onClick={(e) => e.stopPropagation()}>
@@ -958,6 +987,9 @@ function BillingNoteBatchTab() {
                           disabled={!mergeSelectable}
                           aria-label="เลือกแถวเพื่อรวมกลุ่ม"
                         />
+                      </TableCell>
+                      <TableCell className="text-center font-medium tabular-nums">
+                        {billCount}
                       </TableCell>
                       <TableCell className="font-semibold">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -985,11 +1017,6 @@ function BillingNoteBatchTab() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">
-                        {data.includedInvoices.length +
-                          data.deferredInvoices.length +
-                          Object.values(data.separateGroups).flat().length}
-                      </TableCell>
                       <TableCell className="text-right font-mono">฿{formatCurrency(data.totalIncludedAmount)}</TableCell>
                       <TableCell>
                         {rowStatus === "created" ? (
@@ -999,6 +1026,9 @@ function BillingNoteBatchTab() {
                         ) : (
                           <Badge variant="secondary">ไม่มีรายการ</Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {noteNos.length > 0 ? noteNos.join(", ") : "—"}
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -1074,7 +1104,7 @@ function BillingNoteBatchTab() {
                   );
                   })
                 ) : (
-                  <TableRow><TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">ไม่พบเอกสารเครดิตที่ต้องวางบิลในเดือนนี้</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">ไม่พบเอกสารเครดิตที่ต้องวางบิลในเดือนนี้</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>

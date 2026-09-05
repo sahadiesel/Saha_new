@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { doc, collection, query, where, serverTimestamp, getDocs, getDoc, runTransaction } from "firebase/firestore";
+import { doc, collection, query, where, serverTimestamp, getDocs, getDoc, runTransaction, limit, type Firestore } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -46,6 +46,7 @@ import {
   resyncConfirmedReceiptState,
 } from "@/lib/receipt-tax-invoice-link";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
+import { extractDocNoFromReceiptDescription } from "@/lib/receipt-line-description";
 
 const confirmReceiptSchema = z.object({
   accountId: z.string().min(1, "กรุณาเลือกบัญชีที่รับเงิน"),
@@ -57,6 +58,59 @@ const confirmReceiptSchema = z.object({
 type ConfirmReceiptFormData = z.infer<typeof confirmReceiptSchema>;
 
 const formatCurrency = (value: number) => value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+async function loadDocumentsByIds(
+  db: Firestore,
+  ids: string[]
+): Promise<WithId<DocumentType>[]> {
+  const unique = Array.from(new Set(ids.map((id) => String(id || "").trim()).filter(Boolean)));
+  if (unique.length === 0) return [];
+  const snaps = await Promise.all(unique.map((id) => getDoc(doc(db, "documents", id))));
+  return snaps
+    .filter((s) => s.exists())
+    .map((s) => ({ id: s.id, ...(s.data() as DocumentType) }));
+}
+
+async function loadDocumentsByDocNos(
+  db: Firestore,
+  docNos: string[]
+): Promise<WithId<DocumentType>[]> {
+  const unique = Array.from(new Set(docNos.map((n) => String(n || "").trim()).filter(Boolean)));
+  const out: WithId<DocumentType>[] = [];
+  const seen = new Set<string>();
+  for (const no of unique) {
+    const snap = await getDocs(
+      query(collection(db, "documents"), where("docNo", "==", no), limit(8))
+    );
+    const preferred =
+      snap.docs.find((d) => {
+        const t = d.data().docType;
+        const st = d.data().status;
+        return (
+          (t === "TAX_INVOICE" || t === "DELIVERY_NOTE" || t === "DEBIT_NOTE") &&
+          st !== "CANCELLED"
+        );
+      }) ||
+      snap.docs.find((d) => d.data().status !== "CANCELLED") ||
+      snap.docs[0];
+    if (preferred && !seen.has(preferred.id)) {
+      seen.add(preferred.id);
+      out.push({ id: preferred.id, ...(preferred.data() as DocumentType) });
+    }
+  }
+  return out;
+}
+
+/** ยอดตามบรรทัดใบเสร็จ จัดกลุ่มด้วยเลขที่บิลในคำอธิบาย */
+function receiptLineAmountByDocNo(receipt: DocumentType): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const item of receipt.items || []) {
+    const no = extractDocNoFromReceiptDescription(item.description || "");
+    if (!no) continue;
+    map[no] = Math.round(((map[no] || 0) + (Number(item.total) || 0)) * 100) / 100;
+  }
+  return map;
+}
 
 function ConfirmReceiptPageContent() {
   const { receiptId } = useParams();
@@ -121,35 +175,75 @@ function ConfirmReceiptPageContent() {
         }
         setReceipt(receiptData);
 
-        let invoiceIds = receiptData.referencesDocIds || [];
-        let fetchedInvoices: WithId<DocumentType>[] = [];
-        let fetchedObligations: Record<string, WithId<AccountingObligation>> = {};
+        const lineAmountByDocNo = receiptLineAmountByDocNo(receiptData);
+        const docNosFromItems = Object.keys(lineAmountByDocNo);
 
-        if (invoiceIds.length > 0) {
-            const sourceDocsQuery = query(collection(db, "documents"), where("__name__", "in", invoiceIds));
-            const sourceDocsSnap = await getDocs(sourceDocsQuery);
-            
-            let allRelevantInvoiceIds: string[] = [];
-            sourceDocsSnap.docs.forEach(d => {
-                if (d.data().docType === 'BILLING_NOTE') {
-                    allRelevantInvoiceIds = [...allRelevantInvoiceIds, ...(d.data().invoiceIds || [])];
-                } else {
-                    allRelevantInvoiceIds.push(d.id);
-                }
-            });
+        // 1) โหลดบิลจากเลขที่ในรายการใบเสร็จ (แหล่งความจริงบนเอกสาร)
+        let fetchedInvoices = docNosFromItems.length
+          ? await loadDocumentsByDocNos(db, docNosFromItems)
+          : [];
 
-            if (allRelevantInvoiceIds.length > 0) {
-                const invoicesQuery = query(collection(db, "documents"), where("__name__", "in", allRelevantInvoiceIds));
-                const obligationsQuery = query(collection(db, 'accountingObligations'), where('sourceDocId', 'in', allRelevantInvoiceIds));
-                
-                const [invoicesSnap, obligationsSnap] = await Promise.all([
-                    getDocs(invoicesQuery),
-                    getDocs(obligationsQuery),
-                ]);
-
-                fetchedInvoices = invoicesSnap.docs.map(d => ({id: d.id, ...d.data()}) as WithId<DocumentType>);
-                fetchedObligations = Object.fromEntries(obligationsSnap.docs.map(d => [d.data().sourceDocId, {id: d.id, ...d.data()} as WithId<AccountingObligation>]));
+        // 2) ถ้าไม่มีในรายการ — ใช้ referencesDocIds (ขยายใบวางบิลเป็นใบกำกับ)
+        if (fetchedInvoices.length === 0) {
+          const refDocs = await loadDocumentsByIds(db, receiptData.referencesDocIds || []);
+          const invoiceIds: string[] = [];
+          for (const d of refDocs) {
+            if (d.docType === "BILLING_NOTE") {
+              invoiceIds.push(...(d.invoiceIds || []));
+            } else if (
+              d.docType === "TAX_INVOICE" ||
+              d.docType === "DELIVERY_NOTE" ||
+              d.docType === "DEBIT_NOTE" ||
+              d.docType === "CREDIT_NOTE"
+            ) {
+              invoiceIds.push(d.id);
             }
+          }
+          fetchedInvoices = await loadDocumentsByIds(db, invoiceIds);
+        } else if ((receiptData.referencesDocIds || []).length > 0) {
+          // มีทั้งรายการและ references — ถ้า references ชี้คนละบิล ให้ใช้ตามรายการใบเสร็จ
+          const refDocs = await loadDocumentsByIds(db, receiptData.referencesDocIds || []);
+          const refInvoiceIds: string[] = [];
+          for (const d of refDocs) {
+            if (d.docType === "BILLING_NOTE") {
+              refInvoiceIds.push(...(d.invoiceIds || []));
+            } else {
+              refInvoiceIds.push(d.id);
+            }
+          }
+          const itemIds = new Set(fetchedInvoices.map((i) => i.id));
+          const refMismatch = refInvoiceIds.some((id) => id && !itemIds.has(id));
+          if (refMismatch) {
+            console.warn(
+              "[confirm-receipt] referencesDocIds ไม่ตรงรายการในใบเสร็จ — ใช้เลขที่จากรายการใบเสร็จ",
+              { receiptId: receiptData.id, refInvoiceIds, itemDocNos: docNosFromItems }
+            );
+          }
+        }
+
+        let fetchedObligations: Record<string, WithId<AccountingObligation>> = {};
+        if (fetchedInvoices.length > 0) {
+          const invIds = fetchedInvoices.map((i) => i.id);
+          // Firestore 'in' จำกัด 30 ค่า — แบ่งชุด
+          const chunks: string[][] = [];
+          for (let i = 0; i < invIds.length; i += 30) {
+            chunks.push(invIds.slice(i, i + 30));
+          }
+          const obSnaps = await Promise.all(
+            chunks.map((chunk) =>
+              getDocs(
+                query(collection(db, "accountingObligations"), where("sourceDocId", "in", chunk))
+              )
+            )
+          );
+          fetchedObligations = Object.fromEntries(
+            obSnaps.flatMap((snap) =>
+              snap.docs.map((d) => [
+                d.data().sourceDocId,
+                { id: d.id, ...(d.data() as AccountingObligation) } as WithId<AccountingObligation>,
+              ])
+            )
+          );
         }
 
         setInvoices(fetchedInvoices);
@@ -164,20 +258,36 @@ function ConfirmReceiptPageContent() {
         const accountsSnap = await getDocs(accountsQuery);
         const accountsData = accountsSnap.docs.map(d => ({id: d.id, ...d.data()}) as WithId<AccountingAccount>);
         setAccounts(accountsData);
-        
+
+        const resolveGross = (inv: WithId<DocumentType>) => {
+          const fromLine = lineAmountByDocNo[inv.docNo || ""];
+          if (typeof fromLine === "number" && fromLine > 0.009) return fromLine;
+          if (fetchedInvoices.length === 1 && (receiptData.grandTotal || 0) > 0.009) {
+            return Math.round((receiptData.grandTotal || 0) * 100) / 100;
+          }
+          const ob = fetchedObligations[inv.id];
+          const live = ob?.balance ?? inv.paymentSummary?.balance;
+          if (typeof live === "number" && live > 0.009) return Math.round(live * 100) / 100;
+          return Math.round((inv.grandTotal || 0) * 100) / 100;
+        };
+
         const initialNetTotal = fetchedInvoices.reduce((sum, inv) => {
-            const ob = fetchedObligations[inv.id];
-            const gross = ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal;
+            const gross = resolveGross(inv);
             const whtBase = inv.withTax ? (gross / 1.07) : gross;
             const applyWht = inv.docType === "TAX_INVOICE";
             const initialWhtRate = applyWht ? 0.03 : 0;
             return sum + (gross - (whtBase * initialWhtRate));
         }, 0);
 
+        const fallbackNet =
+          initialNetTotal > 0.009
+            ? initialNetTotal
+            : Number(receiptData.grandTotal) || 0;
+
         form.reset({
             accountId: receiptData.receivedAccountId || accountsData[0]?.id || "",
             paymentDate: receiptData.paymentDate || dfFormat(new Date(), "yyyy-MM-dd"),
-            netReceivedTotal: Math.round(initialNetTotal * 100) / 100,
+            netReceivedTotal: Math.round(fallbackNet * 100) / 100,
             whtPercent: fetchedInvoices.some((inv) => whtApplyDefaults[inv.id]) ? 3 : 0
         });
 
@@ -190,10 +300,27 @@ function ConfirmReceiptPageContent() {
     fetchData();
   }, [db, receiptId, form]);
   
+  const lineAmountByDocNo = useMemo(
+    () => (receipt ? receiptLineAmountByDocNo(receipt) : {}),
+    [receipt]
+  );
+
   const calculatedAllocations = useMemo(() => {
     return invoices.map(inv => {
+        const fromLine = lineAmountByDocNo[inv.docNo || ""];
         const ob = obligations[inv.id];
-        const gross = Math.round((ob?.balance ?? inv.paymentSummary?.balance ?? inv.grandTotal) * 100) / 100;
+        const liveBalance = ob?.balance ?? inv.paymentSummary?.balance;
+        let gross: number;
+        if (typeof fromLine === "number" && fromLine > 0.009) {
+          gross = fromLine;
+        } else if (invoices.length === 1 && (receipt?.grandTotal || 0) > 0.009) {
+          gross = Math.round((receipt!.grandTotal || 0) * 100) / 100;
+        } else if (typeof liveBalance === "number" && liveBalance > 0.009) {
+          gross = Math.round(liveBalance * 100) / 100;
+        } else {
+          gross = Math.round((inv.grandTotal || 0) * 100) / 100;
+        }
+
         const applyWht =
           invoiceWhtApply[inv.id] !== undefined ? invoiceWhtApply[inv.id] : inv.docType === "TAX_INVOICE";
         const whtRate = applyWht ? watchedWhtPercent / 100 : 0;
@@ -212,7 +339,7 @@ function ConfirmReceiptPageContent() {
             withholdingApplied: applyWht,
         };
     });
-  }, [invoices, obligations, watchedWhtPercent, invoiceWhtApply]);
+  }, [invoices, obligations, watchedWhtPercent, invoiceWhtApply, lineAmountByDocNo, receipt]);
 
   const totals = useMemo(() => {
     const totalNetCalculated = Math.round(calculatedAllocations.reduce((sum, a) => sum + a.netCash, 0) * 100) / 100;
@@ -239,7 +366,12 @@ function ConfirmReceiptPageContent() {
                 throw new Error("ALREADY_CONFIRMED");
             }
 
-            const parentReferenceIds = rData.referencesDocIds || [];
+            const parentReferenceIds = Array.from(
+              new Set([
+                ...(rData.referencesDocIds || []),
+                ...calculatedAllocations.map((a) => a.invoiceId),
+              ])
+            );
             const parentSnaps = await Promise.all(parentReferenceIds.map(id => transaction.get(doc(db, 'documents', id))));
 
             const jobIdsToRead = Array.from(new Set(calculatedAllocations.map(a => obligations[a.invoiceId]?.jobId).filter(Boolean)));
@@ -264,6 +396,8 @@ function ConfirmReceiptPageContent() {
               rData.customerSnapshot?.name ||
               "ลูกค้าทั่วไป";
             const receiptDocNo = rData.docNo || "Unknown";
+
+            const healedRefIds = calculatedAllocations.map((a) => a.invoiceId).filter(Boolean);
 
             transaction.set(arPaymentRef, sanitizeForFirestore({
                 id: arPaymentId,
@@ -303,6 +437,7 @@ function ConfirmReceiptPageContent() {
                 status: 'CONFIRMED',
                 receiptStatus: 'CONFIRMED',
                 accountingEntryId: entryId,
+                ...(healedRefIds.length > 0 ? { referencesDocIds: healedRefIds } : {}),
                 confirmedPayment: {
                     accountId: data.accountId,
                     method: paymentMethod,
@@ -314,13 +449,21 @@ function ConfirmReceiptPageContent() {
                 updatedAt: serverTimestamp(),
             }));
             
+            const allocationIdSet = new Set(healedRefIds);
             for (const pSnap of parentSnaps) {
-                if (pSnap.exists()) {
+                if (!pSnap.exists()) continue;
+                const pData = pSnap.data() as DocumentType;
+                // อัปเดตเฉพาะบิลที่จัดสรรจริง หรือใบวางบิลที่อ้างอิง — ไม่มาร์คบิลผิดจาก references เก่า
+                if (
+                  allocationIdSet.has(pSnap.id) ||
+                  (pData.docType === "BILLING_NOTE" &&
+                    (pData.invoiceIds || []).some((id) => allocationIdSet.has(id)))
+                ) {
                     transaction.update(pSnap.ref, {
-                        status: 'PAID',
+                        status: pData.docType === "BILLING_NOTE" ? pData.status : "PAID",
                         receiptDocId: receipt.id,
                         receiptDocNo: receiptDocNo,
-                        receiptStatus: 'CONFIRMED',
+                        receiptStatus: "CONFIRMED",
                         updatedAt: serverTimestamp(),
                     });
                 }
@@ -454,6 +597,15 @@ function ConfirmReceiptPageContent() {
   return (
     <>
         <PageHeader title="ยืนยันรับเงินเข้าบัญชี" description={`สำหรับใบเสร็จเลขที่: ${receipt?.docNo}`} />
+        {invoices.length === 0 ? (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>ไม่พบบิลอ้างอิงในใบเสร็จนี้</AlertTitle>
+            <AlertDescription>
+              ระบบอ่านเลขที่บิลจากรายการในใบเสร็จและ references ไม่สำเร็จ — อย่ายืนยันจนกว่าจะตรวจเอกสารใบเสร็จก่อน
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handlePreSubmit)} className="space-y-6">
                 <div className="flex justify-end gap-2">

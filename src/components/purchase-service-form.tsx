@@ -353,6 +353,9 @@ export function PurchaseServiceForm() {
 
         const finalDocId = editDocId || creationId;
         const newDocRef = doc(db, "purchaseDocs", finalDocId);
+        const claimId = `CLAIM_${finalDocId}`;
+        const claimRef = doc(db, "purchaseClaims", claimId);
+        const apRef = doc(db, "accountingObligations", `AP_${finalDocId}`);
 
         let existingDocNo = "";
         if (editDocId) {
@@ -360,6 +363,12 @@ export function PurchaseServiceForm() {
           if (existingSnap.exists()) {
             existingDocNo = (existingSnap.data() as PurchaseDoc).docNo || "";
           }
+        }
+
+        const existingClaimSnap = isSubmitForReview ? await transaction.get(claimRef) : null;
+        const apSnap = isSubmitForReview ? await transaction.get(apRef) : null;
+        if (isSubmitForReview && apSnap?.exists()) {
+          throw new Error("เอกสารถูกบันทึกเป็นเจ้าหนี้แล้ว ไม่สามารถส่งรอตรวจสอบซ้ำได้");
         }
 
         const finalDocNo = editDocId ? existingDocNo : previewDocNo;
@@ -380,8 +389,7 @@ export function PurchaseServiceForm() {
         transaction.set(newDocRef, sanitizeForFirestore(docData), { merge: true });
 
         if (isSubmitForReview) {
-          const claimId = `CLAIM_${finalDocId}`;
-          const claimRef = doc(db, "purchaseClaims", claimId);
+          const existingClaim = existingClaimSnap?.exists() ? existingClaimSnap.data() : null;
           transaction.set(
             claimRef,
             sanitizeForFirestore({
@@ -401,10 +409,11 @@ export function PurchaseServiceForm() {
                 : null,
               note: data.note || "",
               updatedAt: serverTimestamp(),
-              createdAt: serverTimestamp(),
-              createdByUid: profile.uid,
-              createdByName: profile.displayName,
-            })
+              createdAt: existingClaim?.createdAt || serverTimestamp(),
+              createdByUid: existingClaim?.createdByUid || profile.uid,
+              createdByName: existingClaim?.createdByName || profile.displayName,
+            }),
+            { merge: true }
           );
         }
 

@@ -274,6 +274,39 @@ export function billingRowPreviewItems(row: BillingTableRow): { docId: string; l
   return items;
 }
 
+/** เลขที่ใบวางบิลของแถว — จาก map ที่โหลดแล้ว หรือจากบิลต้นทาง */
+export function billingRowNoteNumbers(
+  row: BillingTableRow,
+  noteNoByDocId?: Record<string, string>
+): string[] {
+  const nos: string[] = [];
+  const push = (v?: string | null) => {
+    const t = (v || "").trim();
+    if (t && !nos.includes(t)) nos.push(t);
+  };
+
+  const noteIds: string[] = [];
+  if (row.createdNoteIds?.main) noteIds.push(row.createdNoteIds.main);
+  for (const id of Object.values(row.createdNoteIds?.separate || {})) {
+    if (id) noteIds.push(id);
+  }
+  for (const id of noteIds) {
+    push(noteNoByDocId?.[id]);
+  }
+
+  if (nos.length === 0) {
+    for (const inv of [
+      ...row.includedInvoices,
+      ...row.deferredInvoices,
+      ...Object.values(row.separateGroups).flat(),
+    ]) {
+      push(inv.billingNoteNo);
+    }
+  }
+
+  return nos;
+}
+
 export function billingTargetBucket(row: BillingTableRow): string {
   return row.billingTargetBucketId ?? row.customer.id;
 }

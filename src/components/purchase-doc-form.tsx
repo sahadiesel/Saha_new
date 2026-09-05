@@ -367,6 +367,9 @@ export function PurchaseDocForm() {
         
         const finalDocId = editDocId || creationId;
         const newDocRef = doc(db, "purchaseDocs", finalDocId);
+        const claimId = `CLAIM_${finalDocId}`;
+        const claimRef = doc(db, "purchaseClaims", claimId);
+        const apRef = doc(db, "accountingObligations", `AP_${finalDocId}`);
         
         let alreadyReceived = false;
         let existingDocNo = "";
@@ -376,6 +379,12 @@ export function PurchaseDocForm() {
                 alreadyReceived = !!existingDoc.data()?.isReceived;
                 existingDocNo = existingDoc.data()?.docNo || "";
             }
+        }
+
+        const existingClaimSnap = isSubmitForReview ? await transaction.get(claimRef) : null;
+        const apSnap = isSubmitForReview ? await transaction.get(apRef) : null;
+        if (isSubmitForReview && apSnap?.exists()) {
+          throw new Error("เอกสารถูกบันทึกเป็นเจ้าหนี้แล้ว ไม่สามารถส่งรอตรวจสอบซ้ำได้");
         }
 
         const partsToUpdate = [];
@@ -430,8 +439,7 @@ export function PurchaseDocForm() {
         transaction.set(newDocRef, sanitizeForFirestore(docData), { merge: true });
 
         if (isSubmitForReview) {
-            const claimId = `CLAIM_${finalDocId}`;
-            const claimRef = doc(db, "purchaseClaims", claimId);
+            const existingClaim = existingClaimSnap?.exists() ? existingClaimSnap.data() : null;
             transaction.set(claimRef, sanitizeForFirestore({
                 id: claimId,
                 status: 'PENDING',
@@ -448,10 +456,10 @@ export function PurchaseDocForm() {
                   : null,
                 note: data.note || "",
                 updatedAt: serverTimestamp(),
-                createdAt: serverTimestamp(),
-                createdByUid: profile.uid,
-                createdByName: profile.displayName,
-            }));
+                createdAt: existingClaim?.createdAt || serverTimestamp(),
+                createdByUid: existingClaim?.createdByUid || profile.uid,
+                createdByName: existingClaim?.createdByName || profile.displayName,
+            }), { merge: true });
         }
         
         if (!editDocId) {

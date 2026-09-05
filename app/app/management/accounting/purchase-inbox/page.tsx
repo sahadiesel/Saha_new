@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, Suspense } from "react";
+import { useState, useMemo, useEffect, Suspense, useRef } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
 import { collection, query, onSnapshot, orderBy, doc, writeBatch, serverTimestamp, getDoc, type FirestoreError, where, runTransaction } from "firebase/firestore";
@@ -148,6 +148,8 @@ function PurchaseInboxPageContent() {
 
   const [approvingClaim, setApprovingClaim] = useState<WithId<PurchaseClaim> | null>(null);
   const [rejectingClaim, setRejectingClaim] = useState<WithId<PurchaseClaim> | null>(null);
+  const [isApprovingCredit, setIsApprovingCredit] = useState(false);
+  const repairedClaimIdsRef = useRef<Set<string>>(new Set());
 
   const hasPermission = useMemo(() => {
     if (!profile) return false;
@@ -179,6 +181,82 @@ function PurchaseInboxPageContent() {
 
     return () => { unsubClaims(); unsubAccounts(); };
   }, [db, toast, hasPermission, authLoading]);
+
+  /** ซ่อม claim ที่ค้าง PENDING ทั้งที่สร้างเจ้าหนี้/ลงบัญชีไปแล้ว */
+  useEffect(() => {
+    if (!db || !hasPermission || claims.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const pending = claims.filter(
+        (c) => c.status === "PENDING" && c.purchaseDocId && !repairedClaimIdsRef.current.has(c.id)
+      );
+      if (pending.length === 0) return;
+
+      for (const claim of pending) {
+        if (cancelled) return;
+        try {
+          const apRef = doc(db, "accountingObligations", `AP_${claim.purchaseDocId}`);
+          const entryRef = doc(db, "accountingEntries", `PURCHASE_${claim.purchaseDocId}`);
+          const [apSnap, entrySnap, purchaseSnap] = await Promise.all([
+            getDoc(apRef),
+            getDoc(entryRef),
+            getDoc(doc(db, "purchaseDocs", claim.purchaseDocId)),
+          ]);
+
+          const purchase = purchaseSnap.exists()
+            ? (purchaseSnap.data() as PurchaseDoc)
+            : null;
+          const alreadyBooked =
+            apSnap.exists() ||
+            entrySnap.exists() ||
+            Boolean(purchase?.apObligationId) ||
+            Boolean(purchase?.accountingEntryId);
+
+          if (!alreadyBooked) continue;
+
+          repairedClaimIdsRef.current.add(claim.id);
+          const batch = writeBatch(db);
+          batch.update(doc(db, "purchaseClaims", claim.id), {
+            status: "APPROVED",
+            approvedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          if (purchaseSnap.exists()) {
+            const updates: Record<string, unknown> = {
+              updatedAt: serverTimestamp(),
+            };
+            if (apSnap.exists()) {
+              updates.apObligationId = `AP_${claim.purchaseDocId}`;
+              if (
+                purchase?.status === "PENDING_REVIEW" ||
+                purchase?.status === "REJECTED"
+              ) {
+                updates.status = "UNPAID";
+              }
+            }
+            if (entrySnap.exists()) {
+              updates.accountingEntryId = `PURCHASE_${claim.purchaseDocId}`;
+              if (
+                purchase?.status === "PENDING_REVIEW" ||
+                purchase?.status === "REJECTED"
+              ) {
+                updates.status = "PAID";
+              }
+            }
+            batch.update(doc(db, "purchaseDocs", claim.purchaseDocId), updates);
+          }
+          await batch.commit();
+        } catch {
+          repairedClaimIdsRef.current.delete(claim.id);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [db, claims, hasPermission]);
   
   const filteredClaims = useMemo(() => {
     let filtered = claims.filter(c => c.status === activeTab);
@@ -216,11 +294,11 @@ function PurchaseInboxPageContent() {
             const cashOutAmount = purchaseAmountPayable(purchaseDocData);
             let whtDocId = purchaseDocData.withholdingTaxDocId || "";
 
-            // Check if entry already exists
+            // Check if entry already exists — ถ้ามีแล้วให้ปิด claim อย่างเดียว (ไม่สร้างซ้ำ)
             const entrySnap = await transaction.get(entryRef);
-            if (entrySnap.exists()) throw new Error("รายการนี้เคยถูกลงบัญชีไปแล้ว");
+            const entryAlreadyExists = entrySnap.exists();
 
-            if (whtAmount > 0 && !whtDocId) {
+            if (whtAmount > 0 && !whtDocId && !entryAlreadyExists) {
               const year = Number(formData.paidDate.slice(0, 4));
               const counterRef = doc(db, 'documentCounters', String(year));
               const settingsRef = doc(db, 'settings', 'documents');
@@ -267,26 +345,28 @@ function PurchaseInboxPageContent() {
                 updatedAt: serverTimestamp()
             });
 
-            transaction.set(entryRef, sanitizeForFirestore({
-                entryType: 'CASH_OUT',
-                entryDate: formData.paidDate,
-                amount: cashOutAmount,
-                grossAmount: approvingClaim.amountTotal,
-                accountId: formData.accountId,
-                paymentMethod: paymentMethod,
-                description: `จ่ายค่าสินค้า/อะไหล่: ${approvingClaim.vendorNameSnapshot} (บิล: ${approvingClaim.invoiceNo})`,
-                sourceDocId: approvingClaim.purchaseDocId,
-                sourceDocNo: approvingClaim.purchaseDocNo,
-                sourceDocType: 'PURCHASE',
-                vendorNameSnapshot: approvingClaim.vendorNameSnapshot,
-                withholdingEnabled: whtAmount > 0,
-                withholdingPercent: purchaseDocData.withholdingPercent || 0,
-                withholdingAmount: whtAmount,
-                withholdingTaxDocId: whtDocId || undefined,
-                vatAmount: purchaseDocData.vatAmount || 0,
-                netAmount: purchaseDocData.net || 0,
-                createdAt: serverTimestamp(),
-            }));
+            if (!entryAlreadyExists) {
+              transaction.set(entryRef, sanitizeForFirestore({
+                  entryType: 'CASH_OUT',
+                  entryDate: formData.paidDate,
+                  amount: cashOutAmount,
+                  grossAmount: approvingClaim.amountTotal,
+                  accountId: formData.accountId,
+                  paymentMethod: paymentMethod,
+                  description: `จ่ายค่าสินค้า/อะไหล่: ${approvingClaim.vendorNameSnapshot} (บิล: ${approvingClaim.invoiceNo})`,
+                  sourceDocId: approvingClaim.purchaseDocId,
+                  sourceDocNo: approvingClaim.purchaseDocNo,
+                  sourceDocType: 'PURCHASE',
+                  vendorNameSnapshot: approvingClaim.vendorNameSnapshot,
+                  withholdingEnabled: whtAmount > 0,
+                  withholdingPercent: purchaseDocData.withholdingPercent || 0,
+                  withholdingAmount: whtAmount,
+                  withholdingTaxDocId: whtDocId || undefined,
+                  vatAmount: purchaseDocData.vatAmount || 0,
+                  netAmount: purchaseDocData.net || 0,
+                  createdAt: serverTimestamp(),
+              }));
+            }
 
             transaction.update(purchaseDocRef, { 
                 status: 'PAID', 
@@ -307,21 +387,23 @@ function PurchaseInboxPageContent() {
   };
   
   const handleApproveCredit = async () => {
-     if (!db || !profile || !approvingClaim) return;
+     const claim = approvingClaim;
+     if (!db || !profile || !claim) return;
+     setIsApprovingCredit(true);
      try {
         await runTransaction(db, async (transaction) => {
-            const purchaseDocRef = doc(db, 'purchaseDocs', approvingClaim.purchaseDocId);
+            const purchaseDocRef = doc(db, 'purchaseDocs', claim.purchaseDocId);
             const purchaseDocSnap = await transaction.get(purchaseDocRef);
-            if (!purchaseDocSnap.exists()) throw new Error(`ไม่พบเอกสารจัดซื้อเลขที่ ${approvingClaim.purchaseDocNo}`);
-            const purchaseDocData = purchaseDocSnap.data() as PurchaseDoc;
+            if (!purchaseDocSnap.exists()) throw new Error(`ไม่พบเอกสารจัดซื้อเลขที่ ${claim.purchaseDocNo}`);
+            const purchaseDocData = { id: claim.purchaseDocId, ...(purchaseDocSnap.data() as PurchaseDoc) };
 
-            const claimRef = doc(db, 'purchaseClaims', approvingClaim.id);
-            const apId = `AP_${approvingClaim.purchaseDocId}`;
+            const claimRef = doc(db, 'purchaseClaims', claim.id);
+            const apId = `AP_${claim.purchaseDocId}`;
             const apObligationRef = doc(db, 'accountingObligations', apId);
             
             const apSnap = await transaction.get(apObligationRef);
-            if (apSnap.exists()) throw new Error("รายการเจ้าหนี้นี้เคยถูกสร้างไปแล้ว");
 
+            // ปิดคิวรอตรวจสอบเสมอ — แม้เจ้าหนี้ถูกสร้างไปแล้ว (ซ่อมรายการค้าง)
             transaction.update(claimRef, { 
                 status: 'APPROVED', 
                 approvedAt: serverTimestamp(), 
@@ -330,29 +412,33 @@ function PurchaseInboxPageContent() {
                 updatedAt: serverTimestamp()
             });
 
-            transaction.set(apObligationRef, {
-                id: apId,
-                type: 'AP', 
-                status: 'UNPAID',
-                vendorId: purchaseDocData.vendorId,
-                vendorShortNameSnapshot: purchaseDocData.vendorSnapshot.shortName,
-                vendorNameSnapshot: purchaseDocData.vendorSnapshot.companyName,
-                invoiceNo: purchaseDocData.invoiceNo,
-                sourceDocType: 'PURCHASE', 
-                sourceDocId: purchaseDocData.id, 
-                sourceDocNo: purchaseDocData.docNo,
-                docDate: purchaseDocData.docDate, 
-                dueDate: purchaseDocData.dueDate || null,
-                expectedPaymentAccountId: purchaseDocData.expectedPaymentAccountId || null,
-                amountTotal: purchaseDocData.grandTotal, 
-                amountPaid: 0, 
-                balance: purchaseDocData.grandTotal,
-                createdAt: serverTimestamp(), 
-                updatedAt: serverTimestamp(),
-            });
+            if (!apSnap.exists()) {
+              transaction.set(apObligationRef, {
+                  id: apId,
+                  type: 'AP', 
+                  status: 'UNPAID',
+                  vendorId: purchaseDocData.vendorId,
+                  vendorShortNameSnapshot: purchaseDocData.vendorSnapshot.shortName,
+                  vendorNameSnapshot: purchaseDocData.vendorSnapshot.companyName,
+                  invoiceNo: purchaseDocData.invoiceNo,
+                  sourceDocType: 'PURCHASE', 
+                  sourceDocId: claim.purchaseDocId, 
+                  sourceDocNo: purchaseDocData.docNo,
+                  docDate: purchaseDocData.docDate, 
+                  dueDate: purchaseDocData.dueDate || null,
+                  expectedPaymentAccountId: purchaseDocData.expectedPaymentAccountId || null,
+                  amountTotal: purchaseDocData.grandTotal, 
+                  amountPaid: 0, 
+                  balance: purchaseDocData.grandTotal,
+                  createdAt: serverTimestamp(), 
+                  updatedAt: serverTimestamp(),
+              });
+            }
 
+            const nextPurchaseStatus =
+              purchaseDocData.status === 'PAID' ? 'PAID' : 'UNPAID';
             transaction.update(purchaseDocRef, { 
-                status: 'UNPAID', 
+                status: nextPurchaseStatus, 
                 approvedAt: serverTimestamp(), 
                 approvedByUid: profile.uid, 
                 approvedByName: profile.displayName, 
@@ -361,10 +447,15 @@ function PurchaseInboxPageContent() {
             });
         });
         
-        toast({ title: "อนุมัติรายการสำเร็จ" });
+        toast({
+          title: "อนุมัติรายการสำเร็จ",
+          description: "บันทึกเจ้าหนี้และปิดคิวรอตรวจสอบแล้ว",
+        });
         setApprovingClaim(null);
      } catch (e: any) {
         toast({ variant: 'destructive', title: "เกิดข้อผิดพลาด", description: e.message });
+     } finally {
+        setIsApprovingCredit(false);
      }
   };
 
@@ -472,12 +563,26 @@ function PurchaseInboxPageContent() {
       </Tabs>
       {approvingClaim?.paymentMode === 'CASH' && <ApproveCashDialog claim={approvingClaim} accounts={accounts} onClose={() => setApprovingClaim(null)} onConfirm={handleApproveCash} />}
       {approvingClaim?.paymentMode === 'CREDIT' && (
-          <AlertDialog open={true} onOpenChange={(open) => !open && setApprovingClaim(null)}>
+          <AlertDialog
+            open={true}
+            onOpenChange={(open) => {
+              if (!open && !isApprovingCredit) setApprovingClaim(null);
+            }}
+          >
               <AlertDialogContent>
                   <AlertDialogHeader><AlertDialogTitle>ยืนยันรายการซื้อ (เครดิต)</AlertDialogTitle><AlertDialogDescription>ต้องการอนุมัติรายการนี้เพื่อบันทึกเป็นเจ้าหนี้การค้า (AP) หรือไม่?</AlertDialogDescription></AlertDialogHeader>
                   <AlertDialogFooter>
-                      <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleApproveCredit}>ยืนยันรายการ</AlertDialogAction>
+                      <AlertDialogCancel disabled={isApprovingCredit}>ยกเลิก</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={isApprovingCredit}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          void handleApproveCredit();
+                        }}
+                      >
+                        {isApprovingCredit ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        ยืนยันรายการ
+                      </AlertDialogAction>
                   </AlertDialogFooter>
               </AlertDialogContent>
           </AlertDialog>

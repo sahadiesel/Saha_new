@@ -55,6 +55,13 @@ export function stripReceiptDescriptionDate(description: string): string {
     .trim();
 }
 
+/** ดึงเลขที่เอกสารจากข้อความรายการใบเสร็จ */
+export function extractDocNoFromReceiptDescription(description: string): string | null {
+  const m = description.match(/เลขที่\s+([A-Za-z0-9][A-Za-z0-9\-\/]*)/);
+  const no = m?.[1]?.trim();
+  return no || null;
+}
+
 /** ดึงวันที่จากข้อความรายการใบเสร็จ → YYYY-MM-DD */
 export function extractDateFromReceiptDescription(description: string): string | null {
   const m = description.match(/วันที่\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);

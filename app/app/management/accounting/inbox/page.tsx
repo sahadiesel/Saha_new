@@ -55,8 +55,18 @@ import {
   cancelUnconfirmedReceipt,
 } from "@/lib/reverse-confirmed-receipt";
 import { documentAmountBeforeTax } from "@/lib/document-amounts";
+import { extractDocNoFromReceiptDescription } from "@/lib/receipt-line-description";
 
 const formatCurrency = (value: number | null | undefined) => (value ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function receiptReferenceLabel(docItem: DocumentType): string {
+  const fromItems = (docItem.items || [])
+    .map((item) => extractDocNoFromReceiptDescription(item.description || ""))
+    .filter((no): no is string => Boolean(no));
+  const unique = Array.from(new Set(fromItems));
+  if (unique.length > 0) return unique.join(", ");
+  return docItem.referencesDocIds?.join(", ") || "-";
+}
 
 /** เอกสารขายที่ Inbox ต้องโหลด — ไม่รวมใบเสนอราคา/อื่นๆ ที่แย่ง limit */
 const INBOX_SALES_DOC_TYPES = [
@@ -1875,7 +1885,7 @@ function AccountingInboxPageContent() {
                         <TableCell>{docItem.customerSnapshot?.name || '--'}</TableCell>
                         <TableCell>
                             <div className="font-medium">{docItem.docNo}</div>
-                            <div className="text-xs text-muted-foreground">อ้างอิง: {docItem.referencesDocIds?.join(', ') || '-'}</div>
+                            <div className="text-xs text-muted-foreground">อ้างอิง: {receiptReferenceLabel(docItem)}</div>
                         </TableCell>
                         <TableCell className="font-bold text-green-600">{formatCurrency(docItem.grandTotal)}</TableCell>
                         <TableCell className="text-right">
