@@ -42,7 +42,7 @@ import { createDocument } from "@/firebase/documents";
 import type { StoreSettings, Customer, Document as DocumentType, AccountingAccount } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { buildReceiptLineDescription, extractDateFromReceiptDescription } from "@/lib/receipt-line-description";
-import { transferConfirmedReceiptAccount } from "@/lib/receipt-account-transfer";
+import { transferConfirmedReceiptAccount, updateConfirmedReceiptCashbookDate } from "@/lib/receipt-account-transfer";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 import { documentAmountBeforeTax } from "@/lib/document-amounts";
 import {
@@ -730,6 +730,14 @@ export function ReceiptForm() {
           docToEdit.confirmedPayment?.accountId || docToEdit.receivedAccountId || "";
         const newAccountId = data.accountId;
         let transferNote = "";
+        let dateNote = "";
+
+        const newReceiptDate = data.paymentDate;
+        const oldReceiptDate =
+          docToEdit.confirmedPayment?.receivedDate ||
+          docToEdit.paymentDate ||
+          docToEdit.docDate ||
+          "";
 
         if (newAccountId && newAccountId !== oldAccountId) {
           const transfer = await transferConfirmedReceiptAccount(
@@ -743,6 +751,13 @@ export function ReceiptForm() {
           }
         }
 
+        if (newReceiptDate && newReceiptDate !== oldReceiptDate) {
+          const dateSync = await updateConfirmedReceiptCashbookDate(db, docToEdit, newReceiptDate);
+          if (dateSync.updated) {
+            dateNote = ` และอัปเดตวันที่ใน cashbook/บัญชีเป็น ${safeFormat(new Date(newReceiptDate), "dd/MM/yyyy")}`;
+          }
+        }
+
         await updateDoc(
           doc(db, "documents", editDocId),
           sanitizeForFirestore({
@@ -753,7 +768,24 @@ export function ReceiptForm() {
             withTax,
             vatAmount,
             grandTotal: amount2dec,
+            docDate: newReceiptDate,
+            paymentDate: newReceiptDate,
             receivedAccountId: newAccountId || oldAccountId,
+            confirmedPayment: {
+              ...(docToEdit.confirmedPayment || {}),
+              accountId: newAccountId || oldAccountId,
+              method:
+                docToEdit.confirmedPayment?.method ||
+                (docToEdit.paymentInstrument === "CASH" || docToEdit.paymentMethod === "CASH"
+                  ? "CASH"
+                  : "TRANSFER"),
+              receivedDate: newReceiptDate,
+              netReceivedTotal:
+                docToEdit.confirmedPayment?.netReceivedTotal ?? amount2dec,
+              withholdingTotal: docToEdit.confirmedPayment?.withholdingTotal ?? 0,
+              arPaymentId:
+                docToEdit.confirmedPayment?.arPaymentId ?? `ARPAY_${docToEdit.id}`,
+            },
             customerSnapshot: { ...customer, id: canonicalCustomerId },
             storeSnapshot: { ...storeSettings },
             updatedAt: serverTimestamp(),
@@ -762,7 +794,7 @@ export function ReceiptForm() {
 
         toast({
           title: "บันทึกการแก้ไขสำเร็จ",
-          description: `ใบเสร็จ ${docToEdit.docNo} — บันทึกข้อมูลเอกสารแล้ว${transferNote}`,
+          description: `ใบเสร็จ ${docToEdit.docNo} — บันทึกข้อมูลเอกสารแล้ว${transferNote}${dateNote}`,
         });
         router.push(`/app/office/documents/${editDocId}`);
       } catch (error: any) {
@@ -1310,6 +1342,29 @@ export function ReceiptForm() {
         <Card className="animate-in zoom-in-95">
             <CardHeader><CardTitle className="text-base">2. รายละเอียดใบเสร็จ{isEditingConfirmedReceipt ? "" : " (บันทึกบัญชีจริงเมื่อรับเงินที่หน้าลูกหนี้)"}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
+            <FormField
+              control={form.control}
+              name="paymentDate"
+              render={({ field }) => (
+                <FormItem className="max-w-xs">
+                  <FormLabel>วันที่ใบเสร็จ</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="date"
+                      {...field}
+                      disabled={isSubmitting}
+                      className="h-10"
+                    />
+                  </FormControl>
+                  {isEditingConfirmedReceipt ? (
+                    <p className="text-[10px] text-muted-foreground">
+                      เปลี่ยนวันที่แล้วระบบจะอัปเดตวันที่ใน cashbook และบัญชีธนาคารที่ผูกกับใบเสร็จนี้
+                    </p>
+                  ) : null}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="space-y-2">
               <FormLabel>รายการในใบเสร็จ</FormLabel>
               <div className="border rounded-md overflow-hidden">
@@ -1440,9 +1495,8 @@ export function ReceiptForm() {
                 )}
               />
             </div>
-            {/* sync hidden amount / paymentDate for zod validation */}
+            {/* sync hidden amount for zod validation */}
             <input type="hidden" {...form.register("amount", { valueAsNumber: true })} />
-            <input type="hidden" {...form.register("paymentDate")} />
             </CardContent>
         </Card>
         )}

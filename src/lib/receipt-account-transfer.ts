@@ -2,14 +2,69 @@ import {
   doc,
   getDoc,
   serverTimestamp,
+  updateDoc,
   writeBatch,
   type Firestore,
 } from "firebase/firestore";
 import { format } from "date-fns";
 import type { Document } from "@/lib/types";
 import { sanitizeForFirestore } from "@/lib/utils";
+import { receiptCashbookEntryId } from "@/lib/receipt-tax-invoice-link";
 
 type TransferActor = { uid: string; displayName: string };
+
+/**
+ * เปลี่ยนวันที่ใน cashbook / arPayment ให้ตรงวันที่ใบเสร็จ
+ * (บัญชีธนาคารคำนวณจาก entryDate ของ accountingEntries)
+ */
+export async function updateConfirmedReceiptCashbookDate(
+  db: Firestore,
+  receipt: Document,
+  newDate: string
+): Promise<{ updated: boolean; entryId: string | null }> {
+  const date = String(newDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("รูปแบบวันที่ไม่ถูกต้อง");
+  }
+
+  const oldDate =
+    receipt.confirmedPayment?.receivedDate ||
+    receipt.paymentDate ||
+    receipt.docDate ||
+    "";
+  if (oldDate === date) {
+    return { updated: false, entryId: null };
+  }
+
+  const entryId = receipt.accountingEntryId || receiptCashbookEntryId(receipt.id);
+  const entryRef = doc(db, "accountingEntries", entryId);
+  const entrySnap = await getDoc(entryRef);
+
+  const arPaymentId = receipt.confirmedPayment?.arPaymentId || `ARPAY_${receipt.id}`;
+  const arPayRef = doc(db, "arPayments", arPaymentId);
+  const arPaySnap = await getDoc(arPayRef);
+
+  if (!entrySnap.exists() && !arPaySnap.exists()) {
+    return { updated: false, entryId: null };
+  }
+
+  const batch = writeBatch(db);
+  if (entrySnap.exists()) {
+    batch.update(entryRef, {
+      entryDate: date,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  if (arPaySnap.exists()) {
+    batch.update(arPayRef, {
+      paymentDate: date,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+
+  return { updated: true, entryId: entrySnap.exists() ? entryId : null };
+}
 
 /**
  * ย้ายรายรับใบเสร็จจากบัญชีเดิมไปบัญชีใหม่ใน cashbook
