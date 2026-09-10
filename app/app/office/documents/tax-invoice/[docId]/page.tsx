@@ -1,23 +1,69 @@
 
 "use client";
 
-import { useMemo, Suspense } from "react";
+import { useMemo, useState, useEffect, Suspense, type ComponentType } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { doc } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, FileText, User, Calendar, Loader2, Eye } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, FileText, User, Calendar, Loader2, Eye, Briefcase, ClipboardList, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
-import type { Document } from "@/lib/types";
+import type { Document, Job } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
+import { jobDisplayRef } from "@/lib/job-display";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+
+function relatedDocumentHref(docType: string, id: string): string {
+    switch (docType) {
+        case "QUOTATION":
+            return `/app/office/documents/quotation/${id}`;
+        case "RECEIPT":
+        case "WITHDRAWAL":
+            return `/app/office/documents/${id}`;
+        default:
+            return `/app/documents/${id}`;
+    }
+}
+
+function DocumentLinksRow({
+    icon: Icon,
+    label,
+    items,
+}: {
+    icon: ComponentType<{ className?: string }>;
+    label: string;
+    items: { href: string; value: string }[];
+}) {
+    if (items.length === 0) return null;
+    return (
+        <div className="flex items-start gap-3">
+            <div className="p-2 bg-primary/10 rounded-full text-primary">
+                <Icon className="h-4 w-4" />
+            </div>
+            <div>
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <div className="flex flex-col items-start gap-0.5">
+                    {items.map((item) => (
+                        <Link
+                            key={`${item.href}-${item.value}`}
+                            href={item.href}
+                            className="font-bold font-mono text-primary hover:underline"
+                        >
+                            {item.value}
+                        </Link>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
 
 const getStatusVariant = (status: string) => {
   switch (status) {
@@ -46,6 +92,59 @@ function TaxInvoiceDetailPageContent() {
     
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
+
+    const jobId = document?.jobId;
+    const jobRef = useMemo(() => (db && jobId ? doc(db, "jobs", jobId) : null), [db, jobId]);
+    const { data: liveJob, isLoading: jobLoading } = useDoc<Job>(jobRef);
+    const [archivedJob, setArchivedJob] = useState<Job | null>(null);
+    const [relatedDocs, setRelatedDocs] = useState<Document[]>([]);
+    const [referencedQuotation, setReferencedQuotation] = useState<Document | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!db || !jobId || liveJob || jobLoading) {
+            if (liveJob) setArchivedJob(null);
+            return;
+        }
+        void (async () => {
+            const y0 = new Date().getFullYear();
+            for (let i = 0; i < 8; i++) {
+                const snap = await getDoc(doc(db, `jobsArchive_${y0 - i}`, jobId));
+                if (cancelled) return;
+                if (snap.exists()) {
+                    setArchivedJob({ id: snap.id, ...snap.data() } as Job);
+                    return;
+                }
+            }
+            if (!cancelled) setArchivedJob(null);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [db, jobId, liveJob, jobLoading]);
+
+    useEffect(() => {
+        if (!db || !jobId) {
+            setRelatedDocs([]);
+            return;
+        }
+        const relatedQuery = query(collection(db, "documents"), where("jobId", "==", jobId));
+        const unsubscribe = onSnapshot(relatedQuery, (snapshot) => {
+            setRelatedDocs(snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+        });
+        return () => unsubscribe();
+    }, [db, jobId]);
+
+    const quotedId = document?.referencesDocIds?.[0];
+    useEffect(() => {
+        if (!db || !quotedId) {
+            setReferencedQuotation(null);
+            return;
+        }
+        void getDoc(doc(db, "documents", quotedId)).then((snap) => {
+            setReferencedQuotation(snap.exists() ? ({ id: snap.id, ...snap.data() } as Document) : null);
+        });
+    }, [db, quotedId]);
 
     const isCancelled = document?.status === 'CANCELLED';
 
@@ -83,6 +182,27 @@ function TaxInvoiceDetailPageContent() {
     const branchLabel = document.customerSnapshot.taxBranchType === 'HEAD_OFFICE' 
         ? 'สำนักงานใหญ่' 
         : (document.customerSnapshot.taxBranchType === 'BRANCH' ? `สาขา ${document.customerSnapshot.taxBranchNo}` : '');
+
+    const linkedJob = liveJob || archivedJob;
+    const quotations = relatedDocs.filter((d) => d.docType === "QUOTATION");
+    const quotation =
+        referencedQuotation?.docType === "QUOTATION"
+            ? referencedQuotation
+            : quotations.find((d) => d.id === quotedId)
+                ?? quotations.filter((d) => d.status !== "CANCELLED").sort((a, b) => b.docNo.localeCompare(a.docNo))[0]
+                ?? quotations[0];
+    const withdrawals = relatedDocs
+        .filter((d) => d.docType === "WITHDRAWAL" && d.status !== "CANCELLED")
+        .sort((a, b) => a.docNo.localeCompare(b.docNo));
+    const receiptNo = (document.receiptDocNo || "").trim();
+    const receiptId = (document.receiptDocId || "").trim();
+    const receiptFromJob = relatedDocs.find((d) => d.docType === "RECEIPT" && d.status !== "CANCELLED");
+    const receiptHref = receiptId
+        ? relatedDocumentHref("RECEIPT", receiptId)
+        : receiptFromJob
+            ? relatedDocumentHref("RECEIPT", receiptFromJob.id)
+            : "";
+    const receiptValue = receiptNo || receiptFromJob?.docNo || "";
 
     return (
         <div className="space-y-6">
@@ -194,6 +314,41 @@ function TaxInvoiceDetailPageContent() {
                                     <p className="font-medium">{safeFormat(new Date(document.docDate), 'dd/MM/yyyy')}</p>
                                 </div>
                             </div>
+                            {document.jobId ? (
+                                <DocumentLinksRow
+                                    icon={Briefcase}
+                                    label="เลขที่จ๊อบ"
+                                    items={[{
+                                        href: `/app/jobs/${document.jobId}`,
+                                        value: linkedJob ? jobDisplayRef(linkedJob) : document.jobId,
+                                    }]}
+                                />
+                            ) : null}
+                            {quotation ? (
+                                <DocumentLinksRow
+                                    icon={FileText}
+                                    label="ใบเสนอราคา"
+                                    items={[{
+                                        href: relatedDocumentHref("QUOTATION", quotation.id),
+                                        value: quotation.docNo,
+                                    }]}
+                                />
+                            ) : null}
+                            <DocumentLinksRow
+                                icon={ClipboardList}
+                                label="ใบเบิก"
+                                items={withdrawals.map((wd) => ({
+                                    href: relatedDocumentHref("WITHDRAWAL", wd.id),
+                                    value: wd.docNo,
+                                }))}
+                            />
+                            {receiptHref && receiptValue ? (
+                                <DocumentLinksRow
+                                    icon={Receipt}
+                                    label="ใบเสร็จ"
+                                    items={[{ href: receiptHref, value: receiptValue }]}
+                                />
+                            ) : null}
                             <Separator />
                             <div>
                                 <p className="text-xs text-muted-foreground mb-1">สถานะ</p>
