@@ -27,6 +27,8 @@ import { PayslipSlipView, calcTotals } from "@/components/payroll/PayslipSlipVie
 import { computePeriodMetrics, PeriodMetrics } from "@/lib/payroll/payslip-period-metrics";
 import { SsoDecisionDialog } from "@/components/payroll/SsoDecisionDialog";
 import { round2, calcSsoMonthly, splitSsoHalf, ssoSettingsFromHr, ssoDecisionDiffers, resolveSsoRatesForPayslip } from "@/lib/payroll/sso";
+import { AUTO_SSO_DEDUCTION, AUTO_WHT_DEDUCTION, buildPayslipPrintHtml } from "@/lib/payroll/payslip-display";
+import { computeEmploymentTaxBreakdown } from "@/lib/payroll/income-tax";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AttendanceAdjustmentDialog } from "@/components/attendance-adjustment-dialog";
@@ -38,13 +40,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { LEAVE_TYPES, STAFF_ROLES_FOR_QUERY } from "@/lib/constants";
 import { cn, thaiBahtText } from "@/lib/utils";
-
-const formatCurrency = (value: number | undefined) => {
-  return (value ?? 0).toLocaleString("th-TH", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  });
-};
 
 const getStatusBadgeVariant = (status?: PayslipStatusNew | string) => {
     switch (status) {
@@ -397,6 +392,25 @@ export default function HRGeneratePayslipsPage() {
         setEditingPayslip(user);
         const { periodMetrics, periodMetricsYtd, snapshot: existingSnapshot, hr } = user;
 
+        const otherPeriodNo = period === 1 ? 2 : 1;
+        const otherBatchId = `${format(currentMonth, 'yyyy-MM')}-${otherPeriodNo}`;
+        const otherPayslipRef = doc(db, 'payrollBatches', otherBatchId, 'payslips', user.id);
+        const otherPayslipSnap = await getDoc(otherPayslipRef);
+        const otherSnapshot = otherPayslipSnap.exists() ? (otherPayslipSnap.data().snapshot as PayslipSnapshot) : null;
+        setOtherPeriodSnapshot(otherSnapshot);
+
+        if (user.payslipStatus === "PAID" && existingSnapshot) {
+            setDrawerSnapshot(existingSnapshot);
+            if (forceRecalculate) {
+              setIsRecalculating(false);
+              toast({
+                title: "ไม่แก้สลิปที่จ่ายแล้ว",
+                description: "เปิดดูและพิมพ์ได้เท่านั้น — ยอดที่จ่ายไปแล้วไม่ถูกคำนวณใหม่",
+              });
+            }
+            return;
+        }
+
         if (!hr?.payType || hr.payType === 'NOPAY') {
             if (forceRecalculate) setIsRecalculating(false);
             return;
@@ -412,13 +426,6 @@ export default function HRGeneratePayslipsPage() {
           !!existingSnapshot &&
           !!user.payslipStatus &&
           LOCKED_PAYSLIP_STATUSES.includes(user.payslipStatus as PayslipStatusNew);
-
-        const otherPeriodNo = period === 1 ? 2 : 1;
-        const otherBatchId = `${format(currentMonth, 'yyyy-MM')}-${otherPeriodNo}`;
-        const otherPayslipRef = doc(db, 'payrollBatches', otherBatchId, 'payslips', user.id);
-        const otherPayslipSnap = await getDoc(otherPayslipRef);
-        const otherSnapshot = otherPayslipSnap.exists() ? (otherPayslipSnap.data().snapshot as PayslipSnapshot) : null;
-        setOtherPeriodSnapshot(otherSnapshot);
 
         if (payslipLocked && !forceRecalculate) {
             setDrawerSnapshot(existingSnapshot);
@@ -468,16 +475,16 @@ export default function HRGeneratePayslipsPage() {
 
         let basePay = 0;
         if (hr.payType === 'DAILY') {
-            basePay = Math.round((hr.salaryDaily || 0) * periodMetrics.attendanceSummary.payableUnits);
+            basePay = round2((hr.salaryDaily || 0) * periodMetrics.attendanceSummary.payableUnits);
         } else {
-            basePay = Math.round((hr?.salaryMonthly ?? 0) / 2);
+            basePay = round2((hr?.salaryMonthly ?? 0) / 2);
         }
 
         const manualAdditions = existingSnapshot?.additions?.filter(a => !a.name.startsWith('[AUTO]')) ?? [];
         const manualDeductions = existingSnapshot?.deductions?.filter(d => !d.name.startsWith('[AUTO]')) ?? [];
         
         let initialSnapshot: PayslipSnapshot = {
-            basePay: Math.round(basePay),
+            basePay: round2(basePay),
             netPay: 0,
             additions: manualAdditions,
             deductions: [...manualDeductions, ...periodMetrics.autoDeductions],
@@ -497,31 +504,70 @@ export default function HRGeneratePayslipsPage() {
                 const { p1 } = splitSsoHalf(ssoMonthly);
                 if (period === 1) ssoAmountThisPeriod = p1;
                 else { 
-                    const p1Deducted = otherSnapshot?.deductions?.find((d:any) => d.name === '[AUTO] ประกันสังคม')?.amount ?? 0;
-                    ssoAmountThisPeriod = Math.max(0, ssoMonthly - p1Deducted);
+                    const p1Deducted = otherSnapshot?.deductions?.find((d:any) => d.name === AUTO_SSO_DEDUCTION)?.amount ?? 0;
+                    ssoAmountThisPeriod = round2(Math.max(0, ssoMonthly - p1Deducted));
                 }
             } else if (hr.payType === 'DAILY' && hr.salaryDaily) {
-                if (period === 1) ssoAmountThisPeriod = Math.round((hr.salaryDaily * periodMetrics.attendanceSummary.payableUnits) * (employeePercent / 100));
+                if (period === 1) ssoAmountThisPeriod = round2((hr.salaryDaily * periodMetrics.attendanceSummary.payableUnits) * (employeePercent / 100));
                 else {
                     const totalMonthlyIncome = (hr.salaryDaily * (otherSnapshot?.attendanceSummary?.payableUnits || 0)) + (hr.salaryDaily * periodMetrics.attendanceSummary.payableUnits);
                     const totalSsoMonthly = calcSsoMonthly(totalMonthlyIncome, employeePercent, monthlyMinBase, monthlyCap);
-                    const p1Deducted = otherSnapshot?.deductions?.find((d:any) => d.name === '[AUTO] ประกันสังคม')?.amount ?? 0;
-                    ssoAmountThisPeriod = Math.max(0, totalSsoMonthly - p1Deducted);
+                    const p1Deducted = otherSnapshot?.deductions?.find((d:any) => d.name === AUTO_SSO_DEDUCTION)?.amount ?? 0;
+                    ssoAmountThisPeriod = round2(Math.max(0, totalSsoMonthly - p1Deducted));
                 }
             }
             
-            initialSnapshot.deductions = initialSnapshot.deductions.filter(d => d.name !== '[AUTO] ประกันสังคม');
+            initialSnapshot.deductions = initialSnapshot.deductions.filter(d => d.name !== AUTO_SSO_DEDUCTION);
             if (ssoAmountThisPeriod > 0) {
                 initialSnapshot.deductions.push({ 
-                    name: '[AUTO] ประกันสังคม', 
-                    amount: Math.round(ssoAmountThisPeriod), 
+                    name: AUTO_SSO_DEDUCTION, 
+                    amount: round2(ssoAmountThisPeriod), 
                     notes: `เรท ${employeePercent}%` 
                 });
             }
         }
 
+        const whtEnabled = hrSettings.withholding?.enabled === true;
+        initialSnapshot.deductions = initialSnapshot.deductions.filter(d => d.name !== AUTO_WHT_DEDUCTION);
+        if (whtEnabled && (hr.payType === 'MONTHLY' || hr.payType === 'DAILY' || hr.payType === 'MONTHLY_NOSCAN')) {
+            const salaryForTax =
+              hr.salaryMonthly && hr.salaryMonthly > 0
+                ? hr.salaryMonthly
+                : round2((hr.salaryDaily || 0) * (hrSettings.payroll?.salaryDeductionBaseDays || 26));
+            let monthlySsoForTax = 0;
+            if (user.hr?.ssoRegistered !== false) {
+              const { employeePercent = 0, monthlyMinBase = 0, monthlyCap = Infinity } = ratesForCalc;
+              if ((hr.payType === "MONTHLY" || hr.payType === "MONTHLY_NOSCAN") && hr.salaryMonthly) {
+                monthlySsoForTax = calcSsoMonthly(hr.salaryMonthly, employeePercent, monthlyMinBase, monthlyCap);
+              } else if (hr.payType === "DAILY" && hr.salaryDaily) {
+                const monthUnits =
+                  (otherSnapshot?.attendanceSummary?.payableUnits || 0) +
+                  (periodMetrics.attendanceSummary.payableUnits || 0);
+                const monthlyIncome = hr.salaryDaily * (period === 1 ? (periodMetrics.attendanceSummary.payableUnits || 0) * 2 : monthUnits);
+                monthlySsoForTax = calcSsoMonthly(monthlyIncome, employeePercent, monthlyMinBase, monthlyCap);
+              }
+            }
+            const tax = computeEmploymentTaxBreakdown({
+              monthlySalary: salaryForTax,
+              monthlySso: monthlySsoForTax,
+              withholding: hrSettings.withholding,
+            });
+            let whtThisPeriod = period === 1 ? tax.periodTax.p1 : tax.periodTax.p2;
+            if (period === 2) {
+              const p1Deducted = otherSnapshot?.deductions?.find((d) => d.name === AUTO_WHT_DEDUCTION)?.amount ?? 0;
+              if (p1Deducted > 0) whtThisPeriod = round2(Math.max(0, tax.monthlyTax - p1Deducted));
+            }
+            if (whtThisPeriod > 0) {
+                initialSnapshot.deductions.push({
+                    name: AUTO_WHT_DEDUCTION,
+                    amount: round2(whtThisPeriod),
+                    notes: `ภาษีขั้นบันได · ทั้งปี ${tax.annualTax.toLocaleString("th-TH")} บาท`,
+                });
+            }
+        }
+
         const totals = calcTotals(initialSnapshot);
-        setDrawerSnapshot({ ...initialSnapshot, netPay: Math.round(totals.netPay) });
+        setDrawerSnapshot({ ...initialSnapshot, netPay: round2(totals.netPay) });
         if (forceRecalculate) setIsRecalculating(false);
     };
     
@@ -534,7 +580,7 @@ export default function HRGeneratePayslipsPage() {
         try {
             await setDoc(batchRef, { year: currentMonth.getFullYear(), month: currentMonth.getMonth() + 1, periodNo: period, createdAt: serverTimestamp(), createdByUid: adminProfile.uid, createdByName: adminProfile.displayName }, { merge: true });
             const totals = calcTotals(drawerSnapshot);
-            const finalSnapshot = { ...drawerSnapshot, netPay: Math.round(totals.netPay) };
+            const finalSnapshot = { ...drawerSnapshot, netPay: round2(totals.netPay) };
             await setDoc(payslipRef, { status: 'DRAFT', snapshot: finalSnapshot, userId: editingPayslip.id, userName: editingPayslip.displayName, batchId: payrollBatchId, revisionNo: editingPayslip.revisionNo || 0, updatedAt: serverTimestamp() }, { merge: true });
             setEmployeeData(prev => prev.map(e => e.id === editingPayslip.id ? { ...e, payslipStatus: 'DRAFT', snapshot: finalSnapshot } : e));
             toast({ title: `บันทึกร่างสลิปเรียบร้อย` });
@@ -551,7 +597,7 @@ export default function HRGeneratePayslipsPage() {
         try {
             await setDoc(batchRef, { year: currentMonth.getFullYear(), month: currentMonth.getMonth() + 1, periodNo: period, createdAt: serverTimestamp(), createdByUid: adminProfile.uid, createdByName: adminProfile.displayName }, { merge: true });
             const totals = calcTotals(drawerSnapshot);
-            const finalSnapshot = { ...drawerSnapshot, netPay: Math.round(totals.netPay) };
+            const finalSnapshot = { ...drawerSnapshot, netPay: round2(totals.netPay) };
             const nextRevisionNo = (editingPayslip.revisionNo || 0) + 1;
             await setDoc(payslipRef, { status: 'SENT_TO_EMPLOYEE', snapshot: finalSnapshot, userId: editingPayslip.id, userName: editingPayslip.displayName, batchId: payrollBatchId, revisionNo: nextRevisionNo, updatedAt: serverTimestamp(), sentAt: serverTimestamp(), lockedAt: serverTimestamp() }, { merge: true });
             setEmployeeData(prev => prev.map(e => e.id === editingPayslip.id ? { ...e, payslipStatus: 'SENT_TO_EMPLOYEE', snapshot: finalSnapshot, revisionNo: nextRevisionNo } : e));
@@ -567,111 +613,18 @@ export default function HRGeneratePayslipsPage() {
           if (!frame) return;
           const totals = calcTotals(drawerSnapshot);
           const periodLabelText = `งวดที่ ${period} (${format(currentMonth, 'MMMM yyyy')})`;
-          const bahtTextValue = thaiBahtText(totals.netPay);
-          
-          const html = `<!doctype html>
-          <html>
-          <head>
-            <meta charset="utf-8" />
-            <style>
-              @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap');
-              @page { size: A4; margin: 15mm; }
-              body { font-family: 'Sarabun', sans-serif; font-size: 13px; line-height: 1.4; color: #333; margin: 0; padding: 0; }
-              .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
-              .header h1 { margin: 0; font-size: 18px; color: #000; }
-              .header p { margin: 5px 0 0; font-size: 11px; color: #666; }
-              .doc-title { text-align: center; margin-bottom: 20px; }
-              .doc-title h2 { margin: 0; font-size: 16px; text-decoration: underline; font-weight: bold; }
-              .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
-              .section-title { font-weight: bold; background: #f0f0f0; padding: 4px 8px; border: 1px solid #ccc; font-size: 12px; margin-top: 15px; }
-              table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-              th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-              th { background-color: #f9f9f9; }
-              .text-right { text-align: right; }
-              .total-row { font-weight: bold; background-color: #eee; }
-              .net-pay-box { border: 2px solid #333; padding: 10px; margin-top: 15px; display: flex; justify-content: space-between; align-items: center; }
-              .net-pay-val { font-size: 18px; font-weight: bold; }
-              .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px; }
-              .footer { margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; text-align: center; }
-              .signature { border-top: 1px solid #333; padding-top: 5px; margin-top: 40px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>${storeSettings.taxName || ' Sahadiesel Service '}</h1>
-              <p>${storeSettings.taxAddress || ''}</p>
-              <p>โทร: ${storeSettings.phone || ''} ${storeSettings.taxId ? `| เลขผู้เสียภาษี: ${storeSettings.taxId}` : ''}</p>
-            </div>
-            <div class="doc-title"><h2>ใบแจ้งยอดเงินเดือน / PAY SLIP</h2></div>
-            <div class="info-grid">
-              <div><strong>ชื่อพนักงาน:</strong> ${editingPayslip.displayName}</div>
-              <div class="text-right"><strong>ประจำงวด:</strong> ${periodLabelText}</div>
-              <div><strong>แผนก:</strong> ${deptLabel(editingPayslip.department)}</div>
-              <div class="text-right"><strong>ประเภท:</strong> ${payTypeLabel(editingPayslip.hr?.payType)}</div>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 15px;">
-              <div>
-                <div class="section-title">รายได้ / EARNINGS</div>
-                <table>
-                  <thead><tr><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
-                  <tbody>
-                    <tr><td>เงินเดือนพื้นฐาน (เต็ม)</td><td class="text-right">${formatCurrency(editingPayslip.hr?.salaryMonthly)}</td></tr>
-                    <tr style="color: #666;"><td>เงินเดือนงวดนี้</td><td class="text-right">${formatCurrency(totals.basePay)}</td></tr>
-                    ${(drawerSnapshot.additions || []).map(a => `<tr><td>${a.name}</td><td class="text-right">${formatCurrency(a.amount)}</td></tr>`).join('')}
-                    <tr class="total-row"><td>รวมรายได้งวดนี้</td><td class="text-right">${formatCurrency(totals.basePay + totals.addTotal)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-              <div>
-                <div class="section-title">รายการหัก / DEDUCTIONS</div>
-                <table>
-                  <thead><tr><th>รายการ</th><th class="text-right">จำนวนเงิน</th></tr></thead>
-                  <tbody>
-                    ${(drawerSnapshot.deductions || []).map(d => `<tr><td>${d.name}</td><td class="text-right">-${formatCurrency(d.amount)}</td></tr>`).join('') || '<tr><td>-</td><td class="text-right">0</td></tr>'}
-                    <tr class="total-row"><td>รวมรายการหัก</td><td class="text-right">-${formatCurrency(totals.dedTotal)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="net-pay-box">
-              <div style="font-size: 11px;">(${bahtTextValue})</div>
-              <div>
-                <span style="margin-right: 15px;">เงินได้สุทธิ / NET PAY:</span>
-                <span class="net-pay-val">${formatCurrency(totals.netPay)} บาท</span>
-              </div>
-            </div>
-
-            <div class="stats-grid">
-              <div>
-                <div class="section-title">สรุปการทำงานงวดนี้</div>
-                <table style="font-size: 11px;">
-                  <tr><td>วันทำงานจริง</td><td class="text-right">${drawerSnapshot.attendanceSummary?.presentDays || 0} วัน</td></tr>
-                  <tr><td>มาสาย</td><td class="text-right">${drawerSnapshot.attendanceSummary?.lateDays || 0} ครั้ง (${drawerSnapshot.attendanceSummary?.lateMinutes || 0} นาที)</td></tr>
-                  <tr><td>ขาดงาน</td><td class="text-right">${drawerSnapshot.attendanceSummary?.absentUnits || 0} หน่วย</td></tr>
-                  <tr><td>ลาป่วย / กิจ / พักร้อน</td><td class="text-right">${drawerSnapshot.leaveSummary?.sickDays || 0} / ${drawerSnapshot.leaveSummary?.businessDays || 0} / ${drawerSnapshot.leaveSummary?.vacationDays || 0} วัน</td></tr>
-                </table>
-              </div>
-              <div>
-                <div class="section-title">สถิติสะสมปีปัจจุบัน (YTD)</div>
-                <table style="font-size: 11px;">
-                  <tr><td>วันทำงานรวม</td><td class="text-right">${drawerSnapshot.attendanceSummaryYtd?.presentDays || 0} วัน</td></tr>
-                  <tr><td>สายสะสม</td><td class="text-right">${drawerSnapshot.attendanceSummaryYtd?.lateMinutes || 0} นาที</td></tr>
-                  <tr><td>ลาป่วยสะสม</td><td class="text-right">${drawerSnapshot.leaveSummaryYtd?.sickDays || 0} วัน</td></tr>
-                  <tr><td>ลากิจ / พักร้อนสะสม</td><td class="text-right">${(drawerSnapshot.leaveSummaryYtd?.businessDays || 0) + (drawerSnapshot.leaveSummaryYtd?.vacationDays || 0)} วัน</td></tr>
-                </table>
-              </div>
-            </div>
-
-            ${drawerSnapshot.calcNotes ? `<div style="margin-top: 10px; font-size: 11px; border: 1px dashed #ccc; padding: 8px;"><strong>หมายเหตุ:</strong> ${drawerSnapshot.calcNotes}</div>` : ''}
-
-            <div class="footer">
-              <div><div class="signature"></div><p>ผู้อนุมัติจ่าย / Authorized Signature</p></div>
-              <div><div class="signature"></div><p>ผู้รับเงิน / Employee Signature</p></div>
-            </div>
-          </body>
-          </html>`;
+          const html = buildPayslipPrintHtml({
+            store: storeSettings,
+            employeeName: editingPayslip.displayName,
+            departmentLabel: deptLabel(editingPayslip.department),
+            payTypeLabelText: payTypeLabel(editingPayslip.hr?.payType),
+            periodLabel: periodLabelText,
+            currentPeriodNo: period,
+            snapshot: drawerSnapshot,
+            otherSnapshot: otherPeriodSnapshot,
+            salaryMonthly: editingPayslip.hr?.salaryMonthly,
+            bahtText: thaiBahtText(totals.netPay),
+          });
           frame.onload = () => { frame.contentWindow?.focus(); frame.contentWindow?.print(); };
           frame.srcdoc = html;
         } catch (e) { toast({ variant: 'destructive', title: 'พิมพ์ไม่สำเร็จ' }); }
@@ -755,7 +708,13 @@ export default function HRGeneratePayslipsPage() {
                                         <TableCell className="text-right font-bold text-primary">{user.periodMetrics?.attendanceSummary.payableUnits ?? '-'}</TableCell>
                                         <TableCell><Badge variant={getStatusBadgeVariant(user.payslipStatus)}>{newPayslipStatusLabel(user.payslipStatus) || user.payslipStatus}</Badge></TableCell>
                                         <TableCell className="text-right pr-6">
-                                            <Button variant="ghost" size="icon" onClick={() => handleOpenDrawer(user)} disabled={isActing !== null || user.payslipStatus === 'PAID'}>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => handleOpenDrawer(user)}
+                                                disabled={isActing !== null || (user.payslipStatus === 'PAID' && !user.snapshot)}
+                                                title={user.payslipStatus === 'PAID' ? 'ดู / พิมพ์สลิป' : undefined}
+                                            >
                                                 {user.snapshot ? <Eye className="h-4 w-4" /> : <FilePlus className="h-4 w-4" />}
                                             </Button>
                                         </TableCell>
@@ -770,9 +729,12 @@ export default function HRGeneratePayslipsPage() {
             {editingPayslip && drawerSnapshot && (
                 <PayslipSlipDrawer
                     open={!!editingPayslip} onOpenChange={(open) => !open && setEditingPayslip(null)}
-                    title="แบบฟอร์มสลิปเงินเดือน" description={`${editingPayslip.displayName} - งวด ${period}`}
+                    title={editingPayslip.payslipStatus === 'PAID' ? 'ดูสลิปเงินเดือน' : 'แบบฟอร์มสลิปเงินเดือน'}
+                    description={`${editingPayslip.displayName} - งวด ${period}`}
                     onPrint={handlePrintInDrawer}
-                    footerActions={ (editingPayslip.payslipStatus !== 'PAID') && (
+                    footerActions={ editingPayslip.payslipStatus === 'PAID' ? (
+                        <Button variant="outline" onClick={() => setEditingPayslip(null)}>ปิด</Button>
+                    ) : (
                         <>
                           <Button variant="ghost" onClick={() => void handleOpenDrawer(editingPayslip, true)} disabled={isActing === editingPayslip.id || isRecalculating} className="text-amber-600">
                             {isRecalculating ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>}
@@ -792,11 +754,11 @@ export default function HRGeneratePayslipsPage() {
                         otherPeriodSnapshot={otherPeriodSnapshot}
                         currentPeriodNo={period || 1}
                         userProfile={editingPayslip}
-                        mode="edit" 
+                        mode={editingPayslip.payslipStatus === 'PAID' ? 'read' : 'edit'}
                         payType={editingPayslip.hr?.payType} 
-                        onChange={setDrawerSnapshot}
-                        onAdjustAttendance={() => setIsDaySelectOpen(true)}
-                        onAdjustLeave={() => setIsLeaveManageOpen(true)}
+                        onChange={editingPayslip.payslipStatus === 'PAID' ? undefined : setDrawerSnapshot}
+                        onAdjustAttendance={editingPayslip.payslipStatus === 'PAID' ? undefined : () => setIsDaySelectOpen(true)}
+                        onAdjustLeave={editingPayslip.payslipStatus === 'PAID' ? undefined : () => setIsLeaveManageOpen(true)}
                     />
                 </PayslipSlipDrawer>
             )}

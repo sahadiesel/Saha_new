@@ -107,6 +107,80 @@ export function taxInvoiceReceiptDisplayMeta(
   return null;
 }
 
+/** สถานะแสดงบนรายการใบวางบิล — ไม่ใช้ DRAFT เพราะออกเลขที่แล้วถือว่าวางบิลแล้ว */
+export function billingNoteDisplayMeta(
+  doc: Pick<
+    Document,
+    "docType" | "status" | "receiptDocId" | "receiptDocNo" | "receiptStatus"
+  >
+): TaxInvoiceReceiptUi | null {
+  if (doc.docType !== "BILLING_NOTE") return null;
+
+  const statusKey = String(doc.status ?? "").toUpperCase();
+  if (statusKey === "CANCELLED") {
+    return {
+      key: "CANCELLED",
+      label: "ยกเลิก",
+      description: "ใบวางบิลนี้ถูกยกเลิกแล้ว",
+      variant: "destructive",
+    };
+  }
+
+  if (
+    statusKey === "PAID" ||
+    doc.receiptStatus === "CONFIRMED"
+  ) {
+    return {
+      key: "PAID",
+      label: "รับเงินแล้ว",
+      description: doc.receiptDocNo
+        ? `ยืนยันรับเงินตามใบเสร็จ ${doc.receiptDocNo} แล้ว`
+        : "บันทึกรับเงินตามใบวางบิลนี้เรียบร้อยแล้ว",
+      variant: "default",
+    };
+  }
+
+  if (statusKey === "PARTIAL") {
+    return {
+      key: "PARTIAL",
+      label: "รับเงินบางส่วน",
+      description: "ได้รับเงินบางส่วนตามใบวางบิลนี้ ยอดที่เหลือยังค้างชำระ",
+      variant: "secondary",
+    };
+  }
+
+  if (doc.receiptDocId) {
+    const no = doc.receiptDocNo?.trim();
+    return {
+      key: "RECEIPT_ISSUED",
+      label: "รอตรวจสอบเงินจริง",
+      description: no
+        ? `มีใบเสร็จ ${no} แล้ว — รอยืนยันรับเงินเข้าบัญชีจริง`
+        : "มีใบเสร็จแล้ว — รอยืนยันรับเงินเข้าบัญชีจริง",
+      variant: "secondary",
+    };
+  }
+
+  return {
+    key: "ISSUED",
+    label: "วางบิลแล้ว",
+    description: "ออกใบวางบิลแล้ว — รอรับชำระ",
+    variant: "outline",
+  };
+}
+
+/** สรุปสถานะใบวางบิลจากสถานะใบกำกับที่รวมอยู่ */
+export function billingNoteStatusFromInvoiceStatuses(
+  invoiceStatuses: Array<string | undefined>
+): "PAID" | "PARTIAL" | "ISSUED" {
+  if (invoiceStatuses.length === 0) return "PAID";
+  const keys = invoiceStatuses.map((s) => String(s || "").toUpperCase());
+  const allPaid = keys.every((s) => s === "PAID");
+  if (allPaid) return "PAID";
+  if (keys.some((s) => s === "PAID" || s === "PARTIAL")) return "PARTIAL";
+  return "ISSUED";
+}
+
 export function receiptAwaitingPaymentConfirm(
   receipt: Pick<Document, "docType" | "status" | "receiptStatus" | "accountingEntryId">
 ): boolean {

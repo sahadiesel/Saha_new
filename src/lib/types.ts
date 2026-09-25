@@ -308,8 +308,24 @@ export interface HRSettings {
   };
   withholding?: {
     enabled?: boolean;
+    /** เลิกใช้เมื่อมี brackets — คงไว้เพื่อข้อมูลเก่า */
     defaultPercent?: number;
     note?: string;
+    /** ลดหย่อนส่วนตัวต่อปี (ค่าเริ่ม 60,000) */
+    personalAllowance?: number;
+    /** % ค่าใช้จ่ายจากเงินได้ (ค่าเริ่ม 50) */
+    expensePercent?: number;
+    /** เพดานค่าใช้จ่ายต่อปี (ค่าเริ่ม 100,000) */
+    expenseCap?: number;
+    /** ลดหย่อนอื่นทั้งปี (ถ้ามี) */
+    extraAnnualDeduction?: number;
+    /** หักประกันสังคมลูกจ้างออกจากฐานภาษี — ค่าเริ่ม true */
+    deductSso?: boolean;
+    brackets?: {
+      min: number;
+      max: number | null;
+      ratePercent: number;
+    }[];
   };
   leavePolicy?: {
     calculationPeriod?: 'CALENDAR_YEAR';

@@ -2,21 +2,31 @@
 "use client";
 
 import { useMemo } from "react";
-import type { PayslipSnapshot, PayType, UserProfile, AttendanceDayLog } from "@/lib/types";
+import type { PayslipSnapshot, PayType, UserProfile } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { PlusCircle, Trash2, AlertCircle, Clock, FileText, Edit, BadgeCheck, Calculator, FilePlus } from "lucide-react";
+import { Trash2, AlertCircle, Clock, Calculator } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import {
+  calcTotals,
+  displayDeductionName,
+  monthLeaveDays,
+  leaveDaysFrom,
+  otherDeductions,
+  ssoDeductionAmount,
+  whtDeductionAmount,
+} from "@/lib/payroll/payslip-display";
+import { round2 } from "@/lib/payroll/sso";
 
-// --- Helper Functions - Forced Integer ---
-const formatCurrency = (value: number | undefined) => (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+export { calcTotals };
+
+const formatCurrency = (value: number | undefined) => (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const safeParseFloat = (value: any): number => {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
@@ -24,15 +34,6 @@ const safeParseFloat = (value: any): number => {
         return isNaN(num) ? 0 : num;
     }
     return 0;
-};
-
-export const calcTotals = (snapshot: PayslipSnapshot | null | undefined) => {
-    if (!snapshot) return { basePay: 0, addTotal: 0, dedTotal: 0, netPay: 0 };
-    const basePay = Math.round(safeParseFloat(snapshot?.basePay));
-    const addTotal = Math.round((snapshot?.additions || []).reduce((sum, item) => sum + safeParseFloat(item.amount), 0));
-    const dedTotal = Math.round((snapshot?.deductions || []).reduce((sum, item) => sum + safeParseFloat(item.amount), 0));
-    const netPay = Math.round(basePay + addTotal - dedTotal);
-    return { basePay, addTotal, dedTotal, netPay };
 };
 
 interface PayslipSlipViewProps {
@@ -55,7 +56,7 @@ export function PayslipSlipView({
   periodLabel, 
   snapshot, 
   otherPeriodSnapshot,
-  currentPeriodNo,
+  currentPeriodNo = 1,
   userProfile,
   mode, 
   payType, 
@@ -71,6 +72,17 @@ export function PayslipSlipView({
   const p1Totals = currentPeriodNo === 1 ? currentTotals : otherTotals;
   const p2Totals = currentPeriodNo === 2 ? currentTotals : otherTotals;
   const monthlyTotalNet = p1Totals.netPay + p2Totals.netPay;
+  const monthlySalary =
+    (userProfile?.hr?.salaryMonthly && userProfile.hr.salaryMonthly > 0)
+      ? userProfile.hr.salaryMonthly
+      : (p1Totals.basePay + p2Totals.basePay) || currentTotals.basePay;
+  const monthLeave = monthLeaveDays(snapshot, otherPeriodSnapshot);
+  const ytdLeave = leaveDaysFrom(snapshot.leaveSummaryYtd);
+  const ssoAmt = ssoDeductionAmount(snapshot);
+  const whtAmt = whtDeductionAmount(snapshot);
+  const extraDeductions = otherDeductions(snapshot);
+  const p1Known = currentPeriodNo === 1 || !!otherPeriodSnapshot;
+  const p2Known = currentPeriodNo === 2 || !!otherPeriodSnapshot;
 
   const handleFieldChange = (field: string, value: any) => {
     if (!onChange) return;
@@ -122,17 +134,17 @@ export function PayslipSlipView({
             <CardHeader className="pb-2"><CardTitle className="text-xs font-bold uppercase flex items-center gap-2"><Calculator className="h-3 w-3"/> สรุปรายเดือน</CardTitle></CardHeader>
             <CardContent>
                 <div className="flex justify-between items-end border-b border-dashed pb-3 mb-3">
-                    <div><p className="text-[10px] text-muted-foreground uppercase">เงินเดือนรวม</p><p className="text-xl font-bold text-primary">฿{formatCurrency(userProfile?.hr?.salaryMonthly)}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground uppercase">เงินเดือนทั้งเดือน</p><p className="text-xl font-bold text-primary">฿{formatCurrency(monthlySalary)}</p></div>
                     <div className="text-right"><p className="text-[10px] text-muted-foreground uppercase">ยอดรับสุทธิเดือนนี้</p><p className="text-xl font-bold text-green-600">฿{formatCurrency(monthlyTotalNet)}</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-[11px]">
                     <div className="p-2 bg-background rounded border">
-                        <p className="text-muted-foreground mb-1">งวด 1 (1-15)</p>
-                        <p className="font-bold">{formatCurrency(p1Totals.netPay)}</p>
+                        <p className="text-muted-foreground mb-1">รับจริงงวด 1 (1-15)</p>
+                        <p className="font-bold">{p1Known ? formatCurrency(p1Totals.netPay) : "ยังไม่มีสลิป"}</p>
                     </div>
                     <div className="p-2 bg-background rounded border">
-                        <p className="text-muted-foreground mb-1">งวด 2 (16-สิ้นเดือน)</p>
-                        <p className="font-bold">{formatCurrency(p2Totals.netPay)}</p>
+                        <p className="text-muted-foreground mb-1">รับจริงงวด 2 (16-สิ้นเดือน)</p>
+                        <p className="font-bold">{p2Known ? formatCurrency(p2Totals.netPay) : "ยังไม่มีสลิป"}</p>
                     </div>
                 </div>
             </CardContent>
@@ -144,7 +156,7 @@ export function PayslipSlipView({
                 <div className="flex justify-between items-center">
                     <Label className="text-sm">ฐานเงินเดือน/ค่าแรงงวดนี้</Label>
                     {isEdit ? (
-                        <Input type="number" className="w-32 text-right font-bold" value={snapshot?.basePay || ''} onChange={(e) => handleFieldChange('basePay', Math.round(safeParseFloat(e.target.value)))}/>
+                        <Input type="number" step="0.01" className="w-32 text-right font-bold" value={snapshot?.basePay || ''} onChange={(e) => handleFieldChange('basePay', round2(safeParseFloat(e.target.value)))}/>
                     ) : (
                          <span className="font-bold">{formatCurrency(currentTotals.basePay)}</span>
                     )}
@@ -154,7 +166,7 @@ export function PayslipSlipView({
                     <div className="flex justify-between items-center"><h4 className="text-xs font-bold text-green-600 uppercase">รายรับเพิ่ม</h4>{isEdit && <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => handleAddRow('additions')}>+ เพิ่ม</Button>}</div>
                     {isEdit ? (
                         snapshot.additions?.map((item, i) => (
-                            <div key={i} className="flex gap-2 mb-2"><Input placeholder="รายการ" value={item.name} onChange={e=>handleFieldChange(`additions.${i}.name`, e.target.value)} /><Input type="number" className="w-24 text-right" value={item.amount || ''} onChange={e=>handleFieldChange(`additions.${i}.amount`, Math.round(safeParseFloat(e.target.value)))} /><Button variant="ghost" size="icon" onClick={()=>handleRemoveRow('additions', i)}><Trash2 className="h-4 w-4"/></Button></div>
+                            <div key={i} className="flex gap-2 mb-2"><Input placeholder="รายการ" value={item.name} onChange={e=>handleFieldChange(`additions.${i}.name`, e.target.value)} /><Input type="number" step="0.01" className="w-24 text-right" value={item.amount || ''} onChange={e=>handleFieldChange(`additions.${i}.amount`, round2(safeParseFloat(e.target.value)))} /><Button variant="ghost" size="icon" onClick={()=>handleRemoveRow('additions', i)}><Trash2 className="h-4 w-4"/></Button></div>
                         ))
                     ) : (snapshot.additions?.map((item, i)=><div key={i} className="flex justify-between text-xs py-1 border-b border-dashed"><p>{item.name}</p><p className="text-green-600 font-bold">+{formatCurrency(item.amount)}</p></div>))}
                 </div>
@@ -162,13 +174,39 @@ export function PayslipSlipView({
                     <div className="flex justify-between items-center"><h4 className="text-xs font-bold text-destructive uppercase">รายการหัก</h4>{isEdit && <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => handleAddRow('deductions')}>+ เพิ่ม</Button>}</div>
                     {isEdit ? (
                         snapshot.deductions?.map((item, i) => (
-                            <div key={i} className="flex gap-2 mb-2"><Input placeholder="รายการ" value={item.name} onChange={e=>handleFieldChange(`deductions.${i}.name`, e.target.value)} /><Input type="number" className="w-24 text-right" value={item.amount || ''} onChange={e=>handleFieldChange(`deductions.${i}.amount`, Math.round(safeParseFloat(e.target.value)))} /><Button variant="ghost" size="icon" onClick={()=>handleRemoveRow('deductions', i)}><Trash2 className="h-4 w-4"/></Button></div>
+                            <div key={i} className="flex gap-2 mb-2"><Input placeholder="รายการ" value={item.name} onChange={e=>handleFieldChange(`deductions.${i}.name`, e.target.value)} /><Input type="number" step="0.01" className="w-24 text-right" value={item.amount || ''} onChange={e=>handleFieldChange(`deductions.${i}.amount`, round2(safeParseFloat(e.target.value)))} /><Button variant="ghost" size="icon" onClick={()=>handleRemoveRow('deductions', i)}><Trash2 className="h-4 w-4"/></Button></div>
                         ))
-                    ) : (snapshot.deductions?.map((item, i)=><div key={i} className="flex justify-between text-xs py-1 border-b border-dashed"><p>{item.name}</p><p className="text-destructive font-bold">-{formatCurrency(item.amount)}</p></div>))}
+                    ) : (
+                        <>
+                            <div className="flex justify-between text-xs py-1 border-b border-dashed"><p>ประกันสังคม</p><p className="text-destructive font-bold">-{formatCurrency(ssoAmt)}</p></div>
+                            <div className="flex justify-between text-xs py-1 border-b border-dashed"><p>ภาษีหัก ณ ที่จ่าย</p><p className="text-destructive font-bold">-{formatCurrency(whtAmt)}</p></div>
+                            {extraDeductions.map((item, i)=><div key={i} className="flex justify-between text-xs py-1 border-b border-dashed"><p>{displayDeductionName(item.name)}</p><p className="text-destructive font-bold">-{formatCurrency(item.amount)}</p></div>)}
+                        </>
+                    )}
                 </div>
                 <div className="bg-primary/5 p-3 rounded-lg border border-primary/10 flex justify-between items-center font-bold">
                     <span className="text-sm">ยอดสุทธิที่ได้รับจริง</span>
                     <span className="text-lg text-primary">฿{formatCurrency(currentTotals.netPay)}</span>
+                </div>
+            </CardContent>
+        </Card>
+
+        <Card className="border-dashed">
+            <CardHeader className="py-2"><CardTitle className="text-xs text-muted-foreground">สรุปวันลา</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3 text-[11px] pb-3">
+                <div className="rounded border p-2 space-y-1">
+                    <p className="font-bold text-foreground">ภายในเดือน</p>
+                    <div className="flex justify-between"><span>ลาป่วย</span><span>{monthLeave.sickDays} วัน</span></div>
+                    <div className="flex justify-between"><span>ลากิจ</span><span>{monthLeave.businessDays} วัน</span></div>
+                    <div className="flex justify-between"><span>พักร้อน</span><span>{monthLeave.vacationDays} วัน</span></div>
+                    <div className="flex justify-between font-bold border-t pt-1"><span>รวม</span><span>{monthLeave.total} วัน</span></div>
+                </div>
+                <div className="rounded border p-2 space-y-1">
+                    <p className="font-bold text-foreground">สะสมปีนี้</p>
+                    <div className="flex justify-between"><span>ลาป่วย</span><span>{ytdLeave.sickDays} วัน</span></div>
+                    <div className="flex justify-between"><span>ลากิจ</span><span>{ytdLeave.businessDays} วัน</span></div>
+                    <div className="flex justify-between"><span>พักร้อน</span><span>{ytdLeave.vacationDays} วัน</span></div>
+                    <div className="flex justify-between font-bold border-t pt-1"><span>รวม</span><span>{ytdLeave.total} วัน</span></div>
                 </div>
             </CardContent>
         </Card>

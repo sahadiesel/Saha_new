@@ -913,6 +913,7 @@ export function ReceiptForm() {
         paymentInstrument: payInstrument,
         paymentDate: data.paymentDate,
         receivedAccountId: data.accountId,
+        receiptStatus: "ISSUED_NOT_CONFIRMED" as const,
       };
 
       let finalDocId: string;

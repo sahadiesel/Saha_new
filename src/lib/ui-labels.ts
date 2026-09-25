@@ -163,7 +163,13 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
         if (s === 'CONFIRMED' || s === 'PAID') return 'รับเงินเรียบร้อย';
     }
 
-    // ใบลดหนี้ — จบที่ตรวจสอบแล้ว ไม่ต้องออกใบเสร็จ
+    // ใบวางบิล — ออกเลขที่แล้วถือว่าวางบิลแล้ว ไม่แสดงฉบับร่าง
+    if (docType === 'BILLING_NOTE') {
+        if (s === 'DRAFT' || s === 'ISSUED' || s === 'APPROVED' || s === 'SUBMITTED') return 'วางบิลแล้ว';
+        if (s === 'PAID' || s === 'CONFIRMED') return 'รับเงินแล้ว';
+        if (s === 'PARTIAL') return 'รับเงินบางส่วน';
+        if (s === 'RECEIPT_ISSUED') return 'รอตรวจสอบเงินจริง';
+    }
     if (docType === 'CREDIT_NOTE' && s === 'APPROVED') {
         return 'ตรวจสอบแล้ว';
     }

@@ -38,6 +38,7 @@ import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import {
   repairActiveReceiptTaxInvoiceLinks,
   taxInvoiceReceiptDisplayMeta,
+  billingNoteDisplayMeta,
 } from "@/lib/receipt-tax-invoice-link";
 import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
 import {
@@ -47,6 +48,7 @@ import {
   reverseConfirmedReceipt,
 } from "@/lib/reverse-confirmed-receipt";
 import { documentAmountBeforeTax } from "@/lib/document-amounts";
+import { compareDocNoDescending } from "@/firebase/documents";
 
 function cancelReceiptDialogDescription(doc: Document): string {
   if (isReceiptPaymentConfirmed(doc)) {
@@ -149,6 +151,9 @@ function documentMonthBounds(yyyyMm: string): { start: string; end: string } {
 const getDocDisplayStatus = (doc: Document): { key: string; label: string; description: string; variant: "default" | "secondary" | "destructive" | "outline" } => {
     const receiptMeta = taxInvoiceReceiptDisplayMeta(doc);
     if (receiptMeta) return receiptMeta;
+
+    const billingMeta = billingNoteDisplayMeta(doc);
+    if (billingMeta) return billingMeta;
 
     if (doc.docType === "RECEIPT") {
       if (doc.status === "CANCELLED") {
@@ -352,6 +357,13 @@ export function DocumentList({
     if (docType === "TAX_INVOICE" || docType === "DEBIT_NOTE") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
       const ordered = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "RECEIPT_ISSUED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"]
+        .filter((s) => s === "ALL" || available.has(s));
+      const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
+      return [...ordered, ...extra];
+    }
+    if (docType === "BILLING_NOTE") {
+      const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
+      const ordered = ["ALL", "ISSUED", "RECEIPT_ISSUED", "PARTIAL", "PAID", "CANCELLED"]
         .filter((s) => s === "ALL" || available.has(s));
       const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
       return [...ordered, ...extra];
@@ -666,8 +678,10 @@ export function DocumentList({
       filtered.sort((a, b) =>
         quotationDocNoSearchActive
           ? a.docNo.localeCompare(b.docNo)
-          : b.docNo.localeCompare(a.docNo)
+          : compareDocNoDescending(a.docNo, b.docNo)
       );
+    } else if (docType === "RECEIPT" || docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE") {
+      filtered.sort((a, b) => compareDocNoDescending(a.docNo, b.docNo));
     }
     return filtered;
   }, [listDocuments, deferredSearchTerm, statusFilter, prefixFilter, monthFilter, lineItemSearchBlobByDocId, docType, usesMonthScopedLoad, quotationDocNoSearchActive]);

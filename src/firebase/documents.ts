@@ -11,7 +11,6 @@ import {
   query,
   where,
   limit,
-  orderBy,
   getDoc,
 } from 'firebase/firestore';
 import type { DocumentSettings, Document, DocType, JobStatus, UserProfile } from '@/lib/types';
@@ -28,7 +27,7 @@ export function normalizeYear(year: number): number {
 /**
  * Extracts sequence from strings like "DN2026-0012" -> 12
  */
-function extractSequence(docNo: string): number {
+export function extractDocNoSequence(docNo: string): number {
   if (!docNo) return 0;
   const parts = docNo.split('-');
   if (parts.length < 2) return 0;
@@ -36,35 +35,60 @@ function extractSequence(docNo: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+/** เรียงเลขที่เอกสารจากมากไปน้อย (0272 ก่อน 0269) ไม่ใช้ string sort ของวันที่ */
+export function compareDocNoDescending(a: string, b: string): number {
+  const seqDiff = extractDocNoSequence(b) - extractDocNoSequence(a);
+  if (seqDiff !== 0) return seqDiff;
+  return b.localeCompare(a, "en", { numeric: true, sensitivity: "base" });
+}
+
+function counterSeqValue(data: Record<string, unknown> | undefined, docType: string, prefix: string): number {
+  if (!data) return 0;
+  const seq = Number(data[`${docType}_${prefix}_seq`]) || 0;
+  const count = Number(data[`${docType}_${prefix}_count`]) || 0;
+  return Math.max(seq, count);
+}
+
 /**
- * Finds the next available sequence number for a given prefix/year.
- * It fetches existing doc numbers and finds the smallest gap.
+ * Highest used sequence for prefix+year (SR2026-0272 → 272).
+ * Next number is always max+1 so cancelled/deleted numbers are not reused and concurrent
+ * creates cannot pick the same gap.
  */
-export async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<{ sequence: number; indexErrorUrl?: string }> {
+export async function findMaxDocSequence(
+  db: Firestore,
+  docType: string,
+  prefixYear: string
+): Promise<{ max: number; indexErrorUrl?: string }> {
   try {
     const q = query(
       collection(db, "documents"),
       where("docType", "==", docType),
       where("docNo", ">=", prefixYear),
-      where("docNo", "<=", prefixYear + "\uf8ff"),
-      orderBy("docNo", "asc")
+      where("docNo", "<=", prefixYear + "\uf8ff")
     );
-    
+
     const snap = await getDocs(q);
-    const existingSeqs = new Set(snap.docs.map(d => extractSequence(d.data().docNo)));
-    
-    let candidate = 1;
-    while (existingSeqs.has(candidate)) {
-      candidate++;
+    let max = 0;
+    for (const d of snap.docs) {
+      const seq = extractDocNoSequence(String(d.data().docNo || ""));
+      if (seq > max) max = seq;
     }
-    return { sequence: candidate };
+    return { max };
   } catch (e: any) {
-    if (e.message?.includes('requires an index')) {
+    if (e.message?.includes("requires an index")) {
       const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-      return { sequence: 1, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+      return { max: 0, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
     }
     throw e;
   }
+}
+
+/**
+ * Next sequence = max existing + 1 (preview only; createDocument allocates inside a transaction).
+ */
+export async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<{ sequence: number; indexErrorUrl?: string }> {
+  const result = await findMaxDocSequence(db, docType, prefixYear);
+  return { sequence: result.max + 1, indexErrorUrl: result.indexErrorUrl };
 }
 
 /**
@@ -197,10 +221,10 @@ export async function createDocument(
     : defaultPrefixMap[docType]).toUpperCase();
 
   const prefixSearch = `${prefix}${year}-`;
-  const seqResult = await findNextAvailableSequence(db, docType, prefixSearch);
+  const maxResult = await findMaxDocSequence(db, docType, prefixSearch);
   
-  if (seqResult.indexErrorUrl) {
-    throw new Error(`The query requires an index. You can create it here: ${seqResult.indexErrorUrl}`);
+  if (maxResult.indexErrorUrl) {
+    throw new Error(`The query requires an index. You can create it here: ${maxResult.indexErrorUrl}`);
   }
 
   const result = await runTransaction(db, async (transaction) => {
@@ -214,18 +238,25 @@ export async function createDocument(
       jobSnap = await transaction.get(jobRef);
     }
 
+    const counterRef = doc(db, 'documentCounters', String(year));
+    const counterSnap = options?.manualDocNo ? null : await transaction.get(counterRef);
+
     // ===== WRITES =====
     let finalDocNo = options?.manualDocNo;
 
     if (!finalDocNo) {
-      finalDocNo = `${prefix}${year}-${String(seqResult.sequence).padStart(4, '0')}`;
-      const counterRef = doc(db, 'documentCounters', String(year));
-      transaction.set(counterRef, { 
-          [`${docType}_${prefix}_count`]: seqResult.sequence
+      const cur = counterSeqValue(counterSnap?.data() as Record<string, unknown> | undefined, docType, prefix);
+      const nextSeq = Math.max(cur, maxResult.max) + 1;
+      finalDocNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
+      transaction.set(counterRef, {
+          [`${docType}_${prefix}_seq`]: nextSeq,
+          [`${docType}_${prefix}_count`]: nextSeq,
       }, { merge: true });
     }
 
-    const docStatus = options?.initialStatus ?? (docType === 'WITHDRAWAL' ? 'ISSUED' : 'DRAFT');
+    const docStatus = options?.initialStatus ?? (
+      docType === 'WITHDRAWAL' || docType === 'BILLING_NOTE' ? 'ISSUED' : 'DRAFT'
+    );
 
     const docData = sanitizeForFirestore({
       ...data,

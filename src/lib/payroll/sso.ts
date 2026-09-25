@@ -61,13 +61,10 @@ export function ssoDecisionDiffers(
   );
 }
 
-/**
- * Rounds a number to a specified number of decimal places.
- * Default adjusted to 0 for Sahadiesel integer policy.
- */
-export function round2(value: number, decimals: number = 0): number {
+/** ปัดเงินเป็นทศนิยม 2 ตำแหน่ง (ค่าเริ่มต้นของระบบเงินเดือน) */
+export function round2(value: number, decimals: number = 2): number {
     const factor = Math.pow(10, decimals);
-    return Math.round(value * factor) / factor;
+    return Math.round((Number(value) || 0) * factor) / factor;
 }
 
 /**
@@ -78,9 +75,7 @@ export function clampSsoBase(salaryMonthly: number, minBase: number, cap: number
     return Math.max(minBase, Math.min(salaryMonthly, effectiveCap));
 }
 
-/**
- * Calculates the total monthly SSO deduction amount as an integer.
- */
+/** ประกันสังคมทั้งเดือน — ปัด 2 ตำแหน่ง เช่น 875.00 */
 export function calcSsoMonthly(
   salaryMonthly: number,
   percent: number,
@@ -91,16 +86,12 @@ export function calcSsoMonthly(
     return 0;
   }
   const base = clampSsoBase(salaryMonthly, minBase, cap);
-  // Force integer rounding
-  return Math.round(base * (percent / 100));
+  return round2(base * (percent / 100));
 }
 
-/**
- * Splits the total monthly SSO deduction into two halves for bi-monthly payroll.
- * Ensures result is integer.
- */
+/** แบ่งครึ่งงวด เช่น 875 → 437.50 + 437.50 */
 export function splitSsoHalf(ssoMonthly: number): { p1: number; p2: number } {
-  const p1 = Math.round(ssoMonthly / 2);
-  const p2 = Math.round(ssoMonthly - p1);
+  const p1 = round2(ssoMonthly / 2);
+  const p2 = round2(ssoMonthly - p1);
   return { p1, p2 };
 }

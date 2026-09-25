@@ -25,6 +25,7 @@ import type {
   AttendanceDayLog
 } from '@/lib/types';
 import { WithId } from '@/firebase/firestore/use-collection';
+import { round2 } from '@/lib/payroll/sso';
 
 export type PeriodMetrics = {
   attendanceSummary: {
@@ -238,8 +239,7 @@ export function computePeriodMetrics(params: {
 
         if (overLimitDaysThisPeriod > 0 && salary && (overLimitMode === 'DEDUCT_SALARY' || overLimitMode === 'UNPAID')) {
             const baseDays = policy.overLimitHandling?.salaryDeductionBaseDays || hrSettings.payroll?.salaryDeductionBaseDays || 26;
-            // FORCE INTEGER for deduction
-            const deductionAmount = Math.round((salary / baseDays) * overLimitDaysThisPeriod);
+            const deductionAmount = round2((salary / baseDays) * overLimitDaysThisPeriod);
             autoDeductions.push({
                 name: `[AUTO] หักลาเกินสิทธิ์ (${leaveType})`,
                 amount: deductionAmount,
@@ -252,7 +252,7 @@ export function computePeriodMetrics(params: {
   }
 
 
-  // Money deductions for MONTHLY - Using integers
+  // Money deductions for MONTHLY — ปัด 2 ตำแหน่ง
   if (payType === 'MONTHLY' && user.hr?.salaryMonthly) {
       const baseDays = hrSettings.payroll?.salaryDeductionBaseDays || 26;
       const ratePerDay = user.hr.salaryMonthly / baseDays;
@@ -261,14 +261,14 @@ export function computePeriodMetrics(params: {
       if (attendanceSummary.absentUnits > 0) {
         autoDeductions.push({
             name: `[AUTO] หักขาดงาน`,
-            amount: Math.round(ratePerDay * attendanceSummary.absentUnits),
+            amount: round2(ratePerDay * attendanceSummary.absentUnits),
             notes: `${attendanceSummary.absentUnits} หน่วย`
         });
       }
       if (attendanceSummary.lateMinutes > 0) {
         autoDeductions.push({
             name: `[AUTO] หักมาสาย`,
-            amount: Math.round(ratePerMinute * attendanceSummary.lateMinutes),
+            amount: round2(ratePerMinute * attendanceSummary.lateMinutes),
             notes: `${attendanceSummary.lateMinutes} นาที`
         });
       }

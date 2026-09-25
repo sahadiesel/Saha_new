@@ -407,8 +407,8 @@ export async function reverseConfirmedReceipt(
         updatedAt: serverTimestamp(),
       };
 
-      if (refData.docType === "BILLING_NOTE" && refData.status === "PAID") {
-        updates.status = "APPROVED";
+      if (refData.docType === "BILLING_NOTE" && (refData.status === "PAID" || refData.status === "PARTIAL")) {
+        updates.status = "ISSUED";
       }
 
       if (

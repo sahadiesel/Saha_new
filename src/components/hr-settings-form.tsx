@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { doc, setDoc } from "firebase/firestore";
@@ -31,11 +31,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Save, Edit, X } from "lucide-react";
+import { Loader2, Save, Edit, X, Plus, Trash2 } from "lucide-react";
 import { Skeleton } from "./ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "./ui/separator";
 import { Switch } from "./ui/switch";
+import {
+  DEFAULT_THAI_PIT_BRACKETS,
+  computeEmploymentTaxBreakdown,
+  formatBracketLabel,
+} from "@/lib/payroll/income-tax";
+import { calcSsoMonthly } from "@/lib/payroll/sso";
 
 const leaveTypePolicySchema = z.object({
   annualEntitlement: z.coerce.number().min(0).optional(),
@@ -77,6 +83,20 @@ const hrSettingsSchema = z.object({
     enabled: z.boolean().default(false),
     defaultPercent: z.coerce.number().min(0).max(100).optional(),
     note: z.string().optional(),
+    personalAllowance: z.coerce.number().min(0).optional(),
+    expensePercent: z.coerce.number().min(0).max(100).optional(),
+    expenseCap: z.coerce.number().min(0).optional(),
+    extraAnnualDeduction: z.coerce.number().min(0).optional(),
+    deductSso: z.boolean().default(true),
+    brackets: z
+      .array(
+        z.object({
+          min: z.coerce.number().min(0),
+          max: z.preprocess((v) => (v === "" || v == null ? null : v), z.coerce.number().min(0).nullable()),
+          ratePercent: z.coerce.number().min(0).max(100),
+        })
+      )
+      .optional(),
   }).optional(),
   leavePolicy: z.object({
     calculationPeriod: z.literal("CALENDAR_YEAR").optional(),
@@ -169,6 +189,7 @@ export function HRSettingsForm() {
   }, [db]);
 
   const { data: settings, isLoading } = useDoc<HRSettings>(settingsDocRef);
+  const [previewSalary, setPreviewSalary] = useState(50000);
 
   const form = useForm<z.infer<typeof hrSettingsSchema>>({
     resolver: zodResolver(hrSettingsSchema),
@@ -203,6 +224,12 @@ export function HRSettingsForm() {
         enabled: false,
         defaultPercent: 0,
         note: "",
+        personalAllowance: 60000,
+        expensePercent: 50,
+        expenseCap: 100000,
+        extraAnnualDeduction: 0,
+        deductSso: true,
+        brackets: DEFAULT_THAI_PIT_BRACKETS,
       },
       leavePolicy: {
         calculationPeriod: 'CALENDAR_YEAR',
@@ -215,6 +242,27 @@ export function HRSettingsForm() {
       backfillMode: false,
     },
   });
+
+  const { fields: taxBrackets, append: appendTaxBracket, remove: removeTaxBracket } = useFieldArray({
+    control: form.control,
+    name: "withholding.brackets",
+  });
+
+  const watchedWithholding = form.watch("withholding");
+  const watchedSso = form.watch("sso");
+  const taxPreview = useMemo(() => {
+    const monthlySso = calcSsoMonthly(
+      previewSalary,
+      Number(watchedSso?.employeePercent ?? settings?.sso?.employeePercent ?? 0),
+      Number(watchedSso?.monthlyMinBase ?? settings?.sso?.monthlyMinBase ?? 0),
+      Number(watchedSso?.monthlyCap ?? settings?.sso?.monthlyCap ?? 0)
+    );
+    return computeEmploymentTaxBreakdown({
+      monthlySalary: previewSalary,
+      monthlySso,
+      withholding: isEditing ? watchedWithholding : (settings?.withholding ?? watchedWithholding),
+    });
+  }, [previewSalary, watchedSso, watchedWithholding, settings?.sso, settings?.withholding, isEditing]);
 
   useEffect(() => {
     if (settings) {
@@ -231,7 +279,15 @@ export function HRSettingsForm() {
         weekendPolicy: { ...defaultValues.weekendPolicy, ...settings.weekendPolicy },
         payroll: { ...defaultValues.payroll, ...settings.payroll },
         sso: { ...defaultValues.sso, ...settings.sso },
-        withholding: { ...defaultValues.withholding, ...settings.withholding },
+        withholding: {
+          ...defaultValues.withholding,
+          ...settings.withholding,
+          deductSso: settings.withholding?.deductSso ?? defaultValues.withholding?.deductSso ?? true,
+          brackets:
+            settings.withholding?.brackets && settings.withholding.brackets.length > 0
+              ? settings.withholding.brackets
+              : defaultValues.withholding?.brackets,
+        },
         leavePolicy: {
           calculationPeriod: 'CALENDAR_YEAR',
           leaveTypes: {
@@ -274,7 +330,17 @@ export function HRSettingsForm() {
         leavePolicy: {
           ...values.leavePolicy,
           calculationPeriod: 'CALENDAR_YEAR'
-        }
+        },
+        withholding: values.withholding
+          ? {
+              ...values.withholding,
+              brackets: (values.withholding.brackets || []).map((b) => ({
+                min: Number(b.min) || 0,
+                max: b.max == null || Number.isNaN(Number(b.max)) || Number(b.max) <= 0 ? null : Number(b.max),
+                ratePercent: Number(b.ratePercent) || 0,
+              })),
+            }
+          : values.withholding,
       };
 
       await setDoc(settingsDocRef, finalValues, { merge: true });
@@ -416,11 +482,30 @@ export function HRSettingsForm() {
             </Card>
 
             <Card>
-                <CardHeader><CardTitle>ภาษีหัก ณ ที่จ่าย</CardTitle></CardHeader>
+                <CardHeader><CardTitle>ภาษีหัก ณ ที่จ่าย (ขั้นบันได)</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
                     <InfoRow label="เปิดใช้งาน" value={settings?.withholding?.enabled ? "ใช่" : "ไม่ใช่"} />
                     <Separator />
-                    <InfoRow label="เปอร์เซ็นต์ตั้งต้น (%)" value={settings?.withholding?.defaultPercent} />
+                    <InfoRow label="ลดหย่อนส่วนตัว / ปี" value={(settings?.withholding?.personalAllowance ?? 60000).toLocaleString("th-TH")} />
+                    <Separator />
+                    <InfoRow label="ค่าใช้จ่าย" value={`${settings?.withholding?.expensePercent ?? 50}% ไม่เกิน ${(settings?.withholding?.expenseCap ?? 100000).toLocaleString("th-TH")}`} />
+                    <Separator />
+                    <InfoRow label="หักประกันสังคมออกจากฐาน" value={settings?.withholding?.deductSso === false ? "ไม่" : "ใช่"} />
+                    <Separator />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground mb-2">อัตราภาษีตามขั้นบันได</p>
+                      <div className="rounded-md border overflow-hidden text-sm">
+                        {(settings?.withholding?.brackets?.length
+                          ? settings.withholding.brackets
+                          : DEFAULT_THAI_PIT_BRACKETS
+                        ).map((b, i) => (
+                          <div key={i} className="flex justify-between px-3 py-2 border-b last:border-0">
+                            <span>{formatBracketLabel(b)}</span>
+                            <span className="font-medium">{b.ratePercent}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                     <Separator />
                     <InfoRow label="หมายเหตุ" value={<span className="whitespace-pre-wrap">{settings?.withholding?.note}</span>} />
                 </CardContent>
@@ -584,19 +669,118 @@ export function HRSettingsForm() {
 
         <Card>
           <CardHeader>
-            <CardTitle>ภาษีหัก ณ ที่จ่าย</CardTitle>
+            <CardTitle>ภาษีหัก ณ ที่จ่าย (ขั้นบันได)</CardTitle>
             <CardDescription>
-              การตั้งค่าภาษีหัก ณ ที่จ่ายสำหรับเงินเดือน
+              คำนวณแบบ OPEC: รายได้ทั้งปี = เงินเดือน × 12 หักค่าใช้จ่าย / ลดหย่อนส่วนตัว / ประกันสังคม แล้วคิดภาษีขั้นบันได หาร 12 เป็นรายเดือน หาร 2 เป็นต่องวด
+              — ไม่ย้อนไปแก้สลิปที่จ่ายแล้ว
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6">
              <FormField control={form.control} name="withholding.enabled" render={({ field }) => (
                 <FormItem className="flex flex-row items-center space-x-3 space-y-0">
                   <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl>
                   <FormLabel className="font-normal">เปิดใช้งานภาษีหัก ณ ที่จ่าย</FormLabel>
                 </FormItem>
             )} />
-            <FormField control={form.control} name="withholding.defaultPercent" render={({ field }) => (<FormItem><FormLabel>เปอร์เซ็นต์ตั้งต้น (%)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value ?? 0} disabled={!form.watch('withholding.enabled')} /></FormControl></FormItem>)} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <FormField control={form.control} name="withholding.personalAllowance" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ลดหย่อนส่วนตัว / ปี</FormLabel>
+                  <FormControl><Input type="number" {...field} value={field.value ?? 60000} disabled={!form.watch("withholding.enabled")} /></FormControl>
+                  <FormDescription>ค่าเริ่มต้น 60,000</FormDescription>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="withholding.expensePercent" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ค่าใช้จ่าย (%)</FormLabel>
+                  <FormControl><Input type="number" {...field} value={field.value ?? 50} disabled={!form.watch("withholding.enabled")} /></FormControl>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="withholding.expenseCap" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>เพดานค่าใช้จ่าย / ปี</FormLabel>
+                  <FormControl><Input type="number" {...field} value={field.value ?? 100000} disabled={!form.watch("withholding.enabled")} /></FormControl>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="withholding.extraAnnualDeduction" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ลดหย่อนอื่น / ปี</FormLabel>
+                  <FormControl><Input type="number" {...field} value={field.value ?? 0} disabled={!form.watch("withholding.enabled")} /></FormControl>
+                </FormItem>
+              )} />
+            </div>
+            <FormField control={form.control} name="withholding.deductSso" render={({ field }) => (
+              <FormItem className="flex flex-row items-center space-x-3 space-y-0">
+                <FormControl><Checkbox checked={field.value !== false} onCheckedChange={field.onChange} disabled={!form.watch("withholding.enabled")} /></FormControl>
+                <FormLabel className="font-normal">หักประกันสังคมลูกจ้างออกจากฐานภาษี</FormLabel>
+              </FormItem>
+            )} />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">อัตราภาษีเงินได้บุคคลธรรมดาตามขั้นบันได</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!form.watch("withholding.enabled")}
+                  onClick={() => appendTaxBracket({ min: 0, max: null, ratePercent: 0 })}
+                >
+                  <Plus className="mr-1 h-4 w-4" /> เพิ่มขั้น
+                </Button>
+              </div>
+              <div className="rounded-md border overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left p-2 font-medium">ฐานเริ่ม</th>
+                      <th className="text-left p-2 font-medium">เพดาน</th>
+                      <th className="text-left p-2 font-medium">อัตรา (%)</th>
+                      <th className="w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taxBrackets.map((row, index) => (
+                      <tr key={row.id} className="border-t">
+                        <td className="p-2">
+                          <Input type="number" {...form.register(`withholding.brackets.${index}.min` as const, { valueAsNumber: true })} disabled={!form.watch("withholding.enabled")} />
+                        </td>
+                        <td className="p-2">
+                          <Input type="number" placeholder="ไม่จำกัด" {...form.register(`withholding.brackets.${index}.max` as const, { valueAsNumber: true })} disabled={!form.watch("withholding.enabled")} />
+                        </td>
+                        <td className="p-2">
+                          <Input type="number" step="0.01" {...form.register(`withholding.brackets.${index}.ratePercent` as const, { valueAsNumber: true })} disabled={!form.watch("withholding.enabled")} />
+                        </td>
+                        <td className="p-2">
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeTaxBracket(index)} disabled={!form.watch("withholding.enabled") || taxBrackets.length <= 1}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <p className="text-sm font-medium">ตัวอย่างคำนวณ (ไม่กระทบสลิปที่จ่ายแล้ว)</p>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-muted-foreground">เงินเดือนตัวอย่าง / เดือน</span>
+                <Input type="number" className="w-40" value={previewSalary} onChange={(e) => setPreviewSalary(Number(e.target.value) || 0)} />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div>รายได้ทั้งปี <span className="font-medium block">{taxPreview.annualIncome.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ค่าใช้จ่าย <span className="font-medium block">{taxPreview.expenseDeduction.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ลดหย่อนส่วนตัว <span className="font-medium block">{taxPreview.personalAllowance.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ประกันสังคมทั้งปี <span className="font-medium block">{taxPreview.ssoAnnual.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ฐานเงินได้สุทธิ <span className="font-medium block">{taxPreview.taxable.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ภาษีทั้งปี <span className="font-medium block">{taxPreview.annualTax.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ภาษีต่อเดือน <span className="font-medium block">{taxPreview.monthlyTax.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div>ต่องวด (1 / 2) <span className="font-medium block">{taxPreview.periodTax.p1.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / {taxPreview.periodTax.p2.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+              </div>
+            </div>
+
             <FormField control={form.control} name="withholding.note" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field} value={field.value ?? ''} /></FormControl></FormItem>)} />
           </CardContent>
         </Card>

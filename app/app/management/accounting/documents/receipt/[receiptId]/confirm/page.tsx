@@ -44,6 +44,7 @@ import {
   receiptCashbookEntryId,
   receiptHasCashbookEntry,
   resyncConfirmedReceiptState,
+  billingNoteStatusFromInvoiceStatuses,
 } from "@/lib/receipt-tax-invoice-link";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 import { extractDocNoFromReceiptDescription } from "@/lib/receipt-line-description";
@@ -373,6 +374,18 @@ function ConfirmReceiptPageContent() {
               ])
             );
             const parentSnaps = await Promise.all(parentReferenceIds.map(id => transaction.get(doc(db, 'documents', id))));
+            const extraInvoiceIds = new Set<string>();
+            for (const pSnap of parentSnaps) {
+              if (!pSnap.exists()) continue;
+              const pData = pSnap.data() as DocumentType;
+              if (pData.docType !== "BILLING_NOTE") continue;
+              for (const invId of pData.invoiceIds || []) {
+                if (invId && !parentReferenceIds.includes(invId)) extraInvoiceIds.add(invId);
+              }
+            }
+            const extraInvoiceSnaps = extraInvoiceIds.size
+              ? await Promise.all([...extraInvoiceIds].map((id) => transaction.get(doc(db, "documents", id))))
+              : [];
 
             const jobIdsToRead = Array.from(new Set(calculatedAllocations.map(a => obligations[a.invoiceId]?.jobId).filter(Boolean)));
             const jobSnaps = await Promise.all(jobIdsToRead.map(id => transaction.get(doc(db, 'jobs', id!))));
@@ -450,6 +463,24 @@ function ConfirmReceiptPageContent() {
             }));
             
             const allocationIdSet = new Set(healedRefIds);
+            const invoiceStatusById = new Map<string, string>();
+            for (const s of [...parentSnaps, ...extraInvoiceSnaps]) {
+              if (!s.exists()) continue;
+              const d = s.data() as DocumentType;
+              if (d.docType === "BILLING_NOTE") continue;
+              invoiceStatusById.set(s.id, String(d.status || ""));
+            }
+            for (const a of calculatedAllocations) {
+              const ob = obligations[a.invoiceId];
+              if (!ob) {
+                invoiceStatusById.set(a.invoiceId, "PAID");
+                continue;
+              }
+              const newAmountPaid = Math.round(((ob.amountPaid || 0) + a.gross) * 100) / 100;
+              const newBalance = Math.max(0, Math.round((ob.amountTotal - newAmountPaid) * 100) / 100);
+              invoiceStatusById.set(a.invoiceId, newBalance <= 0.05 ? "PAID" : "PARTIAL");
+            }
+
             for (const pSnap of parentSnaps) {
                 if (!pSnap.exists()) continue;
                 const pData = pSnap.data() as DocumentType;
@@ -459,8 +490,14 @@ function ConfirmReceiptPageContent() {
                   (pData.docType === "BILLING_NOTE" &&
                     (pData.invoiceIds || []).some((id) => allocationIdSet.has(id)))
                 ) {
+                    const nextStatus =
+                      pData.docType === "BILLING_NOTE"
+                        ? billingNoteStatusFromInvoiceStatuses(
+                            (pData.invoiceIds || []).map((id) => invoiceStatusById.get(id))
+                          )
+                        : "PAID";
                     transaction.update(pSnap.ref, {
-                        status: pData.docType === "BILLING_NOTE" ? pData.status : "PAID",
+                        status: nextStatus,
                         receiptDocId: receipt.id,
                         receiptDocNo: receiptDocNo,
                         receiptStatus: "CONFIRMED",
