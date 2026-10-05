@@ -9,7 +9,9 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, Loader2, Edit } from "lucide-react";
+import Link from "next/link";
+import { isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { safeFormat } from "@/lib/date-utils";
@@ -170,6 +172,13 @@ function PurchaseViewPageContent() {
              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <Button type="button" variant="outline" onClick={() => router.back()}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
                 <div className="flex gap-2">
+                    {["DRAFT", "REJECTED", "PENDING_REVIEW"].includes(document.status) && (
+                      <Button type="button" asChild>
+                        <Link href={isPurchaseDocServiceLike(document) ? `/app/office/parts/purchases/service/new?editDocId=${document.id}` : `/app/office/parts/purchases/new?editDocId=${document.id}`}>
+                          <Edit className="mr-2 h-4 w-4"/> แก้ไข
+                        </Link>
+                      </Button>
+                    )}
                     <Button type="button" onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4"/> พิมพ์</Button>
                 </div>
             </div>

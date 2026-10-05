@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import type { PurchaseDoc } from "@/lib/types";
 import { isPurchaseDocServiceLike } from "@/firebase/purchases";
 import { WithId } from "@/firebase/firestore/use-collection";
-import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
+import { safeFormat, APP_DATE_FORMAT, normalizeGregorianDateOnlyString } from "@/lib/date-utils";
 import { useRouter } from "next/navigation";
 
 // Status Badge & Tooltip Helper (Thai Labels)
@@ -68,6 +68,25 @@ function purchaseMonthBounds(yyyyMm: string): { start: string; end: string } {
 /** โหลดล่าสุดสำหรับมุมมอง "ทุกเดือน" และใช้สร้างรายการเดือนใน dropdown */
 const RECENT_PURCHASE_DOCS_LIMIT = 2500;
 
+/** งานที่ออฟฟิศยังต้องทำ — ต้องเห็นแม้วันที่ในบิลจะไม่อยู่ในเดือนที่เลือก */
+const ACTIONABLE_PURCHASE_STATUSES: PurchaseDoc["status"][] = ["DRAFT", "PENDING_REVIEW", "REJECTED"];
+
+function purchaseDocMonthKey(docDate: unknown): string {
+  if (typeof docDate !== "string" || docDate.length < 7) return "";
+  return normalizeGregorianDateOnlyString(docDate).slice(0, 7);
+}
+
+function purchaseMatchesSearch(purchaseDoc: Pick<PurchaseDoc, "docNo" | "invoiceNo" | "vendorSnapshot">, term: string): boolean {
+  const q = term.toLowerCase();
+  const vendor = purchaseDoc.vendorSnapshot;
+  return (
+    (purchaseDoc.docNo || "").toLowerCase().includes(q) ||
+    (vendor?.shortName || "").toLowerCase().includes(q) ||
+    (vendor?.companyName || "").toLowerCase().includes(q) ||
+    (purchaseDoc.invoiceNo || "").toLowerCase().includes(q)
+  );
+}
+
 export default function PurchaseDocsListPage() {
   const { db } = useFirebase();
   const { toast } = useToast();
@@ -76,6 +95,7 @@ export default function PurchaseDocsListPage() {
 
   const [recentDocs, setRecentDocs] = useState<WithId<PurchaseDoc>[]>([]);
   const [monthScopedDocs, setMonthScopedDocs] = useState<WithId<PurchaseDoc>[]>([]);
+  const [actionableDocs, setActionableDocs] = useState<WithId<PurchaseDoc>[]>([]);
   const [recentLoading, setRecentLoading] = useState(true);
   /** เริ่ม true เพื่อไม่ให้แว็บ "ไม่พบเอกสาร" ก่อน snapshot เดือนที่เลือกจะมา */
   const [monthScopedLoading, setMonthScopedLoading] = useState(true);
@@ -145,6 +165,29 @@ export default function PurchaseDocsListPage() {
     return () => unsubscribe();
   }, [db, monthFilter, toast]);
 
+  useEffect(() => {
+    if (!db) return;
+    const q = query(
+      collection(db, "purchaseDocs"),
+      where("status", "in", ACTIONABLE_PURCHASE_STATUSES)
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setActionableDocs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithId<PurchaseDoc>)));
+      },
+      (error) => {
+        console.error("Error loading actionable purchase documents: ", error);
+        toast({
+          variant: "destructive",
+          title: "เกิดข้อผิดพลาด",
+          description: "ไม่สามารถโหลดรายการที่ต้องแก้ไขได้",
+        });
+      }
+    );
+    return () => unsubscribe();
+  }, [db, toast]);
+
   const tableSourceDocs =
     monthFilter === "ALL" ? recentDocs : monthScopedDocs;
 
@@ -167,7 +210,7 @@ export default function PurchaseDocsListPage() {
     let result = [...tableSourceDocs];
 
     if (monthFilter !== "ALL") {
-      result = result.filter((doc) => (doc.docDate || "").startsWith(monthFilter));
+      result = result.filter((doc) => purchaseDocMonthKey(doc.docDate) === monthFilter);
     }
 
     if (statusFilter !== "ALL") {
@@ -175,17 +218,23 @@ export default function PurchaseDocsListPage() {
     }
 
     if (searchTerm.trim()) {
-      const lowercasedFilter = searchTerm.toLowerCase();
-      result = result.filter(doc =>
-        doc.docNo.toLowerCase().includes(lowercasedFilter) ||
-        doc.vendorSnapshot.shortName.toLowerCase().includes(lowercasedFilter) ||
-        doc.vendorSnapshot.companyName.toLowerCase().includes(lowercasedFilter) ||
-        (doc.invoiceNo && doc.invoiceNo.toLowerCase().includes(lowercasedFilter))
-      );
+      result = result.filter(doc => purchaseMatchesSearch(doc, searchTerm.trim()));
     }
     
     return result;
   }, [tableSourceDocs, searchTerm, statusFilter, monthFilter]);
+
+  const visibleDocIds = useMemo(() => new Set(tableSourceDocs.map((d) => d.id)), [tableSourceDocs]);
+
+  /** ตีกลับ/ร่าง/รอตรวจ ที่ตารางเดือนนี้ไม่โหลด เพราะวันที่ในบิลอยู่นอกเดือน */
+  const actionableOutsideView = useMemo(() => {
+    const term = searchTerm.trim();
+    return actionableDocs
+      .filter((d) => !visibleDocIds.has(d.id))
+      .filter((d) => statusFilter === "ALL" || d.status === statusFilter)
+      .filter((d) => !term || purchaseMatchesSearch(d, term))
+      .sort((a, b) => (b.docDate || "").localeCompare(a.docDate || ""));
+  }, [actionableDocs, visibleDocIds, searchTerm, statusFilter]);
 
   const totals = useMemo(() => {
     return filteredDocs.reduce(
@@ -281,6 +330,67 @@ export default function PurchaseDocsListPage() {
               </SelectContent>
             </Select>
           </div>
+
+          {actionableOutsideView.length > 0 && (
+            <div className="rounded-md border border-amber-200 bg-amber-50/70">
+              <div className="px-4 py-3">
+                <div className="text-sm font-semibold text-amber-950">รายการที่ต้องแก้ไข ({actionableOutsideView.length})</div>
+                <p className="text-xs text-amber-900/80 mt-0.5">
+                  ฉบับร่าง ตีกลับ และรอตรวจสอบ ที่วันที่ในบิลไม่ได้อยู่ในเดือนที่เลือก จึงไม่แสดงในตารางด้านล่าง
+                </p>
+              </div>
+              <div className="border-t border-amber-200 max-h-80 overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>วันที่ในบิล</TableHead>
+                      <TableHead>เลขที่เอกสาร</TableHead>
+                      <TableHead>ร้านค้า</TableHead>
+                      <TableHead>เลขที่บิล</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right">ยอดรวม</TableHead>
+                      <TableHead className="text-right">จัดการ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {actionableOutsideView.map((purchaseDoc) => {
+                      const statusInfo = getStatusDisplay(purchaseDoc.status);
+                      const canEdit = ["DRAFT", "REJECTED", "PENDING_REVIEW"].includes(purchaseDoc.status);
+                      return (
+                        <TableRow key={purchaseDoc.id}>
+                          <TableCell>{purchaseDoc.docDate ? safeFormat(new Date(normalizeGregorianDateOnlyString(purchaseDoc.docDate)), APP_DATE_FORMAT) : "-"}</TableCell>
+                          <TableCell className="font-medium">{purchaseDoc.docNo}</TableCell>
+                          <TableCell>{purchaseDoc.vendorSnapshot?.shortName || purchaseDoc.vendorSnapshot?.companyName || "-"}</TableCell>
+                          <TableCell>{purchaseDoc.invoiceNo}</TableCell>
+                          <TableCell>
+                            <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{formatCurrency(purchaseDoc.grandTotal)}</TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4"/></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem asChild>
+                                  <Link href={`/app/office/parts/purchases/${purchaseDoc.id}`}><Eye className="mr-2 h-4 w-4"/> ดูรายละเอียด</Link>
+                                </DropdownMenuItem>
+                                {canEdit && (
+                                  <DropdownMenuItem asChild>
+                                    <Link href={isPurchaseDocServiceLike(purchaseDoc) ? `/app/office/parts/purchases/service/new?editDocId=${purchaseDoc.id}` : `/app/office/parts/purchases/new?editDocId=${purchaseDoc.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link>
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
 
           <div className="border rounded-md">
             <Table>

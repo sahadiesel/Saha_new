@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useDeferredValue, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { collection, onSnapshot, query, where, type FirestoreError, doc, updateDoc, serverTimestamp, deleteDoc, orderBy, type OrderByDirection, limit, getDoc, getDocs, deleteField, writeBatch, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, where, doc, updateDoc, serverTimestamp, orderBy, type OrderByDirection, limit, getDoc, deleteField, writeBatch } from "firebase/firestore";
 import type { AccountingObligation } from "@/lib/types";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
@@ -36,7 +36,6 @@ import {
 } from "@/lib/quotation-picker";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import {
-  repairActiveReceiptTaxInvoiceLinks,
   taxInvoiceReceiptDisplayMeta,
   billingNoteDisplayMeta,
 } from "@/lib/receipt-tax-invoice-link";
@@ -44,7 +43,6 @@ import { isDocumentAwaitingReceipt } from "@/lib/accounting-receipt-inbox";
 import {
   cancelUnconfirmedReceipt,
   isReceiptPaymentConfirmed,
-  repairLinkedTaxInvoicesAfterReceiptCancel,
   reverseConfirmedReceipt,
 } from "@/lib/reverse-confirmed-receipt";
 import { documentAmountBeforeTax } from "@/lib/document-amounts";
@@ -130,8 +128,34 @@ interface DocumentListProps {
   baseContext?: 'office' | 'accounting';
 }
 
-const MONTH_SCOPED_DOC_TYPES: DocType[] = ["TAX_INVOICE", "DELIVERY_NOTE", "RECEIPT"];
-const RECENT_DOCUMENTS_LIMIT = 2500;
+const MONTH_SCOPED_DOC_TYPES: DocType[] = [
+  "TAX_INVOICE",
+  "DELIVERY_NOTE",
+  "RECEIPT",
+  "BILLING_NOTE",
+  "CREDIT_NOTE",
+  "DEBIT_NOTE",
+  "WITHHOLDING_TAX",
+];
+const RECENT_ALL_MONTHS_LIMIT_INITIAL = 200;
+const RECENT_ALL_MONTHS_LIMIT_MAX = 800;
+
+function currentYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** ตัวเลือกเดือนในตัวกรอง — ไม่ต้องโหลดเอกสารทั้งคลังมาสร้างรายการ */
+function rollingYearMonths(count = 36): string[] {
+  const months: string[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < count; i++) {
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return months;
+}
 
 /** docDate เป็น YYYY-MM-DD — คืนวันแรก/วันสุดท้ายของเดือน YYYY-MM */
 function documentMonthBounds(yyyyMm: string): { start: string; end: string } {
@@ -247,13 +271,9 @@ export function DocumentList({
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [prefixFilter, setPrefixFilter] = useState("ALL");
-  const [monthFilter, setMonthFilter] = useState(() => {
-    if (docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE") return "ALL";
-    if (docType !== "RECEIPT") return "ALL";
-    const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    return `${now.getFullYear()}-${month}`;
-  });
+  const [monthFilter, setMonthFilter] = useState(() =>
+    usesMonthScopedLoad ? currentYearMonth() : "ALL"
+  );
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   
   const [docToAction, setDocToAction] = useState<Document | null>(null);
@@ -266,11 +286,11 @@ export function DocumentList({
 
   /** ใบเสนอราคา: โหลดเป็นชุดเล็กก่อน (เรียงตามแก้ไขล่าสุด) เพื่อลดเวลาเปิดหน้า — กดโหลดเพิ่มได้ */
   const [quotationFetchLimit, setQuotationFetchLimit] = useState(500);
+  const [recentFetchLimit, setRecentFetchLimit] = useState(RECENT_ALL_MONTHS_LIMIT_INITIAL);
   const [quotationSearchDocuments, setQuotationSearchDocuments] = useState<Document[]>([]);
   const [quotationSearchLoading, setQuotationSearchLoading] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm.trim());
   const listFirstLoadRef = useRef(true);
-  const taxInvoiceRepairRanRef = useRef(false);
 
   const [billingReceiptOpen, setBillingReceiptOpen] = useState(false);
   const [billingReceiptSource, setBillingReceiptSource] = useState<Document | null>(null);
@@ -400,17 +420,19 @@ export function DocumentList({
   }, [listDocuments]);
 
   const availableMonths = useMemo(() => {
-    const months = new Set<string>();
-    allDocuments.forEach((d) => {
-      if (typeof d.docDate === "string" && d.docDate.length >= 7) {
-        months.add(d.docDate.slice(0, 7));
-      }
-    });
-    if (monthFilter !== "ALL") {
-      months.add(monthFilter);
-    }
+    const months = new Set(rollingYearMonths(36));
+    const addFrom = (docs: Document[]) => {
+      docs.forEach((d) => {
+        if (typeof d.docDate === "string" && d.docDate.length >= 7) {
+          months.add(d.docDate.slice(0, 7));
+        }
+      });
+    };
+    addFrom(allDocuments);
+    addFrom(monthScopedDocuments);
+    if (monthFilter !== "ALL") months.add(monthFilter);
     return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [allDocuments, monthFilter]);
+  }, [allDocuments, monthScopedDocuments, monthFilter]);
 
   /** รวมข้อความจากรายการอะไหล่เป็นสตริงเดียว — ค้นหาไม่ต้องวน items ทุกครั้ง */
   const lineItemSearchBlobByDocId = useMemo(() => {
@@ -436,6 +458,7 @@ export function DocumentList({
     setQuotationSearchDocuments([]);
     setQuotationSearchLoading(false);
     listFirstLoadRef.current = true;
+    setRecentFetchLimit(RECENT_ALL_MONTHS_LIMIT_INITIAL);
   }, [docType]);
 
   useEffect(() => {
@@ -476,6 +499,9 @@ export function DocumentList({
 
   useEffect(() => {
     if (!db) return;
+    if (usesMonthScopedLoad && monthFilter !== "ALL") {
+      return;
+    }
     const firestoreQuery =
       docType === "QUOTATION"
         ? query(
@@ -489,7 +515,7 @@ export function DocumentList({
               collection(db, "documents"),
               where("docType", "==", docType),
               orderBy("docDate", "desc"),
-              limit(RECENT_DOCUMENTS_LIMIT)
+              limit(recentFetchLimit)
             )
           : query(
               collection(db, "documents"),
@@ -532,45 +558,7 @@ export function DocumentList({
       }
     );
     return () => unsubscribe();
-  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, usesMonthScopedLoad, toast]);
-
-  useEffect(() => {
-    if (!db || docType !== "TAX_INVOICE" || taxInvoiceRepairRanRef.current) return;
-    taxInvoiceRepairRanRef.current = true;
-    (async () => {
-      try {
-        const snap = await getDocs(
-          query(
-            collection(db, "documents"),
-            where("docType", "==", "RECEIPT"),
-            where("status", "==", "CANCELLED"),
-            limit(100)
-          )
-        );
-        let totalFixed = 0;
-        for (const d of snap.docs) {
-          const rec = { id: d.id, ...d.data() } as Document;
-          if (!rec.reversalEntryId) continue;
-          totalFixed += await repairLinkedTaxInvoicesAfterReceiptCancel(db, rec);
-        }
-        if (totalFixed > 0) {
-          toast({
-            title: "อัปเดตสถานะใบกำกับ",
-            description: `ซ่อมสถานะที่ค้าง "รับเงินแล้ว" หลังยกเลิกใบเสร็จ ${totalFixed} รายการ`,
-          });
-        }
-        const linkFixed = await repairActiveReceiptTaxInvoiceLinks(db);
-        if (linkFixed > 0) {
-          toast({
-            title: "ซิงก์ใบกำกับกับใบเสร็จ",
-            description: `อัปเดตลิงก์ใบเสร็จ/สถานะ ${linkFixed} รายการ`,
-          });
-        }
-      } catch (e) {
-        console.error("repairLinkedTaxInvoicesAfterReceiptCancel", e);
-      }
-    })();
-  }, [db, docType, toast]);
+  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, recentFetchLimit, usesMonthScopedLoad, monthFilter, toast]);
 
   useEffect(() => {
     if (!db || !usesMonthScopedLoad || monthFilter === "ALL") {
@@ -709,7 +697,7 @@ export function DocumentList({
   const paginatedDocuments = useMemo(() => processedDocuments.slice(currentPage * limitProp, (currentPage + 1) * limitProp), [processedDocuments, currentPage, limitProp]);
   const totalPages = Math.max(1, Math.ceil(processedDocuments.length / limitProp));
   
-  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter, quotationFetchLimit]);
+  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter, quotationFetchLimit, recentFetchLimit]);
 
   /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
   const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
@@ -964,7 +952,7 @@ export function DocumentList({
           )}
           <div className="flex flex-col md:flex-row gap-3">
             <div className="w-full md:w-48"><Select value={prefixFilter} onValueChange={setPrefixFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Hash className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="Prefix..." /></div></SelectTrigger><SelectContent><SelectItem value="ALL">ทุก Prefix</SelectItem>{availablePrefixes.map(p => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent></Select></div>
-            {(docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE" || docType === "RECEIPT") && (
+            {usesMonthScopedLoad && (
               <div className="w-full md:w-40">
                 <Select value={monthFilter} onValueChange={setMonthFilter}>
                   <SelectTrigger className="bg-background">
@@ -995,6 +983,26 @@ export function DocumentList({
             /></div>
             <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
+          {usesMonthScopedLoad && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span>
+                {monthFilter === "ALL"
+                  ? `โหมดทุกเดือนโหลดเฉพาะ ${allDocuments.length} ฉบับล่าสุด (สูงสุด ${recentFetchLimit}) — เลือกเดือนเพื่อดูทั้งเดือนและยอดรวมเดือนนั้น`
+                  : `แสดงเอกสารเดือน ${monthFilter} ทั้งเดือน`}
+              </span>
+              {monthFilter === "ALL" && allDocuments.length >= recentFetchLimit && recentFetchLimit < RECENT_ALL_MONTHS_LIMIT_MAX && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setRecentFetchLimit((n) => Math.min(n + 200, RECENT_ALL_MONTHS_LIMIT_MAX))}
+                >
+                  โหลดเพิ่ม (+200 ฉบับ)
+                </Button>
+              )}
+            </div>
+          )}
           {docType === "QUOTATION" && (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <span>

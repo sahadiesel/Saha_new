@@ -1010,13 +1010,31 @@ function AccountingInboxPageContent() {
     if (!db || !disputingDoc || !disputeReason.trim()) return;
     setIsSubmitting(true);
     const docRef = doc(db, 'documents', disputingDoc.id);
-    const updateData = {
-      status: 'REJECTED',
-      dispute: { isDisputed: true, reason: disputeReason, createdAt: serverTimestamp() },
-      updatedAt: serverTimestamp()
-    };
     try {
-      await updateDoc(docRef, updateData);
+      const arIds = Array.from(
+        new Set([disputingDoc.arObligationId, `AR_${disputingDoc.id}`].filter((id): id is string => Boolean(id)))
+      );
+      const arSnaps = await Promise.all(arIds.map((id) => getDoc(doc(db, "accountingObligations", id))));
+      const batch = writeBatch(db);
+      let keepPaidAr = false;
+      arSnaps.forEach((snap, index) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as { amountPaid?: number; sourceDocId?: string; type?: string };
+        if (data.type && data.type !== "AR") return;
+        if (data.sourceDocId && data.sourceDocId !== disputingDoc.id) return;
+        if (Number(data.amountPaid || 0) > 0.009) {
+          keepPaidAr = true;
+          return;
+        }
+        batch.delete(doc(db, "accountingObligations", arIds[index]!));
+      });
+      batch.update(docRef, {
+        status: "REJECTED",
+        dispute: { isDisputed: true, reason: disputeReason, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+        ...(!keepPaidAr ? { arObligationId: deleteField() } : {}),
+      });
+      await batch.commit();
       if (disputingDoc.jobId) {
           const jobRef = doc(db, 'jobs', disputingDoc.jobId);
           const jobSnap = await getDoc(jobRef);
@@ -1112,9 +1130,6 @@ function AccountingInboxPageContent() {
 
         if (d.docType === "DELIVERY_NOTE") {
           const dW = { ...d, id: docObj.id } as WithId<DocumentType>;
-          if (d.arObligationId) {
-            throw new Error("เอกสารนี้ตั้งลูกหนี้แล้ว");
-          }
           if (isDeliveryNotePartialCashAndCredit(dW) && !d.deliveryInboxCashConfirmed) {
             throw new Error("กรุณาไปแท็บ รอตรวจสอบ (Cash/Mixed) ยืนยันรับเงินก่อน");
           }
@@ -1126,6 +1141,17 @@ function AccountingInboxPageContent() {
             jobSnapForDn = await transaction.get(jobRefPre);
           }
 
+          /** ตีกลับแล้วส่งตรวจใหม่: ฟิลด์ arObligationId อาจค้างทั้งที่รายการลูกหนี้ถูกลบหรือยังไม่รับชำระ */
+          const targetArId = (d.arObligationId || arId).trim() || arId;
+          const targetArRef = doc(db, "accountingObligations", targetArId);
+          const existingArSnap = await transaction.get(targetArRef);
+          if (existingArSnap.exists()) {
+            const paid = Number((existingArSnap.data() as { amountPaid?: number }).amountPaid || 0);
+            if (paid > 0.009) {
+              throw new Error(`ลูกหนี้ของ ${d.docNo} มีการรับชำระแล้ว — ค้น "${d.docNo}" ในหน้าลูกหนี้`);
+            }
+          }
+
           if (isDeliveryNotePartialCashAndCredit(dW) && d.deliveryInboxCashConfirmed) {
             const arAmount =
               d.paymentSummary != null
@@ -1134,11 +1160,10 @@ function AccountingInboxPageContent() {
             if (arAmount <= 0.01) {
               throw new Error("ไม่มียอดลูกหนี้คงค้าง หรืออาจลงรับรับรู้แล้ว กรุณารีเฟรช");
             }
-            const dnArRef2 = doc(db, "accountingObligations", arId);
             transaction.set(
-              dnArRef2,
+              targetArRef,
               sanitizeForFirestore({
-                id: arId,
+                id: targetArId,
                 type: "AR",
                 status: "UNPAID",
                 sourceDocType: "DELIVERY_NOTE",
@@ -1158,7 +1183,7 @@ function AccountingInboxPageContent() {
             );
             const sumPaid0 = sumDocSuggestedPayments(d);
             transaction.update(docRef, {
-              arObligationId: arId,
+              arObligationId: targetArId,
               arStatus: "PARTIAL",
               status: "PARTIAL",
               paymentSummary: {
@@ -1264,11 +1289,10 @@ function AccountingInboxPageContent() {
           }
 
           if (arAmount > 0.01) {
-            const dnArRef = doc(db, "accountingObligations", arId);
             transaction.set(
-              dnArRef,
+              targetArRef,
               sanitizeForFirestore({
-                id: arId,
+                id: targetArId,
                 type: "AR",
                 status: "UNPAID",
                 sourceDocType: "DELIVERY_NOTE",
@@ -1312,7 +1336,7 @@ function AccountingInboxPageContent() {
             paymentSummary: { paidTotal: sumPaid, balance: arAmount, paymentStatus: ps },
             updatedAt: serverTimestamp(),
             paymentDate: entryYmd,
-            ...(arAmount > 0.01 ? { arObligationId: arId } : { arObligationId: deleteField() }),
+            ...(arAmount > 0.01 ? { arObligationId: targetArId } : { arObligationId: deleteField() }),
             ...(hasCash
               ? { accountingEntryId: `AUTO_CASH_${docObj.id}`, receivedAccountId: payLines[0]!.accountId }
               : { accountingEntryId: deleteField(), receivedAccountId: deleteField() }),
