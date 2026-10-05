@@ -14,6 +14,7 @@ import {
   serverTimestamp,
   getDoc,
   getDocs,
+  setDoc,
   deleteField,
   type FirestoreError,
   type Firestore,
@@ -324,10 +325,145 @@ function AddCreditorDialog({
     return (<Dialog open={isOpen} onOpenChange={onClose}><DialogContent className="max-h-[90vh] flex flex-col p-0 overflow-hidden"><DialogHeader className="p-6 pb-0"><DialogTitle>เพิ่มเจ้าหนี้ใหม่</DialogTitle><DialogDescription>บันทึกบิลที่ได้รับจากร้านค้าภายนอก</DialogDescription></DialogHeader><div className="flex-1 overflow-y-auto px-6 py-4"><Form {...form}><form id="add-creditor-form" onSubmit={form.handleSubmit(handleSave)} className="space-y-4"><FormField name="vendorId" control={form.control} render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>Vendor</FormLabel><Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}><PopoverTrigger asChild><FormControl><Button variant="outline" role="combobox" className="justify-between">{field.value ? vendors.find(v => v.id === field.value)?.shortName : "เลือก Vendor..."}<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start"><Command><CommandInput placeholder="ค้นหา..." value={vendorSearch} onValueChange={setVendorSearch}/><CommandList><CommandEmpty>ไม่พบ Vendor</CommandEmpty><CommandGroup>{filteredVendors.map((v) => (<CommandItem value={v.shortName} key={v.id} onSelect={() => { field.onChange(v.id); setIsPopoverOpen(false); }}>{v.shortName} - {v.companyName}</CommandItem>))}</CommandGroup></CommandList></Command></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField name="invoiceNo" render={({ field }) => (<FormItem><FormLabel>เลขที่บิล (Invoice No.)</FormLabel><FormControl><Input {...field}/></FormControl><FormMessage/></FormItem>)}/><FormField name="amountTotal" render={({ field }) => (<FormItem><FormLabel>ยอดเงินรวม</FormLabel><FormControl><Input type="number" {...field}/></FormControl><FormMessage/></FormItem>)}/><div className="grid grid-cols-2 gap-4"><FormField control={form.control} name="docDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันที่บนบิล</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)}/><FormField control={form.control} name="dueDate" render={({ field }) => (<FormItem className="flex flex-col"><FormLabel>วันครบกำหนดจ่าย (ไม่บังคับ)</FormLabel><Popover><PopoverTrigger asChild><FormControl><Button variant={"outline"} className={cn("w-full pl-3 text-left font-normal h-10", !field.value && "text-muted-foreground")}>{field.value ? dfFormat(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}<CalendarDays className="ml-auto h-4 w-4 opacity-50"/></Button></FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value ? parseISO(field.value) : undefined} onSelect={(date) => field.onChange(date ? dfFormat(date, "yyyy-MM-dd") : "")} initialFocus/></PopoverContent></Popover><FormMessage/></FormItem>)} /></div><FormField control={form.control} name="expectedPaymentAccountId" render={({ field }) => (<FormItem><FormLabel>บัญชีที่คาดว่าจะจ่าย (ไม่บังคับ)</FormLabel><Select onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)} value={field.value && field.value !== "__none__" ? field.value : "__none__"}><FormControl><SelectTrigger><SelectValue placeholder="ไม่ระบุ"/></SelectTrigger></FormControl><SelectContent><SelectItem value="__none__">ไม่ระบุ</SelectItem>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent></Select></FormItem>)}/><FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>หมายเหตุ</FormLabel><FormControl><Textarea {...field}/></FormControl></FormItem>)}/></form></Form></div><DialogFooter className="p-6 pt-4 border-t bg-muted/10"><Button variant="outline" onClick={onClose} disabled={isSubmitting}>ยกเลิก</Button><Button type="submit" form="add-creditor-form" disabled={isSubmitting}>{isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}บันทึก</Button></DialogFooter></DialogContent></Dialog>)
 }
 
+const SALES_DOC_PREFIXES = ["DN", "INV", "BN", "CN", "DBN", "RE"];
+
+/** เลขท้ายอย่าง 1549 → DN2026-1549 และรูปแบบปีนำหน้า เผื่อเลขที่ในระบบสลับลำดับ */
+function docNoSearchCandidates(rawTerm: string, prefixes: string[]): string[] {
+  const compact = rawTerm.trim().toUpperCase().replace(/\s|-/g, "");
+  if (compact.length < 3) return [];
+  const out = new Set<string>();
+  const prefixYear = compact.match(/^([A-Z]+)(\d{4})(\d+)$/);
+  if (prefixYear) {
+    const [, pre, year, num] = prefixYear;
+    out.add(`${pre}${year}-${num}`);
+    out.add(`${year}${pre}-${num}`);
+    return [...out];
+  }
+  const yearPrefix = compact.match(/^(\d{4})([A-Z]+)(\d+)$/);
+  if (yearPrefix) {
+    const [, year, pre, num] = yearPrefix;
+    out.add(`${pre}${year}-${num}`);
+    out.add(`${year}${pre}-${num}`);
+    return [...out];
+  }
+  if (/^\d+$/.test(compact)) {
+    const seq = compact.padStart(4, "0");
+    const year = new Date().getFullYear();
+    for (const pre of prefixes) {
+      const p = pre.trim().toUpperCase();
+      if (!p) continue;
+      for (const y of [year, year - 1, year - 2]) {
+        out.add(`${p}${y}-${seq}`);
+        if (seq !== compact) out.add(`${p}${y}-${compact}`);
+      }
+    }
+    return [...out];
+  }
+  out.add(rawTerm.trim().toUpperCase());
+  return [...out];
+}
+
+/**
+ * หน้ารายการโหลดลูกหนี้มาแค่ชุดจำกัด แล้วค่อยกรองในหน้า
+ * บิลที่เพิ่งตั้ง (เช่น DN2026-1549) เลยค้นไม่เจอ ทั้งที่มีอยู่ในฐานข้อมูล
+ */
+async function fetchObligationsMatchingDocNo(
+  db: Firestore,
+  rawTerm: string,
+  type: "AR" | "AP"
+): Promise<WithId<AccountingObligation>[]> {
+  const settingsSnap = await getDoc(doc(db, "settings", "documents"));
+  const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+  const prefixes = [
+    ...SALES_DOC_PREFIXES,
+    settings.deliveryNotePrefix,
+    settings.taxInvoicePrefix,
+    settings.billingNotePrefix,
+    settings.creditNotePrefix,
+    settings.debitNotePrefix,
+    settings.receiptPrefix,
+    type === "AP" ? settings.purchasePrefix : undefined,
+  ].filter((p): p is string => typeof p === "string" && p.trim().length > 0);
+
+  const candidates = docNoSearchCandidates(rawTerm, prefixes);
+  if (candidates.length === 0) return [];
+
+  const byId = new Map<string, WithId<AccountingObligation>>();
+  const addOb = (id: string, data: AccountingObligation) => {
+    if (data.type && data.type !== type) return;
+    byId.set(id, { ...data, id });
+  };
+
+  await Promise.all(
+    candidates.map(async (docNo) => {
+      const [obSnap, docSnap] = await Promise.all([
+        getDocs(query(collection(db, "accountingObligations"), where("sourceDocNo", "==", docNo), limit(8))).catch(() => null),
+        getDocs(query(collection(db, "documents"), where("docNo", "==", docNo), limit(5))).catch(() => null),
+      ]);
+      obSnap?.docs.forEach((d) => addOb(d.id, d.data() as AccountingObligation));
+      if (!docSnap) return;
+
+      await Promise.all(
+        docSnap.docs.map(async (d) => {
+          const data = d.data() as DocumentType;
+          const ids = Array.from(new Set([data.arObligationId, `AR_${d.id}`].filter((id): id is string => Boolean(id))));
+          const snaps = await Promise.all(ids.map((id) => getDoc(doc(db, "accountingObligations", id))));
+          snaps.forEach((s) => {
+            if (s.exists()) addOb(s.id, s.data() as AccountingObligation);
+          });
+          const bySource = await getDocs(
+            query(collection(db, "accountingObligations"), where("sourceDocId", "==", d.id), limit(8))
+          ).catch(() => null);
+          bySource?.docs.forEach((s) => addOb(s.id, s.data() as AccountingObligation));
+
+          const already = [...byId.values()].some((ob) => ob.sourceDocId === d.id);
+          const canCreate =
+            type === "AR" &&
+            !already &&
+            (data.docType === "DELIVERY_NOTE" || data.docType === "TAX_INVOICE" || data.docType === "DEBIT_NOTE") &&
+            (data.status === "UNPAID" || data.status === "PARTIAL") &&
+            (data.grandTotal || 0) > 0.009;
+          if (!canCreate) return;
+
+          const arId = data.arObligationId || `AR_${d.id}`;
+          const balance = data.paymentSummary?.balance ?? data.grandTotal ?? 0;
+          const payload = sanitizeForFirestore({
+            id: arId,
+            type: "AR",
+            status: balance > 0.009 ? (data.status === "PARTIAL" ? "PARTIAL" : "UNPAID") : "PAID",
+            sourceDocType: data.docType,
+            sourceDocId: d.id,
+            sourceDocNo: data.docNo,
+            amountTotal: data.grandTotal,
+            amountPaid: data.paymentSummary?.paidTotal ?? 0,
+            balance,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            customerId: data.customerId || data.customerSnapshot?.id || null,
+            customerNameSnapshot: data.customerSnapshot?.name || data.customerSnapshot?.taxName || "Unknown",
+            jobId: data.jobId || null,
+            dueDate: data.dueDate || null,
+            docDate: data.docDate || null,
+          }) as AccountingObligation;
+          try {
+            await setDoc(doc(db, "accountingObligations", arId), payload, { merge: true });
+            addOb(arId, payload);
+          } catch {
+            /* สิทธิ์หรือเครือข่าย — ไม่ให้ค้นหาทั้งคำล้ม */
+          }
+        })
+      );
+    })
+  );
+
+  return [...byId.values()];
+}
+
 function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts, vendors, onSummaryChange, isAdmin }: { type: 'AR' | 'AP', searchTerm: string, monthFilter?: string, paymentFilter: PaymentStatusFilter, accounts: WithId<AccountingAccount>[], vendors: WithId<Vendor>[], onSummaryChange: (s: ReceivablesPayablesSummary) => void; isAdmin?: boolean }) {
     const { db } = useFirebase();
     const router = useRouter();
     const [obligations, setObligations] = useState<WithId<AccountingObligation>[]>([]);
+    const [searchedObligations, setSearchedObligations] = useState<WithId<AccountingObligation>[]>([]);
     const [loading, setLoading] = useState(true);
     const [docDetails, setDocDetails] = useState<
       Record<
@@ -725,10 +861,39 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
     }, [obligationsQuery, type]);
 
     useEffect(() => {
-        if (obligations.length === 0 || !db) return;
-        const sourceIds = Array.from(new Set(obligations.map(ob => ob.sourceDocId).filter(Boolean)));
+        if (!db) return;
+        const term = searchTerm.trim();
+        if (term.length < 3) {
+            setSearchedObligations([]);
+            return;
+        }
+        let cancelled = false;
+        const timer = setTimeout(() => {
+            void fetchObligationsMatchingDocNo(db, term, type).then((rows) => {
+                if (!cancelled) setSearchedObligations(rows);
+            });
+        }, 300);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [db, searchTerm, type]);
+
+    const listedObligations = useMemo(() => {
+        const map = new Map<string, WithId<AccountingObligation>>();
+        for (const ob of obligations) map.set(ob.id, ob);
+        for (const ob of searchedObligations) {
+            if (ob.type && ob.type !== type) continue;
+            map.set(ob.id, ob);
+        }
+        return [...map.values()];
+    }, [obligations, searchedObligations, type]);
+
+    useEffect(() => {
+        if (listedObligations.length === 0 || !db) return;
+        const sourceIds = Array.from(new Set(listedObligations.map(ob => ob.sourceDocId).filter(Boolean)));
         const unsubscribes = sourceIds.map((sourceId) => {
-            const ob = obligations.find((x) => x.sourceDocId === sourceId);
+            const ob = listedObligations.find((x) => x.sourceDocId === sourceId);
             const sourceCol = ob?.sourceDocType === "PURCHASE" ? "purchaseDocs" : "documents";
             return onSnapshot(doc(db, sourceCol, sourceId!), (docSnap) => {
                 if (!docSnap.exists()) return;
@@ -760,10 +925,10 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
             }, () => {});
         });
         return () => unsubscribes.forEach((unsub) => unsub());
-    }, [obligations, db]);
+    }, [listedObligations, db]);
 
     const filteredObligations = useMemo(() => {
-        let result = [...obligations];
+        let result = [...listedObligations];
         if (monthFilter && monthFilter !== 'ALL') {
             result = result.filter(ob => {
                 const docDate = ob.docDate || (ob as any).createdAt?.toDate?.()?.toISOString()?.split('T')[0];
@@ -814,7 +979,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
             });
         }
         return result;
-    }, [obligations, searchTerm, monthFilter, paymentFilter, docDetails, type, vendors]);
+    }, [listedObligations, searchTerm, monthFilter, paymentFilter, docDetails, type, vendors]);
 
     useEffect(() => {
         let paidNet = 0;
