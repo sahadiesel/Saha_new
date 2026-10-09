@@ -254,6 +254,12 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const alreadySentForReview = docStatusKey === "PENDING_REVIEW";
   const canSendForAccountingReview =
     !isCancelled && (!isEditing || ["DRAFT", "REJECTED"].includes(docStatusKey));
+  /** ออกบิลแล้ว — แก้แล้วทับฉบับเดิม ไม่บันทึกเป็นร่างและไม่เปลี่ยนสถานะ */
+  const keepIssuedStatus =
+    isEditing &&
+    !!docToEdit &&
+    !isCancelled &&
+    !["DRAFT", "REJECTED", ""].includes(docStatusKey);
 
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
@@ -408,9 +414,29 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
 
     setIsProcessing(true);
-    
-    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
-    const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
+
+    const priorStatus = String(docToEdit?.status ?? "").toUpperCase();
+    const preserveIssued =
+      isEditing &&
+      !!docToEdit &&
+      !["DRAFT", "REJECTED", "CANCELLED", ""].includes(priorStatus);
+    const targetStatus = preserveIssued
+      ? docToEdit.status
+      : submitForReview
+        ? "PENDING_REVIEW"
+        : "DRAFT";
+    const targetJobStatus: JobStatus = submitForReview ? "PICKED_UP" : "WAITING_CUSTOMER_PICKUP";
+    const paidTotal = preserveIssued ? Number(docToEdit.paymentSummary?.paidTotal || 0) : 0;
+    const nextPaymentSummary = preserveIssued
+      ? {
+          ...docToEdit.paymentSummary,
+          paidTotal,
+          balance: Math.round((data.grandTotal - paidTotal) * 100) / 100,
+          paymentStatus:
+            docToEdit.paymentSummary?.paymentStatus ||
+            (priorStatus === "PAID" ? "PAID" : priorStatus === "PARTIAL" ? "PARTIAL" : "UNPAID"),
+        }
+      : { paidTotal: 0, balance: data.grandTotal, paymentStatus: "UNPAID" as const };
     
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
@@ -433,8 +459,14 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
           carSnapshot, 
           storeSnapshot: storeSettings, 
           withTax: true, 
-          paymentSummary: { paidTotal: 0, balance: data.grandTotal, paymentStatus: 'UNPAID' }, 
-          arStatus: submitForReview ? 'PENDING' : (isEditing ? docToEdit?.arStatus : null), 
+          paymentSummary: nextPaymentSummary,
+          arStatus: preserveIssued
+            ? docToEdit.arStatus
+            : submitForReview
+              ? "PENDING"
+              : isEditing
+                ? docToEdit?.arStatus
+                : null,
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
         
@@ -447,8 +479,22 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               ...payload,
               status: targetStatus,
               updatedAt: serverTimestamp(),
-              dispute: { isDisputed: false, reason: "" },
+              ...(preserveIssued ? {} : { dispute: { isDisputed: false, reason: "" } }),
             }));
+
+            if (preserveIssued) {
+              const arRef = doc(db, "accountingObligations", `AR_${effectiveEditDocId}`);
+              const arSnap = await getDoc(arRef);
+              if (arSnap.exists()) {
+                const ob = arSnap.data() as { amountPaid?: number };
+                const amountPaid = Number(ob.amountPaid || 0);
+                batch.update(arRef, {
+                  amountTotal: data.grandTotal,
+                  balance: Math.max(0, Math.round((data.grandTotal - amountPaid) * 100) / 100),
+                  updatedAt: serverTimestamp(),
+                });
+              }
+            }
             
             if (linkedJobId) {
                 const jobRef = doc(db, 'jobs', linkedJobId);
@@ -456,7 +502,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                 const jobSnap = await getDoc(jobRef);
                 if (jobSnap.exists()) {
                     batch.update(jobRef, {
-                        status: targetJobStatus,
+                        ...(preserveIssued ? {} : { status: targetJobStatus }),
                         salesDocId: effectiveEditDocId,
                         salesDocNo: finalDocNo,
                         salesDocType: 'TAX_INVOICE',
@@ -470,7 +516,13 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         } else {
             await createDocument(db, 'TAX_INVOICE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
-        toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกฉบับร่างสำเร็จ" });
+        toast({
+          title: preserveIssued
+            ? "บันทึกใบกำกับแล้ว (สถานะเดิม)"
+            : submitForReview
+              ? "ส่งตรวจสอบสำเร็จ"
+              : "บันทึกฉบับร่างสำเร็จ",
+        });
         router.push('/app/office/documents/tax-invoice');
     } catch (e: any) { 
       toast({ variant: "destructive", title: "Error", description: e.message }); 
@@ -701,7 +753,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             <div className="flex gap-2">
               <Button type="button" variant="secondary" onClick={submitSaveDraft} disabled={isLocked || isProcessing || isCancelled}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
-                บันทึกฉบับร่าง
+                {keepIssuedStatus ? "บันทึก" : "บันทึกฉบับร่าง"}
               </Button>
               {awaitingReceiptInInbox ? (
                 <Button type="button" asChild className="bg-primary font-bold">
