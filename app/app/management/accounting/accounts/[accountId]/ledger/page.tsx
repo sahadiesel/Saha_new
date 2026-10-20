@@ -6,7 +6,6 @@ import { doc, collection, query, where, getDocs, getDoc, onSnapshot, updateDoc, 
 import { useFirebase, type WithId } from "@/firebase";
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/hooks/use-toast';
-import { DateRange } from "react-day-picker";
 import { format, parseISO, startOfDay, startOfMonth, endOfMonth, isBefore, isValid } from 'date-fns';
 
 import { PageHeader } from '@/components/page-header';
@@ -62,11 +61,9 @@ export default function AccountLedgerPage() {
 
     const [account, setAccount] = useState<WithId<AccountingAccount> | null>(null);
     const [entries, setEntries] = useState<WithId<AccountingEntry>[]>([]);
-    /** ค่าเริ่มต้น: เดือนปัจจุบัน (ครบทั้งเดือน) — ใช้ปุ่มล้างช่วงเพื่อดูทุกช่วงเวลา */
-    const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
-        const now = new Date();
-        return { from: startOfMonth(now), to: endOfMonth(now) };
-    });
+    /** ค่าเริ่มต้น: เดือนปัจจุบัน (ครบทั้งเดือน) — ล้างทั้งสองช่องเพื่อดูทุกช่วงเวลา */
+    const [startDate, setStartDate] = useState<Date | undefined>(() => startOfMonth(new Date()));
+    const [endDate, setEndDate] = useState<Date | undefined>(() => endOfMonth(new Date()));
     const [searchTerm, setSearchTerm] = useState("");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -206,7 +203,7 @@ export default function AccountLedgerPage() {
                 displayRows: [],
                 showBridge: false,
                 bridgeDateLabel: "—",
-                totals: { totalIncome: 0, totalExpense: 0 },
+                totals: { totalIncome: 0, totalExpense: 0, incomeCount: 0, expenseCount: 0 },
                 periodStartingBalance: 0,
                 listPageBalance: 0,
                 hiddenLedgerEntries: [] as { id: string; entryDate: string; description: string; sourceDocNo: string; income: number; expense: number }[],
@@ -250,11 +247,10 @@ export default function AccountLedgerPage() {
         
         // 3. Filter for visibility based on user range and search
         const visibleItems = allProcessed.filter((entry) => {
-            if (dateRange?.from && dateRange?.to) {
+            if (startDate || endDate) {
                 const entryKey = normalizeGregorianDateOnlyString(entry.entryDate);
-                const fromKey = format(startOfDay(dateRange.from), "yyyy-MM-dd");
-                const toKey = format(startOfDay(dateRange.to), "yyyy-MM-dd");
-                if (!(entryKey >= fromKey && entryKey <= toKey)) return false;
+                if (startDate && entryKey < format(startOfDay(startDate), "yyyy-MM-dd")) return false;
+                if (endDate && entryKey > format(startOfDay(endDate), "yyyy-MM-dd")) return false;
             }
     
             if (searchTerm.trim()) {
@@ -305,14 +301,16 @@ export default function AccountLedgerPage() {
         // 4. Summaries
         const totalIncome = visibleItems.reduce((sum, i) => sum + i.income, 0);
         const totalExpense = visibleItems.reduce((sum, i) => sum + i.expense, 0);
+        const incomeCount = visibleItems.filter((i) => i.income > 0).length;
+        const expenseCount = visibleItems.filter((i) => i.expense > 0).length;
 
         // ยอดก่อนรายการแรกที่แสดง (= ยอดยกมาของช่วงนี้ในแบบเดียวกับตัวอย่าง: ยกมา 1000 + เข้า 200 − ออก 100 = 1100)
         let periodStartingBalance = openingBalanceValue;
         if (visibleItems.length > 0) {
             const first = visibleItems[0];
             periodStartingBalance = Math.round((first.balance - (first.income - first.expense)) * 100) / 100;
-        } else if (dateRange?.from) {
-            const fromStr = format(dateRange.from, 'yyyy-MM-dd');
+        } else if (startDate) {
+            const fromStr = format(startDate, 'yyyy-MM-dd');
             const firstInRangeIdx = allProcessed.findIndex(item => item.entryDate >= fromStr);
             if (firstInRangeIdx !== -1) {
                 const firstItem = allProcessed[firstInRangeIdx];
@@ -392,9 +390,11 @@ export default function AccountLedgerPage() {
             totals: {
                 totalIncome: totalIncomeWithBridge,
                 totalExpense: totalExpenseWithBridge,
+                incomeCount,
+                expenseCount,
             },
         };
-    }, [account, entries, dateRange, searchTerm]);
+    }, [account, entries, startDate, endDate, searchTerm]);
 
     if (!profile) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
     
@@ -450,46 +450,88 @@ export default function AccountLedgerPage() {
                             </p>
                         </div>
                         <div className="flex flex-col gap-3 w-full md:max-w-xl shrink-0">
-                            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant={"outline"}
-                                            className={cn(
-                                                "w-full sm:min-w-[260px] justify-start text-left font-normal",
-                                                !dateRange && "text-muted-foreground"
-                                            )}
-                                        >
-                                            <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                                            {dateRange?.from ? (
-                                                dateRange.to ? (
-                                                    <>
-                                                        {format(dateRange.from, APP_DATE_FORMAT)} -{" "}
-                                                        {format(dateRange.to, APP_DATE_FORMAT)}
-                                                    </>
-                                                ) : (
-                                                    format(dateRange.from, APP_DATE_FORMAT)
-                                                )
-                                            ) : (
-                                                <span>ทุกช่วงเวลา</span>
-                                            )}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-auto p-0" align="end">
-                                        <Calendar mode="range" selected={dateRange} onSelect={setDateRange} numberOfMonths={2} />
-                                    </PopoverContent>
-                                </Popover>
-                                {dateRange != null && (
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs text-muted-foreground">ช่วงวันที่</p>
+                                {(startDate || endDate) && (
                                     <Button
                                         type="button"
                                         variant="ghost"
                                         size="sm"
-                                        className="shrink-0 w-full sm:w-auto"
-                                        onClick={() => setDateRange(undefined)}
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() => {
+                                            setStartDate(undefined);
+                                            setEndDate(undefined);
+                                        }}
                                     >
-                                        ล้างช่วง (แสดงทั้งหมด)
+                                        แสดงทั้งหมด
                                     </Button>
                                 )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                    <p className="text-xs font-medium">เริ่มต้น</p>
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                className={cn(
+                                                    "w-full justify-start text-left font-normal",
+                                                    !startDate && "text-muted-foreground"
+                                                )}
+                                            >
+                                                <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                                                {startDate ? format(startDate, APP_DATE_FORMAT) : "เลือกวันเริ่ม"}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-auto p-0" align="end">
+                                            <Calendar
+                                                mode="single"
+                                                selected={startDate}
+                                                onSelect={(date) => {
+                                                    setStartDate(date);
+                                                    if (date && endDate && isBefore(startOfDay(endDate), startOfDay(date))) {
+                                                        setEndDate(date);
+                                                    }
+                                                }}
+                                                initialFocus
+                                            />
+                                        </PopoverContent>
+                                    </Popover>
+                                </div>
+                                <div className="space-y-1">
+                                    <p className="text-xs font-medium">สิ้นสุด</p>
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                className={cn(
+                                                    "w-full justify-start text-left font-normal",
+                                                    !endDate && "text-muted-foreground"
+                                                )}
+                                            >
+                                                <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                                                {endDate ? format(endDate, APP_DATE_FORMAT) : "เลือกวันสิ้นสุด"}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-auto p-0" align="end">
+                                            <Calendar
+                                                mode="single"
+                                                selected={endDate}
+                                                onSelect={(date) => {
+                                                    if (date && startDate && isBefore(startOfDay(date), startOfDay(startDate))) {
+                                                        setEndDate(startDate);
+                                                        return;
+                                                    }
+                                                    setEndDate(date);
+                                                }}
+                                                disabled={startDate ? { before: startOfDay(startDate) } : undefined}
+                                                initialFocus
+                                            />
+                                        </PopoverContent>
+                                    </Popover>
+                                </div>
                             </div>
                             <div className="relative w-full">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -500,6 +542,20 @@ export default function AccountLedgerPage() {
                                     className="pl-10 w-full"
                                     aria-label="ค้นหารายการในสมุดบัญชี"
                                 />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                                    <p className="text-xs text-muted-foreground">จำนวนครั้งเงินเข้า</p>
+                                    <p className="text-lg font-bold text-green-600 tabular-nums">
+                                        {processedData.totals.incomeCount.toLocaleString("th-TH")} ครั้ง
+                                    </p>
+                                </div>
+                                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                                    <p className="text-xs text-muted-foreground">จำนวนครั้งเงินออก</p>
+                                    <p className="text-lg font-bold text-destructive tabular-nums">
+                                        {processedData.totals.expenseCount.toLocaleString("th-TH")} ครั้ง
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>

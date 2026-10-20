@@ -34,7 +34,8 @@ import {
   LineChart, 
   Line, 
   CartesianGrid, 
-  Legend 
+  Legend,
+  LabelList,
 } from "recharts";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -207,7 +208,7 @@ function AppDashboardPage() {
       () => mark("documents")
     );
 
-    // ดึงรายการสมุดบัญชีย้อนหลัง 12 เดือน เพื่อให้กราฟกระแสเงินสด (3 เดือน) มีข้อมูลครบ
+    // ดึงรายการสมุดบัญชีย้อนหลัง 12 เดือน เพื่อให้กราฟกระแสเงินสด (6 เดือน) มีข้อมูลครบ
     // ก่อนหน้านี้ใช้แค่ limit(600) ทำให้บางเดือน (เช่น เดือน 3) ถูกตัดออกเมื่อช่วงล่าสุดมีรายการเยอะ
     const entriesLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 11)), "yyyy-MM-dd");
     const unsubEntries = onSnapshot(
@@ -404,7 +405,7 @@ function AppDashboardPage() {
     });
 
     // 3. Dept Breakdown
-    const deptStats = JOB_DEPARTMENTS.map(dept => {
+    const deptStatsBase = JOB_DEPARTMENTS.map(dept => {
       const deptJobs = backlog.filter(j => j.department === dept);
       const now = new Date();
       return {
@@ -421,17 +422,29 @@ function AppDashboardPage() {
         }).length,
       };
     }).filter(d => d.count > 0);
+    const deptBacklogTotal = deptStatsBase.reduce((sum, d) => sum + d.count, 0);
+    const deptStats = deptStatsBase.map((d) => ({
+      ...d,
+      percent: deptBacklogTotal > 0 ? Math.round((d.count / deptBacklogTotal) * 100) : 0,
+    }));
 
-    const currentInflowByDept = JOB_DEPARTMENTS.map(dept => ({
-      name: deptLabel(dept),
-      value: currentInflow.filter(j => j.department === dept).length
-    })).filter(v => v.value > 0);
+    const inflowTotal = currentInflow.length;
+    const currentInflowByDept = JOB_DEPARTMENTS.map(dept => {
+      const value = currentInflow.filter(j => j.department === dept).length;
+      const percent = inflowTotal > 0 ? Math.round((value / inflowTotal) * 100) : 0;
+      return {
+        name: deptLabel(dept),
+        value,
+        percent,
+      };
+    }).filter(v => v.value > 0);
 
-    // 4. Financial Flow (3 Months - Bi-weekly points)
-    const cashFlowData = Array.from({ length: 6 }).map((_, i) => {
-      // 6 points = 3 months * 2 (bi-weekly)
-      const monthsAgo = Math.floor((5 - i) / 2);
-      const isSecondHalf = (5 - i) % 2 === 0;
+    // 4. Financial Flow (6 Months - Bi-weekly points)
+    const cashFlowData = Array.from({ length: 12 }).map((_, i) => {
+      // 12 points = 6 months * 2 (bi-weekly)
+      const offset = 11 - i;
+      const monthsAgo = Math.floor(offset / 2);
+      const isSecondHalf = offset % 2 === 0;
       
       const targetMonth = subMonths(from, monthsAgo);
       let rangeStart, rangeEnd;
@@ -536,7 +549,7 @@ function AppDashboardPage() {
       acqCounts[classifyJobAcquisition(job)]++;
     });
 
-    const acquisitionData = [
+    const acquisitionBase = [
       { name: "ลูกค้าเก่า", value: acqCounts.EXISTING, color: "hsl(var(--muted-foreground))" },
       { name: "ลูกค้าแนะนำ", value: acqCounts.REFERRAL, color: "hsl(var(--chart-1))" },
       { name: "Google", value: acqCounts.GOOGLE, color: "hsl(var(--chart-2))" },
@@ -545,6 +558,11 @@ function AppDashboardPage() {
       { name: "Youtube", value: acqCounts.YOUTUBE, color: "hsl(var(--chart-5))" },
       { name: "อื่นๆ", value: acqCounts.OTHER, color: "hsl(var(--primary))" },
     ].filter(v => v.value > 0);
+    const acquisitionTotal = acquisitionBase.reduce((sum, d) => sum + d.value, 0);
+    const acquisitionData = acquisitionBase.map((d) => ({
+      ...d,
+      percent: acquisitionTotal > 0 ? Math.round((d.value / acquisitionTotal) * 100) : 0,
+    }));
 
     const jobsLink = (metric: "inflow" | "outflow" | "backlog") =>
       buildJobsPageLink(metric, {
@@ -761,7 +779,7 @@ function AppDashboardPage() {
 
         <Card className="h-full flex flex-col">
           <CardHeader>
-            <CardTitle>กระแสเงินสด (3 เดือน)</CardTitle>
+            <CardTitle>กระแสเงินสด (6 เดือน)</CardTitle>
             <CardDescription>
               ภาพรวมเงินเข้า–ออกทุกครึ่งเดือน (ไม่นับโอนระหว่างบัญชีธนาคาร — นับเฉพาะรายรับ/รายจ่ายดำเนินงาน)
             </CardDescription>
@@ -771,7 +789,7 @@ function AppDashboardPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={stats.cashFlowData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" fontSize={12} />
+                  <XAxis dataKey="name" fontSize={10} interval={0} angle={-40} textAnchor="end" height={46} />
                   <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} fontSize={12} />
                   <Tooltip formatter={(v: any) => `฿${formatCurrency(Number(v))}`} />
                   <Legend verticalAlign="bottom" iconType="circle" />
@@ -788,17 +806,32 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>งานใหม่แยกตามแผนก</CardTitle>
-            <CardDescription>ปริมาณงานเปิดใหม่ในงวดนี้</CardDescription>
+            <CardDescription>ปริมาณงานเปิดใหม่ในงวดนี้ · เปอร์เซ็นต์คิดจากงานทั้งหมดในช่วง</CardDescription>
           </CardHeader>
           <CardContent className="flex-1">
             <div className="h-[240px]">
               {stats.currentInflowByDept.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.currentInflowByDept} layout="vertical">
+                  <BarChart data={stats.currentInflowByDept} layout="vertical" margin={{ right: 48 }}>
                     <XAxis type="number" hide />
                     <YAxis dataKey="name" type="category" width={100} fontSize={11} />
-                    <Tooltip cursor={{fill: 'transparent'}} />
-                    <Bar dataKey="value" name="งานใหม่" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                    <Tooltip
+                      cursor={{ fill: "transparent" }}
+                      formatter={(value, _name, item) => {
+                        const count = Number(value ?? 0);
+                        const percent = Number(item?.payload?.percent ?? 0);
+                        return [`${count.toLocaleString("th-TH")} งาน (${percent}%)`, "งานใหม่"];
+                      }}
+                    />
+                    <Bar dataKey="value" name="งานใหม่" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]}>
+                      <LabelList
+                        dataKey="percent"
+                        position="right"
+                        formatter={(value) => `${Number(value ?? 0)}%`}
+                        className="fill-foreground"
+                        style={{ fontSize: 12, fontWeight: 600 }}
+                      />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -820,18 +853,23 @@ function AppDashboardPage() {
                   <Pie data={stats.deptStats} dataKey="count" nameKey="label" innerRadius={50} outerRadius={70} paddingAngle={5}>
                     {stats.deptStats.map((_, i) => <Cell key={i} fill={`hsl(var(--chart-${(i % 5) + 1}))`} />)}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip
+                    formatter={(value, name, item) => {
+                      const count = Number(value ?? 0);
+                      const percent = Number(item?.payload?.percent ?? 0);
+                      return [`${count.toLocaleString("th-TH")} งาน (${percent}%)`, String(name)];
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+            <div className="mt-4 space-y-1 text-xs">
               {stats.deptStats.map((d, i) => (
-                <div key={i} className="flex items-center justify-between border-b border-muted pb-0.5">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: `hsl(var(--chart-${(i % 5) + 1}))` }} />
-                    <span className="truncate">{d.label}</span>
-                  </div>
-                  <span className="font-bold ml-1">{d.count}</span>
+                <div key={d.dept} className="flex items-center gap-2 border-b border-muted pb-0.5 min-w-0">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: `hsl(var(--chart-${(i % 5) + 1}))` }} />
+                  <span className="truncate">{d.label}</span>
+                  <span className="ml-auto shrink-0 tabular-nums">{d.count.toLocaleString("th-TH")} งาน</span>
+                  <span className="shrink-0 w-10 text-right font-bold tabular-nums">{d.percent}%</span>
                 </div>
               ))}
             </div>
@@ -854,18 +892,23 @@ function AppDashboardPage() {
                   <Pie data={stats.acquisitionData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={70} paddingAngle={5}>
                     {stats.acquisitionData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v: any) => [`${v} งาน`, 'จำนวน']} />
+                  <Tooltip
+                    formatter={(value, name, item) => {
+                      const count = Number(value ?? 0);
+                      const percent = Number(item?.payload?.percent ?? 0);
+                      return [`${count.toLocaleString("th-TH")} ราย (${percent}%)`, String(name)];
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
-              {stats.acquisitionData.map((d, i) => (
-                <div key={i} className="flex items-center justify-between border-b border-muted pb-0.5">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
-                    <span className="truncate">{d.name}</span>
-                  </div>
-                  <span className="font-bold ml-1">{d.value}</span>
+            <div className="mt-4 space-y-1 text-xs">
+              {stats.acquisitionData.map((d) => (
+                <div key={d.name} className="flex items-center gap-2 border-b border-muted pb-0.5 min-w-0">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                  <span className="truncate">{d.name}</span>
+                  <span className="ml-auto shrink-0 tabular-nums">{d.value.toLocaleString("th-TH")} ราย</span>
+                  <span className="shrink-0 w-10 text-right font-bold tabular-nums">{d.percent}%</span>
                 </div>
               ))}
             </div>
