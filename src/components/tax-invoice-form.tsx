@@ -52,7 +52,13 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
-import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
+import {
+  createDocument,
+  getDocumentPrefix,
+  getNextAvailableDocNo,
+  getNextTempDocNo,
+  isOfficialPrefixedDocNo,
+} from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, CustomerTaxProfile, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
@@ -268,22 +274,21 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   }, [isEditing, form]);
 
   useEffect(() => {
-    if (!db || isEditing || !watchedIssueDate) return;
-    
+    if (!db || isEditing) return;
     const fetchPreview = async () => {
       try {
         setIndexErrorUrl(null);
-        const result = await getNextAvailableDocNo(db, 'TAX_INVOICE', watchedIssueDate);
+        const result = await getNextTempDocNo(db, "TAX_INVOICE");
         if (result.indexErrorUrl) {
           setIndexErrorUrl(result.indexErrorUrl);
-        } else {
-          setPreviewDocNo(result.docNo);
         }
-      } catch (e: any) {
+        setPreviewDocNo(result.docNo);
+      } catch {
+        /* preview is best-effort */
       }
     };
-    fetchPreview();
-  }, [db, isEditing, watchedIssueDate]);
+    void fetchPreview();
+  }, [db, isEditing]);
 
   useEffect(() => {
     if (!db) return;
@@ -437,6 +442,9 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             (priorStatus === "PAID" ? "PAID" : priorStatus === "PARTIAL" ? "PARTIAL" : "UNPAID"),
         }
       : { paidTotal: 0, balance: data.grandTotal, paymentStatus: "UNPAID" as const };
+
+    const today = format(new Date(), "yyyy-MM-dd");
+    const officialIssueDate = preserveIssued ? data.issueDate : submitForReview ? today : data.issueDate;
     
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
@@ -451,10 +459,33 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     } : {};
 
     try {
+        const prefix = await getDocumentPrefix(db, "TAX_INVOICE");
+        let assignedDocNo = docToEdit?.docNo || "";
+        if (!preserveIssued && submitForReview) {
+          if (isOfficialPrefixedDocNo(assignedDocNo, prefix)) {
+            // ร่างที่ออกเลขใบกำกับไปแล้ว — ยึดเลขเดิม
+          } else {
+            const nextOfficial = await getNextAvailableDocNo(db, "TAX_INVOICE", officialIssueDate);
+            if (nextOfficial.indexErrorUrl) {
+              setIndexErrorUrl(nextOfficial.indexErrorUrl);
+              throw new Error("ต้องสร้างดัชนีเลขที่เอกสารก่อนออกฉบับจริง");
+            }
+            assignedDocNo = nextOfficial.docNo;
+          }
+        } else if (!isEditing && !submitForReview) {
+          const temp = await getNextTempDocNo(db, "TAX_INVOICE");
+          if (temp.indexErrorUrl) {
+            setIndexErrorUrl(temp.indexErrorUrl);
+            throw new Error("ต้องสร้างดัชนีเลขที่เอกสารก่อนบันทึกร่าง");
+          }
+          assignedDocNo = temp.docNo;
+        }
+
         const payload = { 
           ...data, 
           jobId: linkedJobId || undefined,
-          docDate: data.issueDate, 
+          issueDate: officialIssueDate,
+          docDate: officialIssueDate, 
           customerSnapshot, 
           carSnapshot, 
           storeSnapshot: storeSettings, 
@@ -473,10 +504,11 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         if (isEditing && effectiveEditDocId) {
             const batch = writeBatch(db);
             const docRef = doc(db, 'documents', effectiveEditDocId);
-            const finalDocNo = docToEdit?.docNo || "Unknown";
+            const finalDocNo = assignedDocNo || docToEdit?.docNo || "Unknown";
 
             batch.update(docRef, sanitizeForFirestore({
               ...payload,
+              docNo: finalDocNo,
               status: targetStatus,
               updatedAt: serverTimestamp(),
               ...(preserveIssued ? {} : { dispute: { isDisputed: false, reason: "" } }),
@@ -514,14 +546,24 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             }
             await batch.commit();
         } else {
-            await createDocument(db, 'TAX_INVOICE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
+            await createDocument(
+              db,
+              "TAX_INVOICE",
+              payload,
+              profile,
+              linkedJobId ? targetJobStatus : undefined,
+              {
+                manualDocNo: assignedDocNo || (data.isBackfill ? data.manualDocNo : undefined),
+                initialStatus: targetStatus,
+              }
+            );
         }
         toast({
           title: preserveIssued
             ? "บันทึกใบกำกับแล้ว (สถานะเดิม)"
             : submitForReview
-              ? "ส่งตรวจสอบสำเร็จ"
-              : "บันทึกฉบับร่างสำเร็จ",
+              ? `ส่งตรวจสอบสำเร็จ — เลขที่ ${assignedDocNo}`
+              : `บันทึกฉบับร่างสำเร็จ — ${assignedDocNo}`,
         });
         router.push('/app/office/documents/tax-invoice');
     } catch (e: any) { 
@@ -751,6 +793,9 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
           <div className="flex justify-between items-center">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}>
+                ยกเลิก
+              </Button>
               <Button type="button" variant="secondary" onClick={submitSaveDraft} disabled={isLocked || isProcessing || isCancelled}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
                 {keepIssuedStatus ? "บันทึก" : "บันทึกฉบับร่าง"}
@@ -789,12 +834,20 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             <div className="space-y-4">
               <h1 className="text-2xl font-bold text-right text-primary">ใบกำกับภาษี</h1>
               {isEditing ? (
-                <p className="text-right text-sm font-mono">{docToEdit?.docNo}</p>
+                <div className="text-right space-y-1">
+                  <p className="text-sm font-mono">{docToEdit?.docNo}</p>
+                  {String(docToEdit?.docNo || "").includes("-TEMP-") ? (
+                    <p className="text-[11px] text-muted-foreground">เลขชั่วคราว — เลขใบกำกับจริงจะออกเมื่อส่งบัญชี</p>
+                  ) : docStatusKey === "DRAFT" || docStatusKey === "REJECTED" ? (
+                    <p className="text-[11px] text-muted-foreground">ฉบับจริงจะใช้เลขที่นี้ตามเดิม</p>
+                  ) : null}
+                </div>
               ) : (
-                <div className="text-right">
+                <div className="text-right space-y-1">
                   <Badge variant="outline" className="font-mono text-lg py-1 px-3 border-primary/30 text-primary bg-primary/5">
                     {previewDocNo || "กำลังโหลดเลขที่..."}
                   </Badge>
+                  <p className="text-[11px] text-muted-foreground">เลขชั่วคราวของฉบับร่าง — เลข SNV ปี-รันนิ่งออกเมื่อส่งบัญชี</p>
                 </div>
               )}
               <FormField
@@ -829,6 +882,11 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                       </PopoverContent>
                     </Popover>
                     <FormMessage />
+                    {!keepIssuedStatus && (
+                      <FormDescription>
+                        วันที่ในฉบับร่างใช้ทำงานภายใน เมื่อส่งบัญชี วันที่ใบกำกับจะเป็นวันนี้ ไม่ย้อนหลังตามร่าง
+                      </FormDescription>
+                    )}
                   </FormItem>
                 )}
               />

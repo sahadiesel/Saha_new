@@ -67,7 +67,9 @@ export async function findDocSequenceUsage(
     const used = new Set<number>();
     let max = 0;
     for (const d of snap.docs) {
-      const seq = extractDocNoSequence(String(d.data().docNo || ""));
+      const no = String(d.data().docNo || "");
+      if (/-TEMP-/i.test(no)) continue;
+      const seq = extractDocNoSequence(no);
       if (seq <= 0) continue;
       used.add(seq);
       if (seq > max) max = seq;
@@ -114,6 +116,47 @@ export async function findNextAvailableSequence(db: Firestore, docType: string, 
   };
 }
 
+const DOC_PREFIX_FIELDS: Record<DocType, keyof DocumentSettings> = {
+  QUOTATION: "quotationPrefix",
+  DELIVERY_NOTE: "deliveryNotePrefix",
+  TAX_INVOICE: "taxInvoicePrefix",
+  RECEIPT: "receiptPrefix",
+  BILLING_NOTE: "billingNotePrefix",
+  CREDIT_NOTE: "creditNotePrefix",
+  DEBIT_NOTE: "debitNotePrefix",
+  WITHHOLDING_TAX: "withholdingTaxPrefix",
+  WITHDRAWAL: "withdrawalPrefix",
+};
+
+const DEFAULT_DOC_PREFIX: Record<DocType, string> = {
+  QUOTATION: "QT",
+  DELIVERY_NOTE: "DN",
+  TAX_INVOICE: "INV",
+  RECEIPT: "RE",
+  BILLING_NOTE: "BN",
+  CREDIT_NOTE: "CN",
+  DEBIT_NOTE: "DBN",
+  WITHHOLDING_TAX: "WHT",
+  WITHDRAWAL: "SWD",
+};
+
+export async function getDocumentPrefix(db: Firestore, docType: DocType): Promise<string> {
+  const snap = await getDoc(doc(db, "settings", "documents"));
+  const fromSettings = snap.exists() ? snap.data()?.[DOC_PREFIX_FIELDS[docType]] : undefined;
+  return String(fromSettings || DEFAULT_DOC_PREFIX[docType]).toUpperCase();
+}
+
+/** เลขที่ฉบับจริง เช่น SNV2026-0494 — ไม่รวม SNV-TEMP-0001 */
+export function isOfficialPrefixedDocNo(docNo: string | undefined, prefix: string): boolean {
+  if (!docNo || !prefix) return false;
+  return new RegExp(`^${prefix}\\d{4}-\\d+$`, "i").test(docNo.trim());
+}
+
+export function isTempPrefixedDocNo(docNo: string | undefined, prefix: string): boolean {
+  if (!docNo || !prefix) return false;
+  return new RegExp(`^${prefix}-TEMP-\\d+$`, "i").test(docNo.trim());
+}
+
 /**
  * Pre-calculates the next available document number for UI preview.
  */
@@ -130,43 +173,44 @@ export async function getNextAvailableDocNo(
     }
   }
 
-  const docSettingsSnap = await getDoc(doc(db, 'settings', 'documents'));
-  
-  const prefixes: Record<DocType, keyof DocumentSettings> = {
-    QUOTATION: 'quotationPrefix',
-    DELIVERY_NOTE: 'deliveryNotePrefix',
-    TAX_INVOICE: 'taxInvoicePrefix',
-    RECEIPT: 'receiptPrefix',
-    BILLING_NOTE: 'billingNotePrefix',
-    CREDIT_NOTE: 'creditNotePrefix',
-    DEBIT_NOTE: 'debitNotePrefix',
-    WITHHOLDING_TAX: 'withholdingTaxPrefix',
-    WITHDRAWAL: 'withdrawalPrefix',
-  };
-
-  const defaultPrefixMap: Record<DocType, string> = {
-    QUOTATION: 'QT',
-    DELIVERY_NOTE: 'DN',
-    TAX_INVOICE: 'INV',
-    RECEIPT: 'RE',
-    BILLING_NOTE: 'BN',
-    CREDIT_NOTE: 'CN',
-    DEBIT_NOTE: 'DBN',
-    WITHHOLDING_TAX: 'WHT',
-    WITHDRAWAL: 'SWD',
-  };
-
-  const prefix = (docSettingsSnap.exists() 
-    ? (docSettingsSnap.data()[prefixes[docType]] || defaultPrefixMap[docType]) 
-    : defaultPrefixMap[docType]).toUpperCase();
-
+  const prefix = await getDocumentPrefix(db, docType);
   const prefixSearch = `${prefix}${year}-`;
   const result = await findNextAvailableSequence(db, docType, prefixSearch);
-  
-  return { 
-    docNo: `${prefix}${year}-${String(result.sequence).padStart(4, '0')}`,
-    indexErrorUrl: result.indexErrorUrl
+
+  return {
+    docNo: `${prefix}${year}-${String(result.sequence).padStart(4, "0")}`,
+    indexErrorUrl: result.indexErrorUrl,
   };
+}
+
+/** เลขที่ชั่วคราวของฉบับร่าง เช่น SNV-TEMP-0001 — ไม่กินลำดับใบกำกับจริง เรียง max+1 */
+export async function getNextTempDocNo(
+  db: Firestore,
+  docType: DocType
+): Promise<{ docNo: string; indexErrorUrl?: string }> {
+  const prefix = await getDocumentPrefix(db, docType);
+  const prefixSearch = `${prefix}-TEMP-`;
+  try {
+    const q = query(
+      collection(db, "documents"),
+      where("docType", "==", docType),
+      where("docNo", ">=", prefixSearch),
+      where("docNo", "<=", prefixSearch + "\uf8ff")
+    );
+    const snap = await getDocs(q);
+    let max = 0;
+    for (const d of snap.docs) {
+      const seq = extractDocNoSequence(String(d.data().docNo || ""));
+      if (seq > max) max = seq;
+    }
+    return { docNo: `${prefix}-TEMP-${String(max + 1).padStart(4, "0")}` };
+  } catch (e: any) {
+    if (e.message?.includes("requires an index")) {
+      const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
+      return { docNo: `${prefix}-TEMP-0001`, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+    }
+    throw e;
+  }
 }
 
 export async function createDocument(
