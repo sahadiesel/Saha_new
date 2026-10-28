@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { collection, onSnapshot, query, orderBy, where, limit, deleteDoc, doc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, where, limit, deleteDoc, doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, Filter, Package, Wrench } from "lucide-react";
+import { Loader2, PlusCircle, Search, MoreHorizontal, Eye, Edit, Trash2, Filter, Package, Wrench, Ban } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -68,6 +68,9 @@ function purchaseMonthBounds(yyyyMm: string): { start: string; end: string } {
 /** โหลดล่าสุดสำหรับมุมมอง "ทุกเดือน" และใช้สร้างรายการเดือนใน dropdown */
 const RECENT_PURCHASE_DOCS_LIMIT = 2500;
 
+const canCancelPurchase = (status?: PurchaseDoc["status"]) =>
+  status === "DRAFT" || status === "REJECTED" || status === "PENDING_REVIEW";
+
 /** งานที่ออฟฟิศยังต้องทำ — ต้องเห็นแม้วันที่ในบิลจะไม่อยู่ในเดือนที่เลือก */
 const ACTIONABLE_PURCHASE_STATUSES: PurchaseDoc["status"][] = ["DRAFT", "PENDING_REVIEW", "REJECTED"];
 
@@ -107,7 +110,9 @@ export default function PurchaseDocsListPage() {
     return `${now.getFullYear()}-${month}`;
   });
   const [docToDelete, setDocToDelete] = useState<WithId<PurchaseDoc> | null>(null);
+  const [docToCancel, setDocToCancel] = useState<WithId<PurchaseDoc> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   const isAdmin = profile?.role === 'ADMIN';
@@ -262,6 +267,73 @@ export default function PurchaseDocsListPage() {
     }
   };
 
+  const handleCancel = async () => {
+    if (!db || !docToCancel) return;
+    setIsCancelling(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const purchaseRef = doc(db, "purchaseDocs", docToCancel.id);
+        const purchaseSnap = await transaction.get(purchaseRef);
+        if (!purchaseSnap.exists()) throw new Error("ไม่พบเอกสาร");
+        const data = purchaseSnap.data() as PurchaseDoc;
+        if (!canCancelPurchase(data.status)) {
+          throw new Error("เอกสารถูกบันทึกบัญชีแล้ว ยกเลิกจากหน้านี้ไม่ได้");
+        }
+        if (data.apObligationId || data.accountingEntryId) {
+          throw new Error("เอกสารถูกบันทึกบัญชีแล้ว ยกเลิกจากหน้านี้ไม่ได้");
+        }
+
+        const claimRef = doc(db, "purchaseClaims", `CLAIM_${docToCancel.id}`);
+        const claimSnap = await transaction.get(claimRef);
+        if (claimSnap.exists() && claimSnap.data().status === "APPROVED") {
+          throw new Error("บัญชียืนยันรายการนี้แล้ว ยกเลิกจากหน้านี้ไม่ได้");
+        }
+
+        const partReads: { partRef: ReturnType<typeof doc>; qty: number; stockQty: number }[] = [];
+        if (data.isReceived) {
+          for (const item of data.items || []) {
+            if (!item.partId) continue;
+            const partRef = doc(db, "parts", item.partId);
+            const partSnap = await transaction.get(partRef);
+            if (!partSnap.exists()) continue;
+            partReads.push({
+              partRef,
+              qty: item.quantity || 0,
+              stockQty: Number(partSnap.data().stockQty || 0),
+            });
+          }
+        }
+
+        for (const part of partReads) {
+          transaction.update(part.partRef, {
+            stockQty: part.stockQty - part.qty,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        transaction.update(purchaseRef, {
+          status: "CANCELLED",
+          isReceived: false,
+          updatedAt: serverTimestamp(),
+          cancelledAt: serverTimestamp(),
+        });
+        if (claimSnap.exists() && claimSnap.data().status !== "APPROVED") {
+          transaction.update(claimRef, {
+            status: "REJECTED",
+            rejectReason: "ออฟฟิศยกเลิกเอกสาร",
+            updatedAt: serverTimestamp(),
+          });
+        }
+      });
+      toast({ title: "ยกเลิกเอกสารแล้ว", description: docToCancel.docNo });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "ยกเลิกไม่สำเร็จ";
+      toast({ variant: "destructive", title: "ยกเลิกไม่สำเร็จ", description: message });
+    } finally {
+      setIsCancelling(false);
+      setDocToCancel(null);
+    }
+  };
+
   return (
     <TooltipProvider>
       <PageHeader title="รายการซื้อสินค้า/บริการ" description="สร้างและจัดการเอกสารการจัดซื้อและงานจ้าง">
@@ -380,6 +452,14 @@ export default function PurchaseDocsListPage() {
                                     <Link href={isPurchaseDocServiceLike(purchaseDoc) ? `/app/office/parts/purchases/service/new?editDocId=${purchaseDoc.id}` : `/app/office/parts/purchases/new?editDocId=${purchaseDoc.id}`}><Edit className="mr-2 h-4 w-4"/> แก้ไข</Link>
                                   </DropdownMenuItem>
                                 )}
+                                {canCancelPurchase(purchaseDoc.status) && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDocToCancel(purchaseDoc)}>
+                                      <Ban className="mr-2 h-4 w-4"/> ยกเลิก
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -455,6 +535,12 @@ export default function PurchaseDocsListPage() {
                                 </DropdownMenuItem>
                               )}
 
+                              {canCancelPurchase(purchaseDoc.status) && (
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDocToCancel(purchaseDoc)}>
+                                    <Ban className="mr-2 h-4 w-4"/> ยกเลิก
+                                </DropdownMenuItem>
+                              )}
+
                               {canDelete && (
                                 <>
                                     <DropdownMenuSeparator />
@@ -521,6 +607,23 @@ export default function PurchaseDocsListPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!docToCancel} onOpenChange={(open) => !open && !isCancelling && setDocToCancel(null)}>
+          <AlertDialogContent>
+              <AlertDialogHeader>
+                  <AlertDialogTitle>ยกเลิกเอกสาร {docToCancel?.docNo}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                      สถานะจะเปลี่ยนเป็นยกเลิก ถ้าเคยรับอะไหล่เข้าสต็อก ระบบจะตัดจำนวนกลับ และปิดคิวที่ส่งให้บัญชีตรวจสอบ
+                  </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isCancelling}>ไม่ยกเลิก</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCancel} disabled={isCancelling} className="bg-destructive hover:bg-destructive/90">
+                      {isCancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>} ยกเลิกเอกสาร
+                  </AlertDialogAction>
+              </AlertDialogFooter>
+          </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!docToDelete} onOpenChange={(open) => !open && setDocToDelete(null)}>
           <AlertDialogContent>
