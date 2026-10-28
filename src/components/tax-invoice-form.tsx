@@ -877,174 +877,158 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 border rounded-lg bg-card shadow-sm">
-            <div className="lg:col-span-2 space-y-2">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 p-6 border rounded-lg bg-card shadow-sm">
+            <div className="min-w-0 space-y-2">
               <h2 className="text-xl font-bold">{storeSettings?.taxName || 'Sahadiesel Service'}</h2>
               <p className="text-sm text-muted-foreground whitespace-pre-wrap">{storeSettings?.taxAddress}</p>
               <p className="text-sm text-muted-foreground">โทร: {storeSettings?.phone}</p>
             </div>
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold text-right text-primary">ใบกำกับภาษี</h1>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-right">
+            <div className="w-full lg:w-auto space-y-2">
+              <div className="flex flex-wrap items-end justify-end gap-2">
+                <FormField
+                  control={form.control}
+                  name="issueDate"
+                  render={({ field }) => (
+                    <FormItem className="w-[168px] space-y-1">
+                      <FormLabel className="text-[10px] text-muted-foreground">วันที่ออกเอกสาร</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant={"outline"}
+                              className={cn(
+                                "w-full pl-3 text-left font-normal h-10",
+                                !field.value && "text-muted-foreground"
+                              )}
+                              disabled={isLocked}
+                            >
+                              {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
+                              <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={field.value ? parseISO(field.value) : undefined}
+                            onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-right min-w-[148px]">
                   <p className="text-[10px] font-medium text-amber-800">ถ้าบันทึกฉบับร่าง</p>
                   <p className="font-mono text-sm font-bold text-amber-950">
                     {shownDraftDocNo || "กำลังโหลดเลขที่..."}
                   </p>
                 </div>
-                <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-right">
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-right min-w-[148px]">
                   <p className="text-[10px] font-medium text-emerald-800">ถ้าบันทึกฉบับจริง</p>
                   <p className="font-mono text-sm font-bold text-emerald-950">
                     {shownOfficialDocNo || "กำลังโหลดเลขที่..."}
                   </p>
                 </div>
               </div>
-              {keepIssuedStatus ? (
-                <p className="text-[11px] text-muted-foreground text-right">เอกสารนี้ออกเลขฉบับจริงแล้ว — บันทึกจะใช้เลขที่เดิม</p>
-              ) : hasOfficialDocNo ? (
-                <p className="text-[11px] text-muted-foreground text-right">เลขฉบับจริงจองแล้ว — บันทึกฉบับร่างหรือฉบับจริงใช้เลขที่นี้ตามเดิม</p>
-              ) : (
-                <p className="text-[11px] text-muted-foreground text-right">ฉบับร่างใช้เลขชั่วคราว — เลขรันออกเมื่อบันทึกฉบับจริงหรือส่งบัญชี</p>
-              )}
-              <FormField
-                control={form.control}
-                name="issueDate"
-                render={({ field }) => (
-                  <FormItem className="flex flex-col">
-                    <FormLabel>วันที่ออกเอกสาร</FormLabel>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button
-                            variant={"outline"}
-                            className={cn(
-                              "w-full pl-3 text-left font-normal h-10",
-                              !field.value && "text-muted-foreground"
-                            )}
-                            disabled={isLocked}
-                          >
-                            {field.value ? format(parseISO(field.value), "dd/MM/yyyy") : <span>เลือกวันที่</span>}
-                            <CalendarDays className="ml-auto h-4 w-4 opacity-50" />
-                          </Button>
-                        </FormControl>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={field.value ? parseISO(field.value) : undefined}
-                          onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
-                          initialFocus
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    <FormMessage />
-                    {!keepIssuedStatus && (
-                      <FormDescription>
-                        วันที่ในฉบับร่างใช้ทำงานภายใน เมื่อส่งบัญชี วันที่ใบกำกับจะเป็นวันนี้ ไม่ย้อนหลังตามร่าง
-                      </FormDescription>
-                    )}
-                  </FormItem>
-                )}
-              />
             </div>
           </div>
 
           <Card>
-            <CardHeader className="flex flex-row items-center gap-4 py-3">
+            <CardHeader className="flex flex-row flex-wrap items-center gap-3 py-3">
               <CardTitle className="text-base whitespace-nowrap">ข้อมูลลูกค้าและรายการ</CardTitle>
-              <div className="flex gap-2">
-                <Popover open={isQtSearchOpen} onOpenChange={setIsQtSearchOpen}>
-                  <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => { setQtSearchQuery(job?.salesDocNo || ""); void loadQuotations(job?.salesDocNo || ""); }} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
-                  <PopoverContent className="w-80 p-0" align="start">
-                    <div className="p-2 border-b">
-                      <Input placeholder="ค้นหาชื่อลูกค้า หรือเลขที่..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} />
-                    </div>
-                    <ScrollArea className="h-60">
-                      {isSearchingQt ? (
-                        <Loader2 className="animate-spin m-4" /> 
-                      ) : allQuotations.filter(q => {
-                          const term = qtSearchQuery.toLowerCase().trim();
-                          if (!term) return true;
-                          return (
-                            q.docNo.toLowerCase().includes(term) ||
-                            q.customerSnapshot?.name?.toLowerCase().includes(term)
-                          );
-                        }).map(q => (
-                          <Button key={q.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleFetchFromDoc(q)}>
-                            <div className="flex flex-col">
-                              <span className="font-semibold">{q.docNo}</span>
-                              <span className="text-[10px]">{q.customerSnapshot?.name}</span>
-                            </div>
+              <Popover open={isQtSearchOpen} onOpenChange={setIsQtSearchOpen}>
+                <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" onClick={() => { setQtSearchQuery(job?.salesDocNo || ""); void loadQuotations(job?.salesDocNo || ""); }} disabled={isLocked}><FileSearch className="mr-2 h-3 w-3" /> ใบเสนอราคา</Button></PopoverTrigger>
+                <PopoverContent className="w-80 p-0" align="start">
+                  <div className="p-2 border-b">
+                    <Input placeholder="ค้นหาชื่อลูกค้า หรือเลขที่..." value={qtSearchQuery} onChange={e=>setQtSearchQuery(e.target.value)} />
+                  </div>
+                  <ScrollArea className="h-60">
+                    {isSearchingQt ? (
+                      <Loader2 className="animate-spin m-4" /> 
+                    ) : allQuotations.filter(q => {
+                        const term = qtSearchQuery.toLowerCase().trim();
+                        if (!term) return true;
+                        return (
+                          q.docNo.toLowerCase().includes(term) ||
+                          q.customerSnapshot?.name?.toLowerCase().includes(term)
+                        );
+                      }).map(q => (
+                        <Button key={q.id} variant="ghost" className="w-full justify-start h-auto py-2 px-3 border-b text-left" onClick={() => handleFetchFromDoc(q)}>
+                          <div className="flex flex-col">
+                            <span className="font-semibold">{q.docNo}</span>
+                            <span className="text-[10px]">{q.customerSnapshot?.name}</span>
+                          </div>
+                        </Button>
+                      ))
+                    }
+                  </ScrollArea>
+                </PopoverContent>
+              </Popover>
+              <FormField
+                control={form.control}
+                name="customerId"
+                render={({ field }) => (
+                  <FormItem className="ml-auto flex w-full max-w-md min-w-[220px] items-center gap-2 space-y-0">
+                    <FormLabel className="whitespace-nowrap text-xs text-muted-foreground">ชื่อลูกค้า</FormLabel>
+                    <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "h-9 flex-1 justify-between font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                            disabled={isLocked || !!effectiveJobId}
+                          >
+                            <span className="truncate">{currentCustomer?.name || "เลือกลูกค้า..."}</span>
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
-                        ))
-                      }
-                    </ScrollArea>
-                  </PopoverContent>
-                </Popover>
-              </div>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="end">
+                        <div className="p-2 border-b">
+                          <Input
+                            placeholder="ค้นหา..."
+                            value={customerSearch}
+                            onChange={(e) => setCustomerSearch(e.target.value)}
+                          />
+                        </div>
+                        <ScrollArea className="h-fit max-h-60">
+                          {filteredCustomers.map((c) => (
+                            <Button
+                              key={c.id}
+                              variant="ghost"
+                              type="button"
+                              onClick={() => {
+                                field.onChange(c.id);
+                                const profs = getInvoiceableTaxProfiles(c);
+                                form.setValue("taxProfileId", profs[0]?.id ?? "");
+                                const p = profs[0];
+                                form.setValue(
+                                  "receiverName",
+                                  p?.taxName?.trim() || c.taxName?.trim() || c.name || ""
+                                );
+                                setIsCustomerPopoverOpen(false);
+                              }}
+                              className="w-full justify-start h-auto py-2 px-3 text-left"
+                            >
+                              <span>{c.name}</span>
+                            </Button>
+                          ))}
+                        </ScrollArea>
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
-                <FormField
-                  control={form.control}
-                  name="customerId"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col w-full lg:max-w-sm shrink-0">
-                      <FormLabel>ชื่อลูกค้า (ผู้ติดต่อ)</FormLabel>
-                      <Popover open={isCustomerPopoverOpen} onOpenChange={setIsCustomerPopoverOpen}>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              className={cn(
-                                "w-full justify-between font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                              disabled={isLocked || !!effectiveJobId}
-                            >
-                              <span className="truncate">{currentCustomer?.name || "เลือกลูกค้า..."}</span>
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                          <div className="p-2 border-b">
-                            <Input
-                              placeholder="ค้นหา..."
-                              value={customerSearch}
-                              onChange={(e) => setCustomerSearch(e.target.value)}
-                            />
-                          </div>
-                          <ScrollArea className="h-fit max-h-60">
-                            {filteredCustomers.map((c) => (
-                              <Button
-                                key={c.id}
-                                variant="ghost"
-                                type="button"
-                                onClick={() => {
-                                  field.onChange(c.id);
-                                  const profs = getInvoiceableTaxProfiles(c);
-                                  form.setValue("taxProfileId", profs[0]?.id ?? "");
-                                  const p = profs[0];
-                                  form.setValue(
-                                    "receiverName",
-                                    p?.taxName?.trim() || c.taxName?.trim() || c.name || ""
-                                  );
-                                  setIsCustomerPopoverOpen(false);
-                                }}
-                                className="w-full justify-start h-auto py-2 px-3 text-left"
-                              >
-                                <span>{c.name}</span>
-                              </Button>
-                            ))}
-                          </ScrollArea>
-                        </PopoverContent>
-                      </Popover>
-                    </FormItem>
-                  )}
-                />
-
-                <div className="flex-1 min-w-0 space-y-2">
+              <div className="space-y-2">
                   {currentCustomer?.useTax && invoiceableProfiles.length > 1 && (
                     <FormField
                       control={form.control}
@@ -1117,7 +1101,6 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                       </AlertDescription>
                     </Alert>
                   )}
-                </div>
               </div>
               <div className="border rounded-md overflow-x-auto">
                 <Table>
