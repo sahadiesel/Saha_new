@@ -49,16 +49,12 @@ function counterSeqValue(data: Record<string, unknown> | undefined, docType: str
   return Math.max(seq, count);
 }
 
-/**
- * Highest used sequence for prefix+year (SR2026-0272 → 272).
- * Next number is always max+1 so cancelled/deleted numbers are not reused and concurrent
- * creates cannot pick the same gap.
- */
-export async function findMaxDocSequence(
+/** เลขที่ที่ยังมีเอกสารในระบบ (รวมยกเลิก) — ลบแล้วถือว่าว่างและนำกลับมาใช้ได้ */
+export async function findDocSequenceUsage(
   db: Firestore,
   docType: string,
   prefixYear: string
-): Promise<{ max: number; indexErrorUrl?: string }> {
+): Promise<{ max: number; used: Set<number>; indexErrorUrl?: string }> {
   try {
     const q = query(
       collection(db, "documents"),
@@ -68,27 +64,54 @@ export async function findMaxDocSequence(
     );
 
     const snap = await getDocs(q);
+    const used = new Set<number>();
     let max = 0;
     for (const d of snap.docs) {
       const seq = extractDocNoSequence(String(d.data().docNo || ""));
+      if (seq <= 0) continue;
+      used.add(seq);
       if (seq > max) max = seq;
     }
-    return { max };
+    return { max, used };
   } catch (e: any) {
     if (e.message?.includes("requires an index")) {
       const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-      return { max: 0, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+      return { max: 0, used: new Set(), indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
     }
     throw e;
   }
 }
 
+/** ช่องว่างต่ำสุด เช่น ลบ 0494 ทั้งที่ 0498 ยังอยู่ → ได้ 0494 ไม่ข้ามไป 0499 */
+export function firstUnusedSequence(used: Set<number>, max: number): number {
+  const ceiling = Math.max(0, max) + 1;
+  for (let i = 1; i <= ceiling; i++) {
+    if (!used.has(i)) return i;
+  }
+  return ceiling;
+}
+
 /**
- * Next sequence = max existing + 1 (preview only; createDocument allocates inside a transaction).
+ * Highest used sequence for prefix+year (SR2026-0272 → 272).
+ */
+export async function findMaxDocSequence(
+  db: Firestore,
+  docType: string,
+  prefixYear: string
+): Promise<{ max: number; indexErrorUrl?: string }> {
+  const result = await findDocSequenceUsage(db, docType, prefixYear);
+  return { max: result.max, indexErrorUrl: result.indexErrorUrl };
+}
+
+/**
+ * Next sequence = ช่องว่างต่ำสุดของเลขที่มีเอกสารอยู่ (preview; createDocument ใช้ชุดเดียวกัน)
  */
 export async function findNextAvailableSequence(db: Firestore, docType: string, prefixYear: string): Promise<{ sequence: number; indexErrorUrl?: string }> {
-  const result = await findMaxDocSequence(db, docType, prefixYear);
-  return { sequence: result.max + 1, indexErrorUrl: result.indexErrorUrl };
+  const result = await findDocSequenceUsage(db, docType, prefixYear);
+  return {
+    sequence: firstUnusedSequence(result.used, result.max),
+    indexErrorUrl: result.indexErrorUrl,
+  };
 }
 
 /**
@@ -221,10 +244,30 @@ export async function createDocument(
     : defaultPrefixMap[docType]).toUpperCase();
 
   const prefixSearch = `${prefix}${year}-`;
-  const maxResult = await findMaxDocSequence(db, docType, prefixSearch);
+  const seqUsage = await findDocSequenceUsage(db, docType, prefixSearch);
   
-  if (maxResult.indexErrorUrl) {
-    throw new Error(`The query requires an index. You can create it here: ${maxResult.indexErrorUrl}`);
+  if (seqUsage.indexErrorUrl) {
+    throw new Error(`The query requires an index. You can create it here: ${seqUsage.indexErrorUrl}`);
+  }
+
+  let allocatedSeq = 0;
+  if (!options?.manualDocNo) {
+    const used = new Set(seqUsage.used);
+    allocatedSeq = firstUnusedSequence(used, seqUsage.max);
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const candidate = `${prefix}${year}-${String(allocatedSeq).padStart(4, "0")}`;
+      const dupSnap = await getDocs(
+        query(
+          collection(db, "documents"),
+          where("docType", "==", docType),
+          where("docNo", "==", candidate),
+          limit(1)
+        )
+      );
+      if (dupSnap.empty) break;
+      used.add(allocatedSeq);
+      allocatedSeq = firstUnusedSequence(used, Math.max(seqUsage.max, allocatedSeq));
+    }
   }
 
   const result = await runTransaction(db, async (transaction) => {
@@ -246,11 +289,11 @@ export async function createDocument(
 
     if (!finalDocNo) {
       const cur = counterSeqValue(counterSnap?.data() as Record<string, unknown> | undefined, docType, prefix);
-      const nextSeq = Math.max(cur, maxResult.max) + 1;
+      const nextSeq = allocatedSeq;
       finalDocNo = `${prefix}${year}-${String(nextSeq).padStart(4, '0')}`;
       transaction.set(counterRef, {
-          [`${docType}_${prefix}_seq`]: nextSeq,
-          [`${docType}_${prefix}_count`]: nextSeq,
+          [`${docType}_${prefix}_seq`]: Math.max(cur, nextSeq, seqUsage.max),
+          [`${docType}_${prefix}_count`]: Math.max(cur, nextSeq, seqUsage.max),
       }, { merge: true });
     }
 
