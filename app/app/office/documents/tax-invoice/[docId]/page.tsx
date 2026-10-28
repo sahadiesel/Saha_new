@@ -68,6 +68,7 @@ function DocumentLinksRow({
 const getStatusVariant = (status: string) => {
   switch (status) {
     case 'DRAFT':
+    case 'FINAL':
     case 'PENDING_REVIEW':
       return 'secondary';
     case 'APPROVED':

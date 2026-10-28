@@ -157,6 +157,10 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
         if (s === 'CANCELLED') return 'ยกเลิก';
     }
 
+    if (docType === "TAX_INVOICE" && s === "FINAL") {
+        return "ฉบับจริง (รอส่งให้บัญชี)";
+    }
+
     // ใบเสร็จรับเงิน
     if (docType === 'RECEIPT') {
         if (s === 'ISSUED' || s === 'ISSUED_NOT_CONFIRMED') return 'รอตรวจสอบเงินจริง';

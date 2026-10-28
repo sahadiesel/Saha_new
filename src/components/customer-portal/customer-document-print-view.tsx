@@ -24,7 +24,12 @@ export function CustomerDocumentPrintView({ document: d }: { document: Document 
   const money = documentPrintMoneyLines(d);
 
   return (
-    <div className="printable-document mx-auto max-w-[210mm] border bg-white p-6 text-black shadow-sm print:border-0 print:shadow-none">
+    <div className="printable-document relative mx-auto max-w-[210mm] border bg-white p-6 text-black shadow-sm print:border-0 print:shadow-none">
+      {d.status === "DRAFT" && (
+        <div className="print-draft-watermark" aria-hidden="true">
+          <span className="print-draft-watermark__text">DRAFT</span>
+        </div>
+      )}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <div>
           <h1 className="text-xl font-bold text-primary">{title}</h1>

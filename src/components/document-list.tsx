@@ -210,7 +210,14 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
     let description = "สถานะเอกสารปกติ";
     switch(statusKey) {
         case "DRAFT": description = "ออฟฟิศกำลังจัดทำ ยังไม่ได้ส่งให้บัญชีตรวจสอบ"; break;
-        case "FINAL": description = doc.docType === "QUOTATION" ? "ราคาฉบับจริง — พร้อมแจ้งลูกค้า / รอดำเนินการต่อ" : "สถานะเอกสาร"; break;
+        case "FINAL":
+            description =
+                doc.docType === "QUOTATION"
+                    ? "ราคาฉบับจริง — พร้อมแจ้งลูกค้า / รอดำเนินการต่อ"
+                    : doc.docType === "TAX_INVOICE"
+                      ? "ออกเลขใบกำกับแล้ว — ยังไม่ได้ส่งฝ่ายบัญชีตรวจสอบ"
+                      : "สถานะเอกสาร";
+            break;
         case "PENDING_REVIEW": description = "ส่งเรื่องให้ฝ่ายบัญชีตรวจสอบแล้ว"; break;
         case "REJECTED": description = "ฝ่ายบัญชีพบจุดที่ต้องแก้ไขและส่งกลับมาให้ออฟฟิศ"; break;
         case "APPROVED":
@@ -231,6 +238,10 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
     }
 
     if (doc.docType === "QUOTATION" && statusKey === "FINAL") {
+        return { key: "FINAL", label, description, variant: "secondary" };
+    }
+
+    if (doc.docType === "TAX_INVOICE" && statusKey === "FINAL") {
         return { key: "FINAL", label, description, variant: "secondary" };
     }
 
@@ -376,7 +387,7 @@ export function DocumentList({
     if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");
     if (docType === "TAX_INVOICE" || docType === "DEBIT_NOTE") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
-      const ordered = ["ALL", "DRAFT", "PENDING_REVIEW", "REJECTED", "APPROVED", "RECEIPT_ISSUED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"]
+      const ordered = ["ALL", "DRAFT", "FINAL", "PENDING_REVIEW", "REJECTED", "APPROVED", "RECEIPT_ISSUED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"]
         .filter((s) => s === "ALL" || available.has(s));
       const extra = Array.from(available).filter((s) => !ordered.includes(s)).sort();
       return [...ordered, ...extra];

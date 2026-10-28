@@ -576,7 +576,12 @@ function DocumentView({
     );
 
     return (
-        <div className="printable-document print-doc-instance print-doc-set border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+        <div className="printable-document print-doc-instance print-doc-set relative border bg-white shadow-sm w-[210mm] mx-auto text-black print:shadow-none print:border-none print:m-0 print:w-full box-border flex flex-col print:min-h-0">
+            {document.status === "DRAFT" && (
+                <div className="print-draft-watermark" aria-hidden="true">
+                    <span className="print-draft-watermark__text">DRAFT</span>
+                </div>
+            )}
             {splitPrintLayout ? (
                 <>
                     <div className="print:hidden">

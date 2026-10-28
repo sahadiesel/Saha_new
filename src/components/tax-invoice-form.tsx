@@ -18,14 +18,13 @@ import { Button } from "@/components/ui/button";
 import { 
   Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, 
   CalendarDays, ArrowLeft, FileSearch, Eye, ExternalLink, PlusCircle, Wallet, 
-  RotateCcw, Check, Ban, UserCog, Receipt
+  RotateCcw, Check, Ban, UserCog, Receipt, FileCheck
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -58,6 +57,7 @@ import {
   getNextAvailableDocNo,
   getNextTempDocNo,
   isOfficialPrefixedDocNo,
+  isTempPrefixedDocNo,
 } from "@/firebase/documents";
 import type { Job, StoreSettings, Customer, CustomerTaxProfile, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
@@ -103,6 +103,7 @@ const taxInvoiceFormSchema = z.object({
 });
 
 type TaxInvoiceFormData = z.infer<typeof taxInvoiceFormSchema>;
+type TaxInvoiceSaveMode = "draft" | "official" | "review";
 
 /** ดึงข้อความ error แรกจาก react-hook-form errors (รองรับ items[].description ฯลฯ) */
 function firstFormErrorMessage(errors: unknown): string | undefined {
@@ -140,7 +141,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const [referencedQuotationId, setReferencedQuotationId] = useState<string | null>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isReviewSubmission, setIsReviewSubmission] = useState(false);
+  const [pendingSaveMode, setPendingSaveMode] = useState<TaxInvoiceSaveMode>("draft");
   const [showReviewConfirm, setShowReviewConfirm] = useState(false);
   const [pendingData, setPendingData] = useState<TaxInvoiceFormData | null>(null);
 
@@ -148,7 +149,9 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [showTaxInfoAlert, setShowTaxInfoAlert] = useState(false);
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
-  const [previewDocNo, setPreviewDocNo] = useState<string>("");
+  const [previewTempDocNo, setPreviewTempDocNo] = useState<string>("");
+  const [previewOfficialDocNo, setPreviewOfficialDocNo] = useState<string>("");
+  const [docPrefix, setDocPrefix] = useState<string>("SNV");
 
   const [suggestedPayments, setSuggestedPayments] = useState<{accountId: string, amount: number}[]>([{accountId: '', amount: 0}]);
   const [recordRemainingAsCredit, setRecordRemainingAsCredit] = useState(false);
@@ -258,14 +261,27 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     docStatusKey === "APPROVED" &&
     !docToEdit?.receiptDocId;
   const alreadySentForReview = docStatusKey === "PENDING_REVIEW";
+  const isOfficialUnsent = docStatusKey === "FINAL";
+  const canSaveOfficial =
+    !isCancelled && (!isEditing || ["DRAFT", "REJECTED", "FINAL"].includes(docStatusKey));
   const canSendForAccountingReview =
-    !isCancelled && (!isEditing || ["DRAFT", "REJECTED"].includes(docStatusKey));
-  /** ออกบิลแล้ว — แก้แล้วทับฉบับเดิม ไม่บันทึกเป็นร่างและไม่เปลี่ยนสถานะ */
+    !isCancelled && (!isEditing || ["DRAFT", "REJECTED", "FINAL"].includes(docStatusKey));
+  /** ผ่านบัญชี/รับเงินแล้ว — แก้แล้วทับฉบับเดิม ไม่เปลี่ยนสถานะ */
   const keepIssuedStatus =
     isEditing &&
     !!docToEdit &&
     !isCancelled &&
-    !["DRAFT", "REJECTED", ""].includes(docStatusKey);
+    !["DRAFT", "REJECTED", "FINAL", ""].includes(docStatusKey);
+
+  const currentDocNo = String(docToEdit?.docNo || "").trim();
+  const hasOfficialDocNo = isOfficialPrefixedDocNo(currentDocNo, docPrefix);
+  const hasTempDocNo = isTempPrefixedDocNo(currentDocNo, docPrefix);
+  const shownDraftDocNo = hasTempDocNo
+    ? currentDocNo
+    : hasOfficialDocNo
+      ? currentDocNo
+      : previewTempDocNo;
+  const shownOfficialDocNo = hasOfficialDocNo ? currentDocNo : previewOfficialDocNo;
 
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
@@ -274,21 +290,32 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   }, [isEditing, form]);
 
   useEffect(() => {
-    if (!db || isEditing) return;
+    if (!db) return;
+    let cancelled = false;
     const fetchPreview = async () => {
       try {
         setIndexErrorUrl(null);
-        const result = await getNextTempDocNo(db, "TAX_INVOICE");
-        if (result.indexErrorUrl) {
-          setIndexErrorUrl(result.indexErrorUrl);
-        }
-        setPreviewDocNo(result.docNo);
+        const prefix = await getDocumentPrefix(db, "TAX_INVOICE");
+        const today = format(new Date(), "yyyy-MM-dd");
+        const [temp, official] = await Promise.all([
+          getNextTempDocNo(db, "TAX_INVOICE"),
+          getNextAvailableDocNo(db, "TAX_INVOICE", today),
+        ]);
+        if (cancelled) return;
+        setDocPrefix(prefix);
+        if (temp.indexErrorUrl) setIndexErrorUrl(temp.indexErrorUrl);
+        else if (official.indexErrorUrl) setIndexErrorUrl(official.indexErrorUrl);
+        setPreviewTempDocNo(temp.docNo);
+        setPreviewOfficialDocNo(official.docNo);
       } catch {
         /* preview is best-effort */
       }
     };
     void fetchPreview();
-  }, [db, isEditing]);
+    return () => {
+      cancelled = true;
+    };
+  }, [db]);
 
   useEffect(() => {
     if (!db) return;
@@ -361,7 +388,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const currentSuggestedTotal = useMemo(() => suggestedPayments.reduce((sum, p) => sum + (p.amount || 0), 0), [suggestedPayments]);
   const remainingAmount = useMemo(() => Math.round(((grandTotal || 0) - currentSuggestedTotal) * 100) / 100, [grandTotal, currentSuggestedTotal]);
 
-  const executeSave = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
+  const executeSave = async (data: TaxInvoiceFormData, mode: TaxInvoiceSaveMode) => {
     if (!db) {
       toast({ variant: "destructive", title: "ไม่สามารถบันทึกได้", description: "ยังไม่เชื่อมต่อฐานข้อมูล" });
       return;
@@ -398,7 +425,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
     const customerSnapshot = buildCustomerSnapshotForTaxInvoice(baseCustomer, resolvedTaxProfile);
 
-    if (submitForReview && isEditing && docToEdit) {
+    if (mode === "review" && isEditing && docToEdit) {
       const prior = String(docToEdit.status ?? "").toUpperCase();
       if (prior === "PENDING_REVIEW") {
         toast({
@@ -424,13 +451,15 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     const preserveIssued =
       isEditing &&
       !!docToEdit &&
-      !["DRAFT", "REJECTED", "CANCELLED", ""].includes(priorStatus);
+      !["DRAFT", "REJECTED", "FINAL", "CANCELLED", ""].includes(priorStatus);
     const targetStatus = preserveIssued
       ? docToEdit.status
-      : submitForReview
+      : mode === "review"
         ? "PENDING_REVIEW"
-        : "DRAFT";
-    const targetJobStatus: JobStatus = submitForReview ? "PICKED_UP" : "WAITING_CUSTOMER_PICKUP";
+        : mode === "official"
+          ? "FINAL"
+          : "DRAFT";
+    const targetJobStatus: JobStatus = mode === "review" ? "PICKED_UP" : "WAITING_CUSTOMER_PICKUP";
     const paidTotal = preserveIssued ? Number(docToEdit.paymentSummary?.paidTotal || 0) : 0;
     const nextPaymentSummary = preserveIssued
       ? {
@@ -444,7 +473,13 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
       : { paidTotal: 0, balance: data.grandTotal, paymentStatus: "UNPAID" as const };
 
     const today = format(new Date(), "yyyy-MM-dd");
-    const officialIssueDate = preserveIssued ? data.issueDate : submitForReview ? today : data.issueDate;
+    const becomingOfficial = !preserveIssued && (mode === "official" || mode === "review");
+    const alreadyOfficialUnsent = priorStatus === "FINAL";
+    const officialIssueDate = preserveIssued
+      ? data.issueDate
+      : becomingOfficial && !alreadyOfficialUnsent
+        ? today
+        : data.issueDate;
     
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
@@ -461,9 +496,9 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     try {
         const prefix = await getDocumentPrefix(db, "TAX_INVOICE");
         let assignedDocNo = docToEdit?.docNo || "";
-        if (!preserveIssued && submitForReview) {
+        if (becomingOfficial) {
           if (isOfficialPrefixedDocNo(assignedDocNo, prefix)) {
-            // ร่างที่ออกเลขใบกำกับไปแล้ว — ยึดเลขเดิม
+            // ร่าง/ฉบับจริงที่มีเลขใบกำกับแล้ว — ยึดเลขเดิม
           } else {
             const nextOfficial = await getNextAvailableDocNo(db, "TAX_INVOICE", officialIssueDate);
             if (nextOfficial.indexErrorUrl) {
@@ -472,7 +507,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             }
             assignedDocNo = nextOfficial.docNo;
           }
-        } else if (!isEditing && !submitForReview) {
+        } else if (!isEditing && mode === "draft") {
           const temp = await getNextTempDocNo(db, "TAX_INVOICE");
           if (temp.indexErrorUrl) {
             setIndexErrorUrl(temp.indexErrorUrl);
@@ -493,7 +528,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
           paymentSummary: nextPaymentSummary,
           arStatus: preserveIssued
             ? docToEdit.arStatus
-            : submitForReview
+            : mode === "review"
               ? "PENDING"
               : isEditing
                 ? docToEdit?.arStatus
@@ -561,9 +596,11 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         toast({
           title: preserveIssued
             ? "บันทึกใบกำกับแล้ว (สถานะเดิม)"
-            : submitForReview
+            : mode === "review"
               ? `ส่งตรวจสอบสำเร็จ — เลขที่ ${assignedDocNo}`
-              : `บันทึกฉบับร่างสำเร็จ — ${assignedDocNo}`,
+              : mode === "official"
+                ? `บันทึกฉบับจริงแล้ว — ${assignedDocNo} (รอส่งให้บัญชี)`
+                : `บันทึกฉบับร่างสำเร็จ — ${assignedDocNo}`,
         });
         router.push('/app/office/documents/tax-invoice');
     } catch (e: any) { 
@@ -592,7 +629,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     }
   };
 
-  const handleSaveWrapper = async (data: TaxInvoiceFormData, submitForReview: boolean) => {
+  const handleSaveWrapper = async (data: TaxInvoiceFormData, mode: TaxInvoiceSaveMode) => {
     if (isProcessing) return;
     const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
@@ -600,14 +637,14 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         const ok = await checkUniqueness(currentJobId);
         if (!ok) {
           setPendingData({ ...data, jobId: currentJobId });
-          setIsReviewSubmission(submitForReview);
+          setPendingSaveMode(mode);
           setShowDuplicateDialog(true);
           return;
         }
       }
-      if (submitForReview) {
+      if (mode === "review") {
         setPendingData({ ...data, jobId: currentJobId });
-        setIsReviewSubmission(true);
+        setPendingSaveMode("review");
         if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
           setSuggestedPayments([
             { accountId: accounts.find((a) => a.type === "CASH")?.id || "", amount: data.grandTotal },
@@ -616,7 +653,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         setShowReviewConfirm(true);
         return;
       }
-      await executeSave({ ...data, jobId: currentJobId }, false);
+      await executeSave({ ...data, jobId: currentJobId }, mode);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({
@@ -637,11 +674,15 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   };
 
   const submitSaveDraft = form.handleSubmit(
-    (d) => handleSaveWrapper(d, false),
+    (d) => handleSaveWrapper(d, "draft"),
+    onFormInvalid
+  );
+  const submitSaveOfficial = form.handleSubmit(
+    (d) => handleSaveWrapper(d, "official"),
     onFormInvalid
   );
   const submitSendReview = form.handleSubmit(
-    (d) => handleSaveWrapper(d, true),
+    (d) => handleSaveWrapper(d, "review"),
     onFormInvalid
   );
 
@@ -663,7 +704,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
         
-        await executeSave(finalData, isReviewSubmission);
+        await executeSave(finalData, pendingSaveMode);
     } catch(e: any) { 
         toast({ variant: 'destructive', title: "Error", description: e.message }); 
         setIsProcessing(false);
@@ -796,10 +837,21 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
               <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}>
                 ยกเลิก
               </Button>
-              <Button type="button" variant="secondary" onClick={submitSaveDraft} disabled={isLocked || isProcessing || isCancelled}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={isOfficialUnsent ? submitSaveOfficial : submitSaveDraft}
+                disabled={isLocked || isProcessing || isCancelled}
+              >
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
-                {keepIssuedStatus ? "บันทึก" : "บันทึกฉบับร่าง"}
+                {keepIssuedStatus || isOfficialUnsent ? "บันทึก" : "บันทึกฉบับร่าง"}
               </Button>
+              {canSaveOfficial && !keepIssuedStatus && !isOfficialUnsent && (
+                <Button type="button" variant="outline" onClick={submitSaveOfficial} disabled={isLocked || isProcessing || isCancelled} className="border-primary text-primary">
+                  {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileCheck className="mr-2 h-4 w-4" />}
+                  บันทึกฉบับจริง
+                </Button>
+              )}
               {awaitingReceiptInInbox ? (
                 <Button type="button" asChild className="bg-primary font-bold">
                   <Link href="/app/management/accounting/inbox?tab=receipts">
@@ -833,22 +885,26 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
             </div>
             <div className="space-y-4">
               <h1 className="text-2xl font-bold text-right text-primary">ใบกำกับภาษี</h1>
-              {isEditing ? (
-                <div className="text-right space-y-1">
-                  <p className="text-sm font-mono">{docToEdit?.docNo}</p>
-                  {String(docToEdit?.docNo || "").includes("-TEMP-") ? (
-                    <p className="text-[11px] text-muted-foreground">เลขชั่วคราว — เลขใบกำกับจริงจะออกเมื่อส่งบัญชี</p>
-                  ) : docStatusKey === "DRAFT" || docStatusKey === "REJECTED" ? (
-                    <p className="text-[11px] text-muted-foreground">ฉบับจริงจะใช้เลขที่นี้ตามเดิม</p>
-                  ) : null}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-right">
+                  <p className="text-[10px] font-medium text-amber-800">ถ้าบันทึกฉบับร่าง</p>
+                  <p className="font-mono text-sm font-bold text-amber-950">
+                    {shownDraftDocNo || "กำลังโหลดเลขที่..."}
+                  </p>
                 </div>
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-right">
+                  <p className="text-[10px] font-medium text-emerald-800">ถ้าบันทึกฉบับจริง</p>
+                  <p className="font-mono text-sm font-bold text-emerald-950">
+                    {shownOfficialDocNo || "กำลังโหลดเลขที่..."}
+                  </p>
+                </div>
+              </div>
+              {keepIssuedStatus ? (
+                <p className="text-[11px] text-muted-foreground text-right">เอกสารนี้ออกเลขฉบับจริงแล้ว — บันทึกจะใช้เลขที่เดิม</p>
+              ) : hasOfficialDocNo ? (
+                <p className="text-[11px] text-muted-foreground text-right">เลขฉบับจริงจองแล้ว — บันทึกฉบับร่างหรือฉบับจริงใช้เลขที่นี้ตามเดิม</p>
               ) : (
-                <div className="text-right space-y-1">
-                  <Badge variant="outline" className="font-mono text-lg py-1 px-3 border-primary/30 text-primary bg-primary/5">
-                    {previewDocNo || "กำลังโหลดเลขที่..."}
-                  </Badge>
-                  <p className="text-[11px] text-muted-foreground">เลขชั่วคราวของฉบับร่าง — เลข SNV ปี-รันนิ่งออกเมื่อส่งบัญชี</p>
-                </div>
+                <p className="text-[11px] text-muted-foreground text-right">ฉบับร่างใช้เลขชั่วคราว — เลขรันออกเมื่อบันทึกฉบับจริงหรือส่งบัญชี</p>
               )}
               <FormField
                 control={form.control}
@@ -1148,7 +1204,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                 <div className="pt-4 border-t"><div className={cn("flex justify-between items-center p-3 rounded-md border", remainingAmount > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}><span className="text-sm font-bold">ยอดเงินที่ยังไม่ได้รับ:</span><span className={cn("text-lg font-black", remainingAmount > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingAmount)}</span></div>
                 {remainingAmount > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit" className="font-bold text-amber-700 cursor-pointer">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนดชำระ</Label><Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} className="h-9" /></div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing" className="text-xs font-normal cursor-pointer">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
               </div>
-              <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { if(isProcessing) return; const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, true); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+              <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { if(isProcessing) return; const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, "review"); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
             </DialogContent>
           </Dialog>
 

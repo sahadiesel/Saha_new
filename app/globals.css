@@ -234,6 +234,43 @@
     page-break-inside: avoid !important;
   }
   /* ไม่บังคับ padding/font ทุกเซลล์ — จะทับ Tailwind (เช่น p-4) ทำให้ตัวหนังสือดูบีบตอนพิมพ์ */
+
+  .print-draft-watermark {
+    position: fixed !important;
+    inset: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    z-index: 40 !important;
+    pointer-events: none !important;
+  }
+  .print-draft-watermark__text {
+    font-size: 72pt !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.18em !important;
+    color: rgba(185, 28, 28, 0.18) !important;
+    transform: rotate(-28deg) !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+.print-draft-watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+}
+.print-draft-watermark__text {
+  font-size: 5.5rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  color: rgba(185, 28, 28, 0.16);
+  transform: rotate(-28deg);
+  user-select: none;
 }
 
 /* Google Translate — ซ่อนแถบด้านบน ใช้ปุ่มเลือกภาษาใน header แทน */
