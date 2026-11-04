@@ -101,7 +101,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       <FixStuckUI />
       <div className="flex min-h-screen w-full">
         <AppSidebar />
-        <div className="flex flex-1 flex-col sm:pl-64 print:pl-0 overflow-hidden">
+        <div className="flex flex-1 flex-col lg:pl-64 print:pl-0 overflow-hidden">
           <AppHeader />
           <main className="flex-1 p-4 md:p-8 lg:p-10 print:p-0 overflow-y-auto">
             {children}

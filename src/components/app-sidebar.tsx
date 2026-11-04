@@ -31,7 +31,7 @@ export function AppSidebar() {
   const isOutsourceWorker = profile?.department === 'OUTSOURCE' && profile?.role === 'WORKER';
   
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r bg-background sm:flex print:hidden">
+    <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r bg-background lg:flex print:hidden">
       <div className="flex h-full max-h-screen flex-col">
         <div className="flex h-14 items-center border-b px-4 lg:h-[60px]">
             <Logo />

@@ -33,18 +33,18 @@ export function AppHeader() {
   const isOutsourceWorker = profile?.department === 'OUTSOURCE' && profile?.role === 'WORKER';
 
   return (
-    <header className="sm:hidden flex h-14 items-center gap-4 border-b bg-background px-4 lg:h-[60px] lg:px-6 sticky top-0 z-30 print:hidden">
+    <header className="lg:hidden flex h-14 items-center gap-3 border-b bg-background px-4 sticky top-0 z-30 print:hidden">
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger asChild>
-          <Button variant="outline" size="icon" className="shrink-0">
+          <Button variant="outline" size="sm" className="shrink-0 gap-2">
             <Menu className="h-5 w-5" />
-            <span className="sr-only">Toggle navigation menu</span>
+            <span>{t("เมนู")}</span>
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="flex flex-col p-0">
+        <SheetContent side="left" className="flex flex-col p-0 w-72 max-w-[85vw]">
           <SheetHeader className="sr-only">
-            <SheetTitle>Navigation Menu</SheetTitle>
-            <SheetDescription>A list of links to navigate the application.</SheetDescription>
+            <SheetTitle>{t("เมนู")}</SheetTitle>
+            <SheetDescription>{t("รายการเมนูสำหรับไปยังหน้าต่างๆ ของระบบ")}</SheetDescription>
           </SheetHeader>
           <div className="flex h-14 items-center border-b px-4">
               <Logo />
@@ -55,8 +55,8 @@ export function AppHeader() {
         </SheetContent>
       </Sheet>
 
-      <div className="w-full flex-1">
-        {/* Can add search or other header elements here */}
+      <div className="min-w-0 flex-1">
+        <Logo />
       </div>
 
       {profile && (
