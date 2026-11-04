@@ -93,18 +93,26 @@ export async function billingPersistRunOverrides(
     prevSeparate: Record<string, string>;
     deferred: Record<string, boolean>;
     separate: Record<string, string>;
+    titles?: Record<string, string>;
+    prevTitles?: Record<string, string>;
     billingMergedBuckets?: Record<string, string>;
   }
 ): Promise<{ deferred: Record<string, boolean>; separate: Record<string, string> }> {
   const newDeferred: Record<string, boolean> = { ...args.prevDeferred };
   const newSeparate: Record<string, string> = { ...args.prevSeparate };
+  const newTitles: Record<string, string> = { ...(args.prevTitles || {}) };
 
   for (const id of args.scopeIds) {
     delete newDeferred[id];
     delete newSeparate[id];
+    delete newTitles[id];
   }
   for (const [id, key] of Object.entries(args.separate)) {
     newSeparate[id] = key;
+  }
+  for (const [id, title] of Object.entries(args.titles || {})) {
+    const name = title.trim();
+    if (name) newTitles[id] = name;
   }
   for (const [id, v] of Object.entries(args.deferred)) {
     if (v) newDeferred[id] = true;
@@ -114,6 +122,7 @@ export async function billingPersistRunOverrides(
     monthId: args.monthId,
     separateInvoiceGroups: newSeparate,
     deferredInvoices: newDeferred,
+    billingNoteTitles: newTitles,
     updatedAt: serverTimestamp(),
     updatedByUid: args.profile.uid,
     updatedByName: args.profile.displayName,

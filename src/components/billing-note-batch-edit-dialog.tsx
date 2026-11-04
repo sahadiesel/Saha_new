@@ -18,7 +18,10 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Document, Customer } from '@/lib/types';
-import { billingSoloSeparateKey } from '@/lib/billing-note-batch-helpers';
+import {
+  billingInvoiceHeadingName,
+  billingPerInvoiceSeparateKey,
+} from '@/lib/billing-note-batch-helpers';
 import { AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -32,58 +35,63 @@ interface EditDialogProps {
     deferred: Record<string, boolean>;
     separate: Record<string, string>;
   };
+  initialTitles?: Record<string, string>;
   onSave: (
     customerId: string,
     deferred: Record<string, boolean>,
     separate: Record<string, string>,
-    touchedInvoiceIds: string[]
+    touchedInvoiceIds: string[],
+    titles: Record<string, string>
   ) => void;
 }
 
 const formatCurrency = (value: number) =>
   value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices, initialOverrides, onSave }: EditDialogProps) {
-  const [invoiceStates, setInvoiceStates] = useState<Record<string, { group: 'include' | 'defer' | 'separate', separateKey: string }>>({});
+export function BillingNoteBatchEditDialog({
+  isOpen,
+  onClose,
+  customer,
+  invoices,
+  initialOverrides,
+  initialTitles,
+  onSave,
+}: EditDialogProps) {
+  const [invoiceStates, setInvoiceStates] = useState<
+    Record<string, { group: 'include' | 'defer' | 'separate'; billName: string }>
+  >({});
 
   useEffect(() => {
-    const initialStates: Record<string, { group: 'include' | 'defer' | 'separate', separateKey: string }> = {};
-    invoices.forEach(inv => {
+    const initialStates: Record<string, { group: 'include' | 'defer' | 'separate'; billName: string }> = {};
+    invoices.forEach((inv) => {
       let group: 'include' | 'defer' | 'separate' = 'include';
-      let separateKey = '';
-
-      if (initialOverrides.deferred[inv.id]) {
-        group = 'defer';
-      } else if (initialOverrides.separate[inv.id]) {
-        group = 'separate';
-        const stored = initialOverrides.separate[inv.id].trim();
-        const ownKey = billingSoloSeparateKey(inv, invoices);
-        // ว่าง = ใบนี้ใบเดียว ค่า SINGLE เดิมคือค่าเริ่มต้นที่เผลอรวมทุกใบเข้ากลุ่มเดียวกัน
-        separateKey =
-          !stored || stored.toUpperCase() === 'SINGLE' || stored === ownKey ? '' : stored;
-      }
-      
-      initialStates[inv.id] = { group, separateKey };
+      if (initialOverrides.deferred[inv.id]) group = 'defer';
+      else if (initialOverrides.separate[inv.id]) group = 'separate';
+      const savedTitle = String(initialTitles?.[inv.id] || '').trim();
+      initialStates[inv.id] = {
+        group,
+        billName: savedTitle || billingInvoiceHeadingName(inv),
+      };
     });
     setInvoiceStates(initialStates);
-  }, [invoices, isOpen, initialOverrides]);
+  }, [invoices, isOpen, initialOverrides, initialTitles]);
 
   const handleSave = () => {
     const deferred: Record<string, boolean> = {};
     const separate: Record<string, string> = {};
+    const titles: Record<string, string> = {};
 
-    const separateInvoices = invoices.filter((inv) => invoiceStates[inv.id]?.group === 'separate');
     Object.entries(invoiceStates).forEach(([invoiceId, state]) => {
       if (state.group === 'defer') {
         deferred[invoiceId] = true;
       } else if (state.group === 'separate') {
-        const typed = (state.separateKey || '').trim();
+        separate[invoiceId] = billingPerInvoiceSeparateKey(invoiceId);
         const invoice = invoices.find((inv) => inv.id === invoiceId);
-        separate[invoiceId] = typed || (invoice ? billingSoloSeparateKey(invoice, separateInvoices) : invoiceId);
+        titles[invoiceId] = (state.billName || '').trim() || (invoice ? billingInvoiceHeadingName(invoice) : '');
       }
     });
 
-    onSave(customer.id, deferred, separate, invoices.map((i) => i.id));
+    onSave(customer.id, deferred, separate, invoices.map((i) => i.id), titles);
     onClose();
   };
 
@@ -91,26 +99,25 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
     setInvoiceStates((prev) => {
       const next = { ...prev };
       for (const inv of invoices) {
-        next[inv.id] = { group: 'separate', separateKey: '' };
+        next[inv.id] = {
+          group: 'separate',
+          billName: prev[inv.id]?.billName || billingInvoiceHeadingName(inv),
+        };
       }
       return next;
     });
   };
 
   const separatePlanCount = useMemo(() => {
-    const groups = new Set<string>();
     let included = 0;
+    let separateNotes = 0;
     for (const inv of invoices) {
       const state = invoiceStates[inv.id];
       if (!state || state.group === 'defer') continue;
-      if (state.group === 'include') {
-        included += 1;
-        continue;
-      }
-      const typed = (state.separateKey || '').trim();
-      groups.add(typed || `solo:${inv.id}`);
+      if (state.group === 'include') included += 1;
+      else separateNotes += 1;
     }
-    return { included, separateNotes: groups.size };
+    return { included, separateNotes };
   }, [invoiceStates, invoices]);
 
   const docNoCount = useMemo(() => {
@@ -132,10 +139,10 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                 <strong>เลื่อน</strong> — ย้ายบิลไปแสดงในเดือนถัดไป (จะไม่โผล่ในเดือนนี้อีก)
               </span>
               <span className="block">
-                <strong>แยก</strong> — บิลนี้ได้ใบวางบิลของตัวเอง 1 ใบ ช่องกลุ่มว่างไว้ได้
+                <strong>แยก</strong> — บิลนี้ได้ใบวางบิลของตัวเอง 1 ใบ ชื่อบนใบกำหนดได้คนละชื่อ
               </span>
               <span className="block">
-                ถ้าต้องการรวมหลายบิลเป็นใบวางบิลใบเดียวกัน ให้พิมพ์ชื่อกลุ่มเดียวกัน เช่น A
+                ชื่อที่พิมพ์ไม่ทำให้บิลไปรวมกัน อยากรวมหลายบิลในใบเดียวให้เลือก &quot;รวม&quot;
               </span>
             </span>
           </DialogDescription>
@@ -201,10 +208,8 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                                 [invoice.id]: {
                                   ...prev[invoice.id],
                                   group: value as 'include' | 'defer' | 'separate',
-                                  separateKey:
-                                    value === 'separate'
-                                      ? prev[invoice.id]?.separateKey || ''
-                                      : prev[invoice.id]?.separateKey || '',
+                                  billName:
+                                    prev[invoice.id]?.billName || billingInvoiceHeadingName(invoice),
                                 },
                               }))
                             }
@@ -227,16 +232,21 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                           {invoiceStates[invoice.id]?.group === 'separate' && (
                             <div className="flex items-center gap-2 animate-in slide-in-from-left-1 duration-200">
                               <Input
-                                placeholder="ว่าง = ใบนี้ใบเดียว"
-                                className="h-7 w-36 text-[10px]"
-                                value={invoiceStates[invoice.id]?.separateKey}
-                                onChange={(e) => setInvoiceStates(prev => ({...prev, [invoice.id]: {...prev[invoice.id], separateKey: e.target.value}}))}
+                                placeholder="ชื่อบนใบวางบิล"
+                                className="h-8 w-64 text-xs"
+                                value={invoiceStates[invoice.id]?.billName || ''}
+                                onChange={(e) =>
+                                  setInvoiceStates((prev) => ({
+                                    ...prev,
+                                    [invoice.id]: { ...prev[invoice.id], billName: e.target.value },
+                                  }))
+                                }
                               />
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Info className="h-3 w-3 text-muted-foreground" />
                                 </TooltipTrigger>
-                                <TooltipContent>ว่างไว้ = ใบวางบิลของบิลนี้ใบเดียว พิมพ์ชื่อกลุ่มเดียวกันเพื่อรวมหลายบิลเป็นใบเดียว</TooltipContent>
+                                <TooltipContent>ชื่อนี้พิมพ์บนใบวางบิลของบิลนี้ใบเดียว ไม่รวมกับบิลอื่น</TooltipContent>
                               </Tooltip>
                             </div>
                           )}

@@ -44,6 +44,11 @@ import {
   clearBillingNoteLinks,
   expandUngroupedSeparateGroups,
   billingRowIsEmptySplitParent,
+  billingRowsDetachSharedNoteDisplay,
+  applyBillingNoteTitlesToRows,
+  applyBillingNoteTitle,
+  releaseInvoicesFromForeignBillingNote,
+  billingNoteMatchesInvoices,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -224,9 +229,14 @@ export default function BatchBillingNotePage() {
       });
 
       setCustomerData(
-        rowsBeforeExplode
-          .flatMap((row) => explodeSeparateSubRows(row))
-          .filter((row) => !billingRowIsEmptySplitParent(row))
+        applyBillingNoteTitlesToRows(
+          billingRowsDetachSharedNoteDisplay(
+            rowsBeforeExplode
+              .flatMap((row) => explodeSeparateSubRows(row))
+              .filter((row) => !billingRowIsEmptySplitParent(row))
+          ),
+          activeBillingRun?.billingNoteTitles
+        )
       );
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error fetching data', description: error.message });
@@ -259,7 +269,8 @@ export default function BatchBillingNotePage() {
     touchedInvoiceIds: string[],
     deferred: Record<string, boolean>,
     separate: Record<string, string>,
-    selectedRows?: GroupedCustomerData[]
+    selectedRows?: GroupedCustomerData[],
+    titles?: Record<string, string>
   ) => {
     if (!profile || !billingRunRef || !db) return;
 
@@ -297,6 +308,8 @@ export default function BatchBillingNotePage() {
       prevSeparate: prevSep,
       deferred,
       separate,
+      titles,
+      prevTitles: billingRun?.billingNoteTitles,
     });
 
     await refreshBillingRunAfterWrite();
@@ -358,6 +371,14 @@ export default function BatchBillingNotePage() {
         if (headerTaxProfile) {
           billingCustomer = overlayTaxProfileForBillingNote(billingCustomer, headerTaxProfile);
         }
+        const soloTitle =
+          groupInvoices.length === 1
+            ? String((freshRun as BillingRun | null)?.billingNoteTitles?.[groupInvoices[0]!.id] || "").trim()
+            : "";
+        if (soloTitle) billingCustomer = applyBillingNoteTitle(billingCustomer, soloTitle);
+        if (groupKey !== "MAIN") {
+          await releaseInvoicesFromForeignBillingNote(db, groupInvoices);
+        }
         const { docId, docNo } = await createDocument(
           db,
           'BILLING_NOTE',
@@ -374,7 +395,7 @@ export default function BatchBillingNotePage() {
             withTax: false,
             vatAmount: 0,
             grandTotal: totalAmount,
-            notes: groupKey === 'MAIN' ? '' : `เอกสารกลุ่ม: ${groupKey}`,
+            notes: groupKey === 'MAIN' || groupKey.startsWith('ใบ:') ? '' : `เอกสารกลุ่ม: ${groupKey}`,
             senderName: profile.displayName,
             receiverName: billingCustomer.useTax
               ? billingCustomer.taxName || billingCustomer.name
@@ -402,7 +423,16 @@ export default function BatchBillingNotePage() {
       if (groupInvoicesForCreate.length === 0) return { success: false, error: "No invoices" };
       if (freshCreated?.separate?.[splitInvoiceGroupKey]) return { success: true, error: "Already created" };
       const adoptedSeparate = unanimousBillingNoteId(groupInvoicesForCreate);
-      const sid = adoptedSeparate || (await createNote(groupInvoicesForCreate, splitInvoiceGroupKey));
+      const adoptedSeparateExact =
+        !!adoptedSeparate &&
+        (await billingNoteMatchesInvoices(
+          db,
+          adoptedSeparate,
+          groupInvoicesForCreate.map((inv) => inv.id)
+        ));
+      const sid = adoptedSeparateExact
+        ? adoptedSeparate
+        : await createNote(groupInvoicesForCreate, splitInvoiceGroupKey);
       if (!hasError && sid) {
         await saveBillingRunCreatedNote(billingRunRef, {
           monthId,
@@ -414,7 +444,7 @@ export default function BatchBillingNotePage() {
       }
       return {
         success: !hasError,
-        error: hasError ? "Some notes failed." : adoptedSeparate ? "Already created" : "",
+        error: hasError ? "Some notes failed." : adoptedSeparateExact ? "Already created" : "",
       };
     }
 
@@ -863,11 +893,12 @@ export default function BatchBillingNotePage() {
           customer={editingCustomerData.customer}
           invoices={editDialogInvoices}
           initialOverrides={{ deferred: billingRun?.deferredInvoices || {}, separate: billingRun?.separateInvoiceGroups || {} }}
-          onSave={(_customerId, deferred, separate, touchedIds) => {
+          initialTitles={billingRun?.billingNoteTitles}
+          onSave={(_customerId, deferred, separate, touchedIds, titles) => {
             if (!editingCustomerData) return;
             const bucket = billingTargetBucket(editingCustomerData);
             const relatedRows = customerData.filter((r) => billingTargetBucket(r) === bucket);
-            void handleSaveOverrides(bucket, touchedIds, deferred, separate, relatedRows);
+            void handleSaveOverrides(bucket, touchedIds, deferred, separate, relatedRows, titles);
           }}
         />
       )}

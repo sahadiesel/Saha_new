@@ -1036,6 +1036,8 @@ export interface BillingRun {
   billingMergedBuckets?: Record<string, string>;
   deferredInvoices?: Record<string, boolean>;
   separateInvoiceGroups?: Record<string, string>;
+  /** ชื่อที่พิมพ์บนใบวางบิลของบิลที่แยก เป็นรายใบ — ไม่ใช้รวมกลุ่ม */
+  billingNoteTitles?: Record<string, string>;
   createdBillingNotes?: Record<string, { main?: string; separate?: Record<string, string> }>;
   updatedAt?: Timestamp;
   updatedByUid?: string;

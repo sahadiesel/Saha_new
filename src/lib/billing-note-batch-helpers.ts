@@ -104,26 +104,90 @@ export function billingSoloSeparateKey(invoice: Document, peers: Document[]): st
   return docNo;
 }
 
+/** ชื่อที่ควรขึ้นบนใบวางบิลของบิลนี้ ถ้ายังไม่ได้กำหนดชื่อเอง */
+export function billingInvoiceHeadingName(invoice: Document): string {
+  const snap = invoice.customerSnapshot;
+  if (!snap) return "";
+  const tax = String(snap.taxName || "").trim();
+  const name = String(snap.name || "").trim();
+  if (snap.useTax) return tax || name;
+  return name || tax;
+}
+
+/** ชื่อบนใบวางบิลของบิลที่แยก — คนละใบได้คนละชื่อ โดยไม่ทำให้บิลไปรวมกัน */
+export function applyBillingNoteTitle(customer: Customer, title?: string): Customer {
+  const name = String(title || "").trim();
+  if (!name) return customer;
+  return { ...customer, name, taxName: name };
+}
+
+/** คีย์แถวของบิลที่แยก หนึ่งบิลต่อหนึ่งใบวางบิลเสมอ */
+export function billingPerInvoiceSeparateKey(invoiceId: string): string {
+  return `ใบ:${invoiceId}`;
+}
+
 /**
- * ชื่อกลุ่ม "SINGLE" เป็นค่าเริ่มต้นเดิมตอนกดแยก จึงปนกันเป็นใบวางบิลใบเดียว
- * แตกให้เหลือหนึ่งแถวต่อหนึ่งบิล
+ * บิลที่กดแยกต้องได้แถวของตัวเอง แม้เดิมจะใช้ชื่อกลุ่มเดียวกัน
+ * ชื่อที่พิมพ์บนใบไม่ใช่กุญแจรวมกลุ่ม
  */
 export function expandUngroupedSeparateGroups(
   separateGroups: Record<string, Document[]>
 ): Record<string, Document[]> {
   const next: Record<string, Document[]> = {};
-  for (const [key, groupInvoices] of Object.entries(separateGroups)) {
-    if (key.trim().toUpperCase() !== "SINGLE") {
-      next[key] = groupInvoices;
-      continue;
-    }
+  for (const groupInvoices of Object.values(separateGroups)) {
     for (const inv of groupInvoices) {
-      const solo = billingSoloSeparateKey(inv, groupInvoices);
-      if (!next[solo]) next[solo] = [];
-      next[solo].push(inv);
+      next[billingPerInvoiceSeparateKey(inv.id)] = [inv];
     }
   }
   return next;
+}
+
+/**
+ * ใบวางบิลใบเดียวที่ครอบหลายแถวที่แยกแล้ว ยังไม่ใช่ใบของแถวนั้น
+ * ถอดเลขที่ออกจากแถว เพื่อให้ออกใบใหม่คนละใบได้
+ */
+export function billingRowsDetachSharedNoteDisplay(rows: BillingTableRow[]): BillingTableRow[] {
+  const owners = new Map<string, string[]>();
+  for (const row of rows) {
+    for (const inv of row.includedInvoices) {
+      const noteId = String(inv.billingNoteId || "").trim();
+      if (!noteId) continue;
+      const list = owners.get(noteId) || [];
+      list.push(inv.id);
+      owners.set(noteId, list);
+    }
+  }
+  return rows.map((row) => {
+    if (!row.splitInvoiceGroupKey) return row;
+    const noteIds = billingNoteIdsOnInvoices(row.includedInvoices);
+    if (noteIds.length !== 1) return row;
+    const all = owners.get(noteIds[0]!) || [];
+    const mine = new Set(row.includedInvoices.map((inv) => inv.id));
+    const exclusive = all.length === mine.size && all.every((id) => mine.has(id));
+    if (exclusive) return row;
+    return {
+      ...row,
+      createdNoteIds: undefined,
+      includedInvoices: row.includedInvoices.map((inv) => ({
+        ...inv,
+        billingNoteId: undefined,
+        billingNoteNo: undefined,
+      })),
+    };
+  });
+}
+
+export function applyBillingNoteTitlesToRows(
+  rows: BillingTableRow[],
+  titles?: Record<string, string>
+): BillingTableRow[] {
+  if (!titles) return rows;
+  return rows.map((row) => {
+    if (!row.splitInvoiceGroupKey || row.includedInvoices.length !== 1) return row;
+    const title = String(titles[row.includedInvoices[0]!.id] || "").trim();
+    if (!title) return row;
+    return { ...row, customer: applyBillingNoteTitle(row.customer, title) };
+  });
 }
 
 /** แถวหลักที่บิลถูกย้ายไปแถวแยกหมดแล้ว — ไม่ใช่แถวที่ออกใบวางบิลได้ */
@@ -382,23 +446,11 @@ export function billingRowNoteNumbers(
     if (t && !nos.includes(t)) nos.push(t);
   };
 
-  const noteIds: string[] = [];
-  if (row.createdNoteIds?.main) noteIds.push(row.createdNoteIds.main);
-  for (const id of Object.values(row.createdNoteIds?.separate || {})) {
-    if (id) noteIds.push(id);
-  }
-  for (const id of noteIds) {
-    push(noteNoByDocId?.[id]);
-  }
+  const notes = billingRowResolvedNotes(row);
+  if (notes?.main) push(noteNoByDocId?.[notes.main]);
 
   if (nos.length === 0) {
-    for (const inv of [
-      ...row.includedInvoices,
-      ...row.deferredInvoices,
-      ...Object.values(row.separateGroups).flat(),
-    ]) {
-      push(inv.billingNoteNo);
-    }
+    for (const inv of row.includedInvoices) push(inv.billingNoteNo);
   }
 
   return nos;
@@ -575,6 +627,64 @@ export async function saveBillingRunCreatedNote(
       mainId,
       'updatedAt',
       serverTimestamp()
+    );
+  }
+}
+
+/** ใบวางบิลนี้มีเฉพาะบิลชุดนี้หรือไม่ */
+export async function billingNoteMatchesInvoices(
+  db: Firestore,
+  noteId: string,
+  invoiceIds: string[]
+): Promise<boolean> {
+  const snap = await getDoc(doc(db, "documents", noteId));
+  if (!snap.exists()) return false;
+  const linked = ((snap.data() as Document).invoiceIds || []).map((id) => String(id));
+  if (linked.length !== invoiceIds.length) return false;
+  const want = new Set(invoiceIds);
+  return linked.every((id) => want.has(id));
+}
+
+/**
+ * บิลที่ถูกผูกกับใบวางบิลซึ่งยังมีบิลอื่นอยู่ — ถอดออกจากใบเก่า
+ * เพื่อให้ออกใบวางบิลของบิลนี้ใบเดียวได้
+ */
+export async function releaseInvoicesFromForeignBillingNote(
+  db: Firestore,
+  invoices: Document[]
+): Promise<void> {
+  const wanted = invoices.map((inv) => inv.id);
+  const docNos = invoices.map((inv) => String(inv.docNo || "").trim()).filter(Boolean);
+  const snaps = await Promise.all(wanted.map((id) => getDoc(doc(db, "documents", id))));
+  const oldNoteIds = new Set<string>();
+  snaps.forEach((snap) => {
+    const id = String(snap.data()?.billingNoteId || "").trim();
+    if (id) oldNoteIds.add(id);
+  });
+
+  for (const noteId of oldNoteIds) {
+    if (await billingNoteMatchesInvoices(db, noteId, wanted)) continue;
+    const noteRef = doc(db, "documents", noteId);
+    const noteSnap = await getDoc(noteRef);
+    if (!noteSnap.exists()) continue;
+    const data = noteSnap.data() as Document;
+    const remove = new Set(wanted);
+    const invoiceIds = (data.invoiceIds || []).filter((id) => !remove.has(id));
+    const items = (data.items || []).filter(
+      (item) => !docNos.some((no) => String(item.description || "").includes(no))
+    );
+    const total = items.reduce((sum, item) => sum + (item.total || 0), 0);
+    await updateDoc(
+      noteRef,
+      sanitizeForFirestore({
+        invoiceIds,
+        items,
+        subtotal: total,
+        net: total,
+        grandTotal: total,
+        vatAmount: 0,
+        updatedAt: serverTimestamp(),
+      })
     );
   }
 }
