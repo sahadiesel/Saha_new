@@ -46,6 +46,8 @@ import {
   unanimousBillingNoteId,
   saveBillingRunCreatedNote,
   clearBillingNoteLinks,
+  expandUngroupedSeparateGroups,
+  billingRowIsEmptySplitParent,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -241,6 +243,7 @@ function BillingNoteBatchTab() {
             includedInvoices.push(inv);
           }
         });
+        const splitGroups = expandUngroupedSeparateGroups(separateGroups);
         
         const mergedFollowerCount = Object.entries(mergedMap).filter(([, leader]) => leader === customer.id).length;
         const createdNoteIds = activeBillingRun?.createdBillingNotes?.[customer.id];
@@ -249,7 +252,7 @@ function BillingNoteBatchTab() {
           customer,
           includedInvoices,
           deferredInvoices,
-          separateGroups,
+          separateGroups: splitGroups,
           totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + billingSignedGrandTotal(inv), 0),
           createdNoteIds,
           parentBillingNotesSnapshot: createdNoteIds,
@@ -258,7 +261,9 @@ function BillingNoteBatchTab() {
         };
       });
 
-      const finalData = rowsBeforeExplode.flatMap((row) => explodeSeparateSubRows(row));
+      const finalData = rowsBeforeExplode
+        .flatMap((row) => explodeSeparateSubRows(row))
+        .filter((row) => !billingRowIsEmptySplitParent(row));
 
       const noteIds = new Set<string>();
       for (const notes of Object.values(activeBillingRun?.createdBillingNotes || {})) {

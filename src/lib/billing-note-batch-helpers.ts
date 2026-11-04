@@ -93,6 +93,49 @@ export function bucketHasAnyCreatedNote(n?: BillingCreatedNotes | null): boolean
   return Object.values(n.separate || {}).some(Boolean);
 }
 
+/**
+ * คีย์ของบิลที่แยกเป็นใบวางบิลของตัวเอง
+ * ใช้เลขที่เอกสารเมื่อไม่ซ้ำ เพื่อให้อ่านในตารางได้
+ */
+export function billingSoloSeparateKey(invoice: Document, peers: Document[]): string {
+  const docNo = String(invoice.docNo || "").trim();
+  const dup = peers.filter((peer) => String(peer.docNo || "").trim() === docNo).length > 1;
+  if (!docNo || dup) return `ใบ:${invoice.id}`;
+  return docNo;
+}
+
+/**
+ * ชื่อกลุ่ม "SINGLE" เป็นค่าเริ่มต้นเดิมตอนกดแยก จึงปนกันเป็นใบวางบิลใบเดียว
+ * แตกให้เหลือหนึ่งแถวต่อหนึ่งบิล
+ */
+export function expandUngroupedSeparateGroups(
+  separateGroups: Record<string, Document[]>
+): Record<string, Document[]> {
+  const next: Record<string, Document[]> = {};
+  for (const [key, groupInvoices] of Object.entries(separateGroups)) {
+    if (key.trim().toUpperCase() !== "SINGLE") {
+      next[key] = groupInvoices;
+      continue;
+    }
+    for (const inv of groupInvoices) {
+      const solo = billingSoloSeparateKey(inv, groupInvoices);
+      if (!next[solo]) next[solo] = [];
+      next[solo].push(inv);
+    }
+  }
+  return next;
+}
+
+/** แถวหลักที่บิลถูกย้ายไปแถวแยกหมดแล้ว — ไม่ใช่แถวที่ออกใบวางบิลได้ */
+export function billingRowIsEmptySplitParent(row: BillingTableRow): boolean {
+  return (
+    !row.splitInvoiceGroupKey &&
+    (row.splitSubgroupKeys?.length ?? 0) > 0 &&
+    row.includedInvoices.length === 0 &&
+    row.deferredInvoices.length === 0
+  );
+}
+
 /** แยกแต่ละกลุ่ม "แยก" เป็นแถวตารางของตัวเอง */
 export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] {
   const baseBucket = row.customer.id;

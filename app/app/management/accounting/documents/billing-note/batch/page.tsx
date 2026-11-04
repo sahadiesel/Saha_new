@@ -42,6 +42,8 @@ import {
   unanimousBillingNoteId,
   saveBillingRunCreatedNote,
   clearBillingNoteLinks,
+  expandUngroupedSeparateGroups,
+  billingRowIsEmptySplitParent,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -205,6 +207,7 @@ export default function BatchBillingNotePage() {
             includedInvoices.push(inv);
           }
         });
+        const splitGroups = expandUngroupedSeparateGroups(separateGroups);
 
         const createdNoteIds = activeBillingRun?.createdBillingNotes?.[customer.id];
         const mergedFollowerCount = Object.entries(mergedMap).filter(([, leader]) => leader === customer.id).length;
@@ -212,7 +215,7 @@ export default function BatchBillingNotePage() {
           customer,
           includedInvoices,
           deferredInvoices,
-          separateGroups,
+          separateGroups: splitGroups,
           totalIncludedAmount: includedInvoices.reduce((sum, inv) => sum + billingSignedGrandTotal(inv), 0),
           createdNoteIds,
           parentBillingNotesSnapshot: createdNoteIds,
@@ -220,7 +223,11 @@ export default function BatchBillingNotePage() {
         };
       });
 
-      setCustomerData(rowsBeforeExplode.flatMap((row) => explodeSeparateSubRows(row)));
+      setCustomerData(
+        rowsBeforeExplode
+          .flatMap((row) => explodeSeparateSubRows(row))
+          .filter((row) => !billingRowIsEmptySplitParent(row))
+      );
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error fetching data', description: error.message });
     } finally {

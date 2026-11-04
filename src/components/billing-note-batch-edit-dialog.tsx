@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Document, Customer } from '@/lib/types';
+import { billingSoloSeparateKey } from '@/lib/billing-note-batch-helpers';
 import { AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -55,7 +56,11 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
         group = 'defer';
       } else if (initialOverrides.separate[inv.id]) {
         group = 'separate';
-        separateKey = initialOverrides.separate[inv.id];
+        const stored = initialOverrides.separate[inv.id].trim();
+        const ownKey = billingSoloSeparateKey(inv, invoices);
+        // ว่าง = ใบนี้ใบเดียว ค่า SINGLE เดิมคือค่าเริ่มต้นที่เผลอรวมทุกใบเข้ากลุ่มเดียวกัน
+        separateKey =
+          !stored || stored.toUpperCase() === 'SINGLE' || stored === ownKey ? '' : stored;
       }
       
       initialStates[inv.id] = { group, separateKey };
@@ -67,17 +72,46 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
     const deferred: Record<string, boolean> = {};
     const separate: Record<string, string> = {};
 
+    const separateInvoices = invoices.filter((inv) => invoiceStates[inv.id]?.group === 'separate');
     Object.entries(invoiceStates).forEach(([invoiceId, state]) => {
       if (state.group === 'defer') {
         deferred[invoiceId] = true;
       } else if (state.group === 'separate') {
-        separate[invoiceId] = state.separateKey || 'SINGLE';
+        const typed = (state.separateKey || '').trim();
+        const invoice = invoices.find((inv) => inv.id === invoiceId);
+        separate[invoiceId] = typed || (invoice ? billingSoloSeparateKey(invoice, separateInvoices) : invoiceId);
       }
     });
 
     onSave(customer.id, deferred, separate, invoices.map((i) => i.id));
     onClose();
   };
+
+  const splitEachInvoice = () => {
+    setInvoiceStates((prev) => {
+      const next = { ...prev };
+      for (const inv of invoices) {
+        next[inv.id] = { group: 'separate', separateKey: '' };
+      }
+      return next;
+    });
+  };
+
+  const separatePlanCount = useMemo(() => {
+    const groups = new Set<string>();
+    let included = 0;
+    for (const inv of invoices) {
+      const state = invoiceStates[inv.id];
+      if (!state || state.group === 'defer') continue;
+      if (state.group === 'include') {
+        included += 1;
+        continue;
+      }
+      const typed = (state.separateKey || '').trim();
+      groups.add(typed || `solo:${inv.id}`);
+    }
+    return { included, separateNotes: groups.size };
+  }, [invoiceStates, invoices]);
 
   const docNoCount = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -98,11 +132,23 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                 <strong>เลื่อน</strong> — ย้ายบิลไปแสดงในเดือนถัดไป (จะไม่โผล่ในเดือนนี้อีก)
               </span>
               <span className="block">
-                <strong>แยก</strong> — แสดงเป็นแถวต่างหากในตารางวางบิล ใช้รวมกลุ่มด้วยมือได้เมื่อต้องการรวมกลับ
+                <strong>แยก</strong> — บิลนี้ได้ใบวางบิลของตัวเอง 1 ใบ ช่องกลุ่มว่างไว้ได้
+              </span>
+              <span className="block">
+                ถ้าต้องการรวมหลายบิลเป็นใบวางบิลใบเดียวกัน ให้พิมพ์ชื่อกลุ่มเดียวกัน เช่น A
               </span>
             </span>
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            ใบหลัก {separatePlanCount.included} รายการ · แยกเป็น {separatePlanCount.separateNotes} ใบวางบิล
+          </p>
+          <Button type="button" variant="secondary" size="sm" onClick={splitEachInvoice}>
+            แยกทุกใบเป็นคนละใบวางบิล
+          </Button>
+        </div>
         
         <TooltipProvider>
           <ScrollArea className="max-h-[60vh] pr-4">
@@ -157,7 +203,7 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                                   group: value as 'include' | 'defer' | 'separate',
                                   separateKey:
                                     value === 'separate'
-                                      ? prev[invoice.id]?.separateKey || 'SINGLE'
+                                      ? prev[invoice.id]?.separateKey || ''
                                       : prev[invoice.id]?.separateKey || '',
                                 },
                               }))
@@ -181,8 +227,8 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                           {invoiceStates[invoice.id]?.group === 'separate' && (
                             <div className="flex items-center gap-2 animate-in slide-in-from-left-1 duration-200">
                               <Input
-                                placeholder="กลุ่ม (เช่น A, B)"
-                                className="h-7 w-24 text-[10px]"
+                                placeholder="ว่าง = ใบนี้ใบเดียว"
+                                className="h-7 w-36 text-[10px]"
                                 value={invoiceStates[invoice.id]?.separateKey}
                                 onChange={(e) => setInvoiceStates(prev => ({...prev, [invoice.id]: {...prev[invoice.id], separateKey: e.target.value}}))}
                               />
@@ -190,7 +236,7 @@ export function BillingNoteBatchEditDialog({ isOpen, onClose, customer, invoices
                                 <TooltipTrigger asChild>
                                   <Info className="h-3 w-3 text-muted-foreground" />
                                 </TooltipTrigger>
-                                <TooltipContent>บิลที่ระบุกลุ่มเดียวกันจะถูกรวบไปอยู่ใบวางบิลใบเดียวกันค่ะ</TooltipContent>
+                                <TooltipContent>ว่างไว้ = ใบวางบิลของบิลนี้ใบเดียว พิมพ์ชื่อกลุ่มเดียวกันเพื่อรวมหลายบิลเป็นใบเดียว</TooltipContent>
                               </Tooltip>
                             </div>
                           )}
