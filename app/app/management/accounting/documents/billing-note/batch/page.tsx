@@ -12,7 +12,6 @@ import {
   getDocs,
   doc,
   getDoc,
-  setDoc,
   updateDoc,
   serverTimestamp,
   onSnapshot,
@@ -40,6 +39,9 @@ import {
   isUnpaidBillingCandidate,
   customerForBillingNoteDocument,
   appendBillingNoteLinkToInvoiceBatch,
+  unanimousBillingNoteId,
+  saveBillingRunCreatedNote,
+  clearBillingNoteLinks,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -392,29 +394,21 @@ export default function BatchBillingNotePage() {
     if (splitInvoiceGroupKey) {
       if (groupInvoicesForCreate.length === 0) return { success: false, error: "No invoices" };
       if (freshCreated?.separate?.[splitInvoiceGroupKey]) return { success: true, error: "Already created" };
-      const sid = await createNote(groupInvoicesForCreate, splitInvoiceGroupKey);
+      const adoptedSeparate = unanimousBillingNoteId(groupInvoicesForCreate);
+      const sid = adoptedSeparate || (await createNote(groupInvoicesForCreate, splitInvoiceGroupKey));
       if (!hasError && sid) {
-        if (!freshSnap.exists()) {
-          await setDoc(
-            billingRunRef,
-            {
-              monthId,
-              createdBillingNotes: { [targetBucket]: { separate: { [splitInvoiceGroupKey]: sid } } },
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        } else {
-          await updateDoc(
-            billingRunRef,
-            fpBillingRunCreatedSeparate(targetBucket, splitInvoiceGroupKey),
-            sid,
-            'updatedAt',
-            serverTimestamp()
-          );
-        }
+        await saveBillingRunCreatedNote(billingRunRef, {
+          monthId,
+          bucketId: targetBucket,
+          runExists: freshSnap.exists(),
+          separateKey: splitInvoiceGroupKey,
+          separateId: sid,
+        });
       }
-      return { success: !hasError, error: hasError ? "Some notes failed." : "" };
+      return {
+        success: !hasError,
+        error: hasError ? "Some notes failed." : adoptedSeparate ? "Already created" : "",
+      };
     }
 
     if (groupInvoicesForCreate.length === 0) {
@@ -423,23 +417,22 @@ export default function BatchBillingNotePage() {
     if (freshCreated?.main) {
       return { success: true, error: "Already created" };
     }
-    const mainId = await createNote(groupInvoicesForCreate, "MAIN");
+    const adoptedMain = unanimousBillingNoteId(groupInvoicesForCreate);
+    const mainId = adoptedMain || (await createNote(groupInvoicesForCreate, "MAIN"));
     if (!hasError && mainId) {
-      if (!freshSnap.exists()) {
-        await setDoc(billingRunRef, {
-          monthId,
-          createdBillingNotes: { [targetBucket]: { main: mainId, separate: freshCreated?.separate || {} } },
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(billingRunRef, {
-          [`createdBillingNotes.${targetBucket}.main`]: mainId,
-          updatedAt: serverTimestamp(),
-        });
-      }
+      await saveBillingRunCreatedNote(billingRunRef, {
+        monthId,
+        bucketId: targetBucket,
+        runExists: freshSnap.exists(),
+        mainId,
+        existingSeparate: freshCreated?.separate,
+      });
     }
 
-    return { success: !hasError, error: hasError ? "Some notes failed." : "" };
+    return {
+      success: !hasError,
+      error: hasError ? "Some notes failed." : adoptedMain ? "Already created" : "",
+    };
   };
 
   const resolveBillingRowCustomer = async (data: GroupedCustomerData): Promise<Customer | null> => {
@@ -561,6 +554,10 @@ export default function BatchBillingNotePage() {
     const splitKey = data.splitInvoiceGroupKey;
     setIsResetting(data.customer.id);
     try {
+      const invoicesToUnlink = splitKey
+        ? data.includedInvoices
+        : billingRowCollectBucketInvoices(target, customerData);
+      await clearBillingNoteLinks(db, invoicesToUnlink);
       if (splitKey) {
         await updateDoc(
           billingRunRef,
@@ -578,6 +575,7 @@ export default function BatchBillingNotePage() {
           serverTimestamp()
         );
       }
+      await refreshBillingRunAfterWrite();
       toast({
         title: "รีเซ็ตสถานะสำเร็จ",
         description: "ตอนนี้คุณสามารถกดสร้างใบวางบิลให้แถวนี้ได้ใหม่แล้วค่ะ",
@@ -753,6 +751,11 @@ export default function BatchBillingNotePage() {
                         <Button variant="outline" size="sm" className="mr-2" onClick={() => setEditingCustomerData(data)} disabled={!canEditGrouping}><Edit className="mr-2 h-3 w-3"/> แก้ไข</Button>
                         {rowStatus !== "created" ? (
                             <>
+                            {previewItems.map(({ docId, label }) => (
+                              <Button key={docId} size="sm" variant="outline" onClick={() => handlePreview(docId)}>
+                                <FileText className="mr-2 h-3 w-3" /> {label}
+                              </Button>
+                            ))}
                             <Button size="sm" onClick={() => void beginCreateBillingNotesForCustomer(data)} disabled={!canCreate}>สร้างใบวางบิล</Button>
                             {isAdminUser && (
                               <DropdownMenu>

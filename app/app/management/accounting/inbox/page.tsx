@@ -5,6 +5,8 @@ import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useFirebase } from "@/firebase";
 import { collection, query, onSnapshot, where, doc, serverTimestamp, type FirestoreError, updateDoc, runTransaction, limit, deleteField, addDoc, getDoc, getDocs, writeBatch, deleteDoc, orderBy } from "firebase/firestore";
+import { fpBillingRunCreatedBucket } from "@/lib/billing-run-field-paths";
+import { clearBillingNoteLinksByIds } from "@/lib/billing-note-batch-helpers";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -1480,10 +1482,21 @@ function AccountingInboxPageContent() {
         const customerId = docObj.customerId || docObj.customerSnapshot?.id;
         if (monthId && customerId) {
           try {
-            await updateDoc(doc(db, "billingRuns", monthId), {
-              [`createdBillingNotes.${customerId}`]: deleteField(),
-              updatedAt: serverTimestamp(),
-            });
+            await updateDoc(
+              doc(db, "billingRuns", monthId),
+              fpBillingRunCreatedBucket(customerId),
+              deleteField(),
+              "updatedAt",
+              serverTimestamp()
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        const invoiceIds = docObj.invoiceIds || [];
+        if (invoiceIds.length > 0) {
+          try {
+            await clearBillingNoteLinksByIds(db, invoiceIds);
           } catch {
             /* ignore */
           }

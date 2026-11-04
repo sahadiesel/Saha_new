@@ -611,6 +611,9 @@ export interface Document {
   receiptDocId?: string;
   receiptDocNo?: string;
   accountingEntryId?: string;
+  /** บิลต้นทางที่ถูกรวมในใบวางบิลแล้ว */
+  billingNoteId?: string;
+  billingNoteNo?: string;
   billingRunId?: string; // Links a BILLING_NOTE to its generation batch
   /** ใบวางบิล: เลื่อนไปแสดงในเดือนรันนี้ (YYYY-MM) — ไม่แสดงในเดือนที่ docDate จนกว่าจะถึงเดือนนี้ */
   billingDeferUntilMonth?: string;

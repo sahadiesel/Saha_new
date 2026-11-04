@@ -43,6 +43,9 @@ import {
   isUnpaidBillingCandidate,
   customerForBillingNoteDocument,
   appendBillingNoteLinkToInvoiceBatch,
+  unanimousBillingNoteId,
+  saveBillingRunCreatedNote,
+  clearBillingNoteLinks,
 } from '@/lib/billing-note-batch-helpers';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -616,29 +619,21 @@ function BillingNoteBatchTab() {
     if (splitInvoiceGroupKey) {
       if (groupInvoicesForCreate.length === 0) return { success: false, error: "No invoices" };
       if (freshCreated?.separate?.[splitInvoiceGroupKey]) return { success: true, error: "Already created" };
-      const sid = await createNote(groupInvoicesForCreate, splitInvoiceGroupKey);
+      const adoptedSeparate = unanimousBillingNoteId(groupInvoicesForCreate);
+      const sid = adoptedSeparate || (await createNote(groupInvoicesForCreate, splitInvoiceGroupKey));
       if (!hasError && sid) {
-        if (!freshSnap.exists()) {
-          await setDoc(
-            billingRunRef,
-            {
-              monthId,
-              createdBillingNotes: { [targetBucket]: { separate: { [splitInvoiceGroupKey]: sid } } },
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        } else {
-          await updateDoc(
-            billingRunRef,
-            fpBillingRunCreatedSeparate(targetBucket, splitInvoiceGroupKey),
-            sid,
-            'updatedAt',
-            serverTimestamp()
-          );
-        }
+        await saveBillingRunCreatedNote(billingRunRef, {
+          monthId,
+          bucketId: targetBucket,
+          runExists: freshSnap.exists(),
+          separateKey: splitInvoiceGroupKey,
+          separateId: sid,
+        });
       }
-      return { success: !hasError, error: hasError ? "Some notes failed." : "" };
+      return {
+        success: !hasError,
+        error: hasError ? "Some notes failed." : adoptedSeparate ? "Already created" : "",
+      };
     }
 
     if (groupInvoicesForCreate.length === 0) {
@@ -647,23 +642,22 @@ function BillingNoteBatchTab() {
     if (freshCreated?.main) {
       return { success: true, error: "Already created" };
     }
-    const mainId = await createNote(groupInvoicesForCreate, "MAIN");
+    const adoptedMain = unanimousBillingNoteId(groupInvoicesForCreate);
+    const mainId = adoptedMain || (await createNote(groupInvoicesForCreate, "MAIN"));
     if (!hasError && mainId) {
-      if (!freshSnap.exists()) {
-        await setDoc(billingRunRef, {
-          monthId,
-          createdBillingNotes: { [targetBucket]: { main: mainId, separate: freshCreated?.separate || {} } },
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await updateDoc(billingRunRef, {
-          [`createdBillingNotes.${targetBucket}.main`]: mainId,
-          updatedAt: serverTimestamp(),
-        });
-      }
+      await saveBillingRunCreatedNote(billingRunRef, {
+        monthId,
+        bucketId: targetBucket,
+        runExists: freshSnap.exists(),
+        mainId,
+        existingSeparate: freshCreated?.separate,
+      });
     }
 
-    return { success: !hasError, error: hasError ? "Some notes failed." : "" };
+    return {
+      success: !hasError,
+      error: hasError ? "Some notes failed." : adoptedMain ? "Already created" : "",
+    };
   };
 
   const resolveBillingRowCustomer = async (data: GroupedCustomerData): Promise<Customer | null> => {
@@ -792,6 +786,10 @@ function BillingNoteBatchTab() {
     const splitKey = data.splitInvoiceGroupKey;
     setIsResetting(data.customer.id);
     try {
+      const invoicesToUnlink = splitKey
+        ? data.includedInvoices
+        : billingRowCollectBucketInvoices(target, customerData);
+      await clearBillingNoteLinks(db, invoicesToUnlink);
       if (splitKey) {
         await updateDoc(
           billingRunRef,
@@ -809,6 +807,7 @@ function BillingNoteBatchTab() {
           serverTimestamp()
         );
       }
+      await refreshBillingRunAfterWrite();
       toast({
         title: "รีเซ็ตสถานะสำเร็จ",
         description: "ตอนนี้คุณสามารถกดสร้างใบวางบิลให้แถวนี้ได้ใหม่แล้วค่ะ",
@@ -1038,6 +1037,12 @@ function BillingNoteBatchTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            {previewItems.map(({ docId, label }) => (
+                              <DropdownMenuItem key={docId} onClick={() => handlePreview(docId)}>
+                                <Eye className="mr-2 h-4 w-4" /> {label}
+                              </DropdownMenuItem>
+                            ))}
+                            {previewItems.length > 0 && <DropdownMenuSeparator />}
                             {rowStatus !== "created" ? (
                               <>
                                 <DropdownMenuItem
@@ -1063,22 +1068,14 @@ function BillingNoteBatchTab() {
                                 </DropdownMenuItem>
                               </>
                             ) : (
-                              <>
-                                {previewItems.map(({ docId, label }) => (
-                                  <DropdownMenuItem key={docId} onClick={() => handlePreview(docId)}>
-                                    <Eye className="mr-2 h-4 w-4" /> {label}
-                                  </DropdownMenuItem>
-                                ))}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => void handleResetStatus(data)}
-                                  disabled={isResetting === data.customer.id}
-                                >
-                                  {isResetting === data.customer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RotateCcw className="mr-2 h-4 w-4"/>}
-                                  ล้างสถานะการสร้าง (Reset)
-                                </DropdownMenuItem>
-                              </>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => void handleResetStatus(data)}
+                                disabled={isResetting === data.customer.id}
+                              >
+                                {isResetting === data.customer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RotateCcw className="mr-2 h-4 w-4"/>}
+                                ล้างสถานะการสร้าง (Reset)
+                              </DropdownMenuItem>
                             )}
                             {isAdminUser && (
                               <>

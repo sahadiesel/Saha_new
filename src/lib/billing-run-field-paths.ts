@@ -8,6 +8,10 @@ export function fpBillingRunCreatedSeparate(bucketId: string, splitGroupKey: str
   return new FieldPath('createdBillingNotes', bucketId, 'separate', splitGroupKey);
 }
 
+export function fpBillingRunCreatedMain(bucketId: string): FieldPath {
+  return new FieldPath('createdBillingNotes', bucketId, 'main');
+}
+
 export function fpBillingRunCreatedBucket(bucketId: string): FieldPath {
   return new FieldPath('createdBillingNotes', bucketId);
 }

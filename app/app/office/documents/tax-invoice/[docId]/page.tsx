@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, FileText, User, Calendar, Loader2, Eye, Briefcase, ClipboardList, Receipt } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, FileText, User, Calendar, Loader2, Eye, Briefcase, ClipboardList, Receipt, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,6 +19,9 @@ import type { Document, Job } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { jobDisplayRef } from "@/lib/job-display";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { canSendTaxInvoiceToAccountingReview, sendTaxInvoiceToAccountingReview } from "@/firebase/documents";
 
 function relatedDocumentHref(docType: string, id: string): string {
     switch (docType) {
@@ -89,7 +92,10 @@ function TaxInvoiceDetailPageContent() {
     const { docId } = useParams();
     const router = useRouter();
     const { db } = useFirebase();
+    const { toast } = useToast();
     const searchParams = useSearchParams();
+    const [isSendReviewOpen, setIsSendReviewOpen] = useState(false);
+    const [isSendingReview, setIsSendingReview] = useState(false);
     
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
@@ -148,6 +154,25 @@ function TaxInvoiceDetailPageContent() {
     }, [db, quotedId]);
 
     const isCancelled = document?.status === 'CANCELLED';
+    const canSendReview = canSendTaxInvoiceToAccountingReview(document?.docType, document?.status);
+
+    const handleSendToAccounting = async () => {
+        if (!db || typeof docId !== "string") return;
+        setIsSendingReview(true);
+        try {
+            await sendTaxInvoiceToAccountingReview(db, docId);
+            toast({ title: "ส่งให้บัญชีตรวจสอบแล้ว", description: document?.docNo });
+            setIsSendReviewOpen(false);
+        } catch (e: unknown) {
+            toast({
+                variant: "destructive",
+                title: "ส่งไม่สำเร็จ",
+                description: e instanceof Error ? e.message : "ส่งให้บัญชีไม่สำเร็จ",
+            });
+        } finally {
+            setIsSendingReview(false);
+        }
+    };
 
     const handleBack = () => {
         const from = searchParams.get('from');
@@ -212,6 +237,11 @@ function TaxInvoiceDetailPageContent() {
                     <ArrowLeft className="mr-2 h-4 w-4"/> ย้อนกลับ
                 </Button>
                 <div className="flex flex-wrap gap-2">
+                    {canSendReview && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => setIsSendReviewOpen(true)}>
+                            <Send className="mr-2 h-4 w-4"/> ส่งให้บัญชีตรวจสอบ
+                        </Button>
+                    )}
                     <Button asChild variant="default" size="sm">
                         <Link href={`/app/office/documents/${docId}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`}>
                             <Eye className="mr-2 h-4 w-4"/> พรีวิว / พิมพ์เอกสาร
@@ -389,6 +419,24 @@ function TaxInvoiceDetailPageContent() {
                     </Card>
                 </div>
             </div>
+
+            <AlertDialog open={isSendReviewOpen} onOpenChange={(open) => { if (!isSendingReview) setIsSendReviewOpen(open); }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>ส่งให้บัญชีตรวจสอบ {document.docNo}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            เอกสารจะเข้า Inbox ฝ่ายบัญชี (สถานะรอตรวจสอบ) เลขที่ใบกำกับใช้ตามเดิม
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isSendingReview}>ยกเลิก</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void handleSendToAccounting()} disabled={isSendingReview}>
+                            {isSendingReview ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
+                            ยืนยันส่งบัญชี
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

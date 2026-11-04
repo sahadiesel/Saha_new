@@ -5,12 +5,20 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
+  updateDoc,
   where,
+  writeBatch,
+  type DocumentReference,
   type Firestore,
   type WriteBatch,
 } from 'firebase/firestore';
 import type { BillingRun, Customer, Document } from '@/lib/types';
 import { sanitizeForFirestore } from '@/lib/utils';
+import {
+  fpBillingRunCreatedMain,
+  fpBillingRunCreatedSeparate,
+} from '@/lib/billing-run-field-paths';
 
 /** ยอดมีทิศทาง: ใบลดหนี้เป็นค่าลบ (หักจากยอดเก็บ) ใบอื่นเป็นบวก */
 export function billingSignedGrandTotal(doc: Document): number {
@@ -142,31 +150,70 @@ export function explodeSeparateSubRows(row: BillingTableRow): BillingTableRow[] 
   return [mainRow, ...subRows];
 }
 
+export function billingNoteIdsOnInvoices(invoices: Document[]): string[] {
+  const ids: string[] = [];
+  for (const inv of invoices) {
+    const id = String(inv.billingNoteId || '').trim();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** ทุกบิลในกลุ่มชี้ใบวางบิลใบเดียวกัน */
+export function unanimousBillingNoteId(invoices: Document[]): string | undefined {
+  if (invoices.length === 0) return undefined;
+  const ids = billingNoteIdsOnInvoices(invoices);
+  if (ids.length !== 1) return undefined;
+  const only = ids[0]!;
+  if (!invoices.every((inv) => String(inv.billingNoteId || '').trim() === only)) return undefined;
+  return only;
+}
+
+/**
+ * ใบวางบิลของแถวนี้
+ * createdBillingNotes อาจไม่มี id เมื่อรหัสกลุ่มมี "." แล้ว Firestore มองเป็น path ซ้อน
+ * แต่บิลต้นทางถูกผูก billingNoteId / เลขที่ไว้แล้ว
+ */
+export function billingRowResolvedNotes(row: BillingTableRow): BillingCreatedNotes | undefined {
+  const run = row.createdNoteIds;
+  const fromInvoices = unanimousBillingNoteId(row.includedInvoices);
+  if (row.splitInvoiceGroupKey) {
+    const main = run?.main || fromInvoices;
+    return main ? { main, separate: {} } : undefined;
+  }
+  const main = run?.main || fromInvoices;
+  const separate = run?.separate;
+  if (!main && !Object.values(separate || {}).some(Boolean)) return undefined;
+  return { main, separate };
+}
+
 /** สถานะแสดงผลแถว (หลัง explode) */
 export function billingRowUiStatus(row: BillingTableRow): 'created' | 'pending' | 'empty' {
+  const notes = billingRowResolvedNotes(row);
+
   if (row.splitInvoiceGroupKey) {
-    if (row.createdNoteIds?.main) return 'created';
+    if (notes?.main) return 'created';
     return row.includedInvoices.length > 0 ? 'pending' : 'empty';
   }
 
-  if (row.deferredInvoices.length > 0) return 'pending';
-
   const needMain = row.includedInvoices.length > 0;
   const keys = row.splitSubgroupKeys || [];
-  const sep = row.createdNoteIds?.separate || {};
+  const sep = notes?.separate || {};
+  const mainIssued = !!notes?.main;
+  const deferredStillOpen = row.deferredInvoices.some((inv) => !String(inv.billingNoteId || '').trim());
 
-  if (needMain && !row.createdNoteIds?.main) return 'pending';
-  for (const k of keys) {
-    if (!sep[k]) return 'pending';
-  }
+  // ใบของแถวนี้ถูกออกแล้ว — แถวแยกที่ยังค้างมีสถานะของตัวเอง ไม่ควรกลบปุ่มดู/พิมพ์ของแถวนี้
+  if (needMain && mainIssued && !deferredStillOpen) return 'created';
+  if (needMain) return 'pending';
 
-  const hasSplitChildren = keys.length > 0;
-  const anyCreated =
-    !!row.createdNoteIds?.main || Object.values(sep).some(Boolean);
-  if (!needMain && !hasSplitChildren) {
+  if (row.deferredInvoices.length > 0) return 'pending';
+
+  if (keys.length === 0) {
+    const anyCreated = mainIssued || Object.values(sep).some(Boolean);
     return anyCreated ? 'created' : 'empty';
   }
-  return anyCreated ? 'created' : 'pending';
+  if (keys.some((k) => !sep[k])) return 'pending';
+  return 'created';
 }
 
 /** ล็อกรวมกลุ่ม / เลือกแถว — เฉพาะแถวที่สร้างใบวางบิลครบแล้ว */
@@ -260,16 +307,23 @@ export function billingRowCanCreateNote(row: BillingTableRow): boolean {
  * (ไม่ใช้ parent snapshot ที่รวมทุกใบแยกในบัคเก็ต)
  */
 export function billingRowPreviewItems(row: BillingTableRow): { docId: string; label: string }[] {
-  const notes = row.createdNoteIds;
-  if (!notes?.main && !(notes?.separate && Object.keys(notes.separate).length > 0)) {
-    return [];
-  }
-  if (row.splitInvoiceGroupKey) {
-    return notes.main ? [{ docId: notes.main, label: "พรีวิว" }] : [];
-  }
+  const notes = billingRowResolvedNotes(row);
   const items: { docId: string; label: string }[] = [];
-  if (notes.main) {
-    items.push({ docId: notes.main, label: "พรีวิว (ใบหลัก)" });
+  const push = (docId?: string, label?: string) => {
+    const id = (docId || '').trim();
+    if (!id || items.some((item) => item.docId === id)) return;
+    items.push({ docId: id, label: label || 'พรีวิว' });
+  };
+
+  if (row.splitInvoiceGroupKey) {
+    push(notes?.main, 'พรีวิว');
+    for (const id of billingNoteIdsOnInvoices(row.includedInvoices)) push(id, 'พรีวิว');
+    return items;
+  }
+
+  push(notes?.main, 'พรีวิว (ใบหลัก)');
+  for (const id of billingNoteIdsOnInvoices([...row.includedInvoices, ...row.deferredInvoices])) {
+    push(id, 'พรีวิว');
   }
   return items;
 }
@@ -426,4 +480,80 @@ export function appendBillingNoteLinkToInvoiceBatch(
   }
 
   batch.update(doc(db, "documents", inv.id), sanitizeForFirestore(updates));
+}
+
+/** บันทึก id ใบวางบิลลงรัน — ใช้ FieldPath เพื่อไม่ให้ "." ในรหัสกลุ่มกลายเป็น path ซ้อน */
+export async function saveBillingRunCreatedNote(
+  billingRunRef: DocumentReference,
+  args: {
+    monthId: string;
+    bucketId: string;
+    runExists: boolean;
+    mainId?: string;
+    separateKey?: string;
+    separateId?: string;
+    existingSeparate?: Record<string, string>;
+  }
+): Promise<void> {
+  const { monthId, bucketId, runExists, mainId, separateKey, separateId, existingSeparate } = args;
+  if (!runExists) {
+    const separate = { ...(existingSeparate || {}) };
+    if (separateKey && separateId) separate[separateKey] = separateId;
+    await setDoc(
+      billingRunRef,
+      {
+        monthId,
+        createdBillingNotes: {
+          [bucketId]: {
+            ...(mainId ? { main: mainId } : {}),
+            ...(Object.keys(separate).length > 0 ? { separate } : {}),
+          },
+        },
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return;
+  }
+  if (separateKey && separateId) {
+    await updateDoc(
+      billingRunRef,
+      fpBillingRunCreatedSeparate(bucketId, separateKey),
+      separateId,
+      'updatedAt',
+      serverTimestamp()
+    );
+    return;
+  }
+  if (mainId) {
+    await updateDoc(
+      billingRunRef,
+      fpBillingRunCreatedMain(bucketId),
+      mainId,
+      'updatedAt',
+      serverTimestamp()
+    );
+  }
+}
+
+/** ถอดลิงก์ใบวางบิลออกจากบิลต้นทาง — ใช้ตอนรีเซ็ตหรือยกเลิกใบวางบิล */
+export async function clearBillingNoteLinksByIds(db: Firestore, invoiceIds: string[]): Promise<void> {
+  const ids = invoiceIds.map((id) => id.trim()).filter(Boolean);
+  for (let i = 0; i < ids.length; i += 400) {
+    const slice = ids.slice(i, i + 400);
+    const batch = writeBatch(db);
+    for (const id of slice) {
+      batch.update(doc(db, 'documents', id), {
+        billingNoteId: deleteField(),
+        billingNoteNo: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
+}
+
+export async function clearBillingNoteLinks(db: Firestore, invoices: Document[]): Promise<void> {
+  const ids = invoices.filter((inv) => inv.billingNoteId || inv.billingNoteNo).map((inv) => inv.id);
+  await clearBillingNoteLinksByIds(db, ids);
 }

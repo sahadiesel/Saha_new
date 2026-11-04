@@ -12,6 +12,7 @@ import {
   where,
   limit,
   getDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import type { DocumentSettings, Document, DocType, JobStatus, UserProfile } from '@/lib/types';
 import { sanitizeForFirestore } from '@/lib/utils';
@@ -155,6 +156,57 @@ export function isOfficialPrefixedDocNo(docNo: string | undefined, prefix: strin
 export function isTempPrefixedDocNo(docNo: string | undefined, prefix: string): boolean {
   if (!docNo || !prefix) return false;
   return new RegExp(`^${prefix}-TEMP-\\d+$`, "i").test(docNo.trim());
+}
+
+/** ฉบับจริงที่ยังไม่ส่ง Inbox บัญชี — สถานะ FINAL */
+export function canSendTaxInvoiceToAccountingReview(
+  docType: string | undefined,
+  status: string | undefined
+): boolean {
+  return docType === "TAX_INVOICE" && String(status ?? "").toUpperCase() === "FINAL";
+}
+
+/** ส่งใบกำกับสถานะฉบับจริง (รอส่งให้บัญชี) เข้า Inbox บัญชี */
+export async function sendTaxInvoiceToAccountingReview(
+  db: Firestore,
+  documentId: string
+): Promise<void> {
+  const docRef = doc(db, "documents", documentId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) throw new Error("ไม่พบเอกสาร");
+  const data = snap.data() as Document;
+  if (!canSendTaxInvoiceToAccountingReview(data.docType, data.status)) {
+    const st = String(data.status ?? "").toUpperCase();
+    if (st === "PENDING_REVIEW") throw new Error("ใบนี้อยู่ใน Inbox บัญชีแล้ว");
+    throw new Error("ส่งให้บัญชีได้เฉพาะใบกำกับสถานะฉบับจริง (รอส่งให้บัญชี)");
+  }
+
+  const batch = writeBatch(db);
+  batch.update(docRef, sanitizeForFirestore({
+    status: "PENDING_REVIEW",
+    arStatus: "PENDING",
+    updatedAt: serverTimestamp(),
+    submittedAt: serverTimestamp(),
+    dispute: { isDisputed: false, reason: "" },
+  }));
+
+  if (data.jobId) {
+    const jobRef = doc(db, "jobs", data.jobId);
+    const jobSnap = await getDoc(jobRef);
+    if (jobSnap.exists()) {
+      batch.update(jobRef, {
+        status: "PICKED_UP",
+        salesDocId: documentId,
+        salesDocNo: data.docNo,
+        salesDocType: "TAX_INVOICE",
+        salesDocStatus: "PENDING_REVIEW",
+        lastActivityAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }
+
+  await batch.commit();
 }
 
 /**
