@@ -14,6 +14,7 @@ import {
   submitCustomerPasswordResetRequest,
   adminResetCustomerPasswordAfterForgot,
 } from "./customerPasswordReset";
+import { createJob } from "./createJob";
 
 initializeApp();
 
@@ -27,6 +28,7 @@ export {
   customerPortalQuotationDecision,
   submitCustomerPasswordResetRequest,
   adminResetCustomerPasswordAfterForgot,
+  createJob,
 };
 const db = getFirestore();
 

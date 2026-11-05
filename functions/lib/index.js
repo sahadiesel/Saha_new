@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.chatWithJimmy = exports.migrateClosedJobsToArchive2026 = exports.closeJobAfterAccounting = exports.adminResetCustomerPasswordAfterForgot = exports.submitCustomerPasswordResetRequest = exports.customerPortalQuotationDecision = exports.postJobCustomerChatMessage = exports.adminRevokeCustomerPortalRegistration = exports.adminGetCustomerPortalIdCardDownloadUrl = exports.provisionCustomerPortalProfile = exports.rejectPortalCustomerRegistration = exports.lookupCustomerForPortalSignup = void 0;
+exports.chatWithJimmy = exports.migrateClosedJobsToArchive2026 = exports.closeJobAfterAccounting = exports.createJob = exports.adminResetCustomerPasswordAfterForgot = exports.submitCustomerPasswordResetRequest = exports.customerPortalQuotationDecision = exports.postJobCustomerChatMessage = exports.adminRevokeCustomerPortalRegistration = exports.adminGetCustomerPortalIdCardDownloadUrl = exports.provisionCustomerPortalProfile = exports.rejectPortalCustomerRegistration = exports.lookupCustomerForPortalSignup = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
@@ -17,6 +17,8 @@ Object.defineProperty(exports, "customerPortalQuotationDecision", { enumerable: 
 const customerPasswordReset_1 = require("./customerPasswordReset");
 Object.defineProperty(exports, "submitCustomerPasswordResetRequest", { enumerable: true, get: function () { return customerPasswordReset_1.submitCustomerPasswordResetRequest; } });
 Object.defineProperty(exports, "adminResetCustomerPasswordAfterForgot", { enumerable: true, get: function () { return customerPasswordReset_1.adminResetCustomerPasswordAfterForgot; } });
+const createJob_1 = require("./createJob");
+Object.defineProperty(exports, "createJob", { enumerable: true, get: function () { return createJob_1.createJob; } });
 (0, app_1.initializeApp)();
 const db = (0, firestore_1.getFirestore)();
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---

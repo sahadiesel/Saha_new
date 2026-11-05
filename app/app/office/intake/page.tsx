@@ -87,7 +87,7 @@ const intakeSchema = z.object({
 });
 
 export default function IntakePage() {
-  const { db, storage } = useFirebase();
+  const { db, storage, app } = useFirebase();
   const { profile } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
@@ -175,7 +175,7 @@ export default function IntakePage() {
   };
 
   const onSubmit = async (values: z.infer<typeof intakeSchema>) => {
-    if (!db || !storage || !profile || isViewer) return;
+    if (!db || !storage || !app || !profile || isViewer) return;
 
     if (photos.length === 0) {
       toast({ 
@@ -201,25 +201,15 @@ export default function IntakePage() {
             photoURLs.push(url);
         }
 
-        const marketingSource = selectedCustomer.acquisitionSource || 'EXISTING';
-        const isActuallyNew = marketingSource !== 'EXISTING' && marketingSource !== 'NONE';
-
-        const jobData: any = {
+        const { jobId, jobNo } = await createJob(app, {
             customerId: values.customerId,
             department: values.department,
-            mainDepartment: values.department, 
             description: values.description,
-            customerSnapshot: { ...selectedCustomer },
-            customerType: isActuallyNew ? 'NEW' : 'EXISTING',
-            customerAcquisitionSource: marketingSource,
             photos: photoURLs,
-        };
-
-        if (values.department === 'CAR_SERVICE') jobData.carServiceDetails = values.carServiceDetails;
-        if (values.department === 'COMMONRAIL') jobData.commonrailDetails = values.commonrailDetails;
-        if (values.department === 'MECHANIC') jobData.mechanicDetails = values.mechanicDetails;
-
-        const { jobId, jobNo } = await createJob(db, jobData, profile);
+            ...(values.department === 'CAR_SERVICE' ? { carServiceDetails: values.carServiceDetails } : {}),
+            ...(values.department === 'COMMONRAIL' ? { commonrailDetails: values.commonrailDetails } : {}),
+            ...(values.department === 'MECHANIC' ? { mechanicDetails: values.mechanicDetails } : {}),
+        });
         
         toast({ title: "สร้างใบงานสำเร็จ", description: `เลขที่ใบงาน: ${jobNo}` });
         
