@@ -4,10 +4,12 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
-  "storage": {
-    "bucket": "shd-bucket-sg",
-    "rules": "storage.rules"
-  },
+  "storage": [
+    {
+      "bucket": "shd-bucket-sg",
+      "rules": "storage.rules"
+    }
+  ],
   "functions": [
     {
       "source": "functions",

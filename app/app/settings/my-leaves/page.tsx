@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { LeaveStatus } from '@/lib/constants';
 import type { LeaveRequest, HRSettings } from '@/lib/types';
 import { leaveTypeLabel, leaveStatusLabel } from '@/lib/ui-labels';
-import { compressImageIfNeeded } from "@/lib/image-compress";
+import { compressImageIfNeeded, imageUploadMetadata } from "@/lib/image-compress";
 
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -178,8 +178,9 @@ export default function MyLeavesPage() {
       }
       setAttachmentFiles((prev) => [...prev, ...processed]);
       setAttachmentPreviews((prev) => [...prev, ...processed.map((f) => URL.createObjectURL(f))]);
-    } catch {
-      toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ" });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "จัดการรูปไม่สำเร็จ";
+      toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ", description: message });
     } finally {
       setIsCompressingAttachments(false);
       e.target.value = "";
@@ -233,7 +234,7 @@ export default function MyLeavesPage() {
               storage,
               `hrLeaveAttachments/${profile.uid}/${docRef.id}/${Date.now()}_${i}.jpg`
             );
-            await uploadBytes(photoRef, processed);
+            await uploadBytes(photoRef, processed, imageUploadMetadata(processed));
             urls.push(await getDownloadURL(photoRef));
           }
           await updateDoc(docRef, {

@@ -42,59 +42,7 @@ import Image from "next/image";
 import type { Part, PartCategory, PartLocation, StockActivity } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
-
-const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
-
-const compressImageIfNeeded = async (file: File): Promise<File> => {
-  if (file.size <= FILE_SIZE_THRESHOLD) return file;
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new window.Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(file);
-          return;
-        }
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        let quality = 0.9;
-        const attemptCompression = (q: number) => {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
-                  const compressedFile = new File([blob], file.name, {
-                    type: "image/jpeg",
-                    lastModified: Date.now(),
-                  });
-                  resolve(compressedFile);
-                } else {
-                  attemptCompression(q - 0.1);
-                }
-              } else {
-                resolve(file); 
-              }
-            },
-            "image/jpeg",
-            q
-          );
-        };
-        attemptCompression(quality);
-      };
-      img.onerror = () => resolve(file);
-    };
-    reader.onerror = () => resolve(file);
-  });
-};
+import { compressImageIfNeeded, imageUploadMetadata } from "@/lib/image-compress";
 
 const partSchema = z.object({
   code: z.string().min(1, "กรุณากรอกหรัสอะไหล่"),
@@ -308,8 +256,9 @@ export default function PartsInventoryPage() {
         const processed = await compressImageIfNeeded(file);
         setPhoto(processed);
         setPhotoPreview(URL.createObjectURL(processed));
-      } catch (err) {
-        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการจัดการรูปภาพ";
+        toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ", description: message });
       } finally {
         setIsCompressing(false);
         e.target.value = '';
@@ -343,7 +292,7 @@ export default function PartsInventoryPage() {
       let finalImageUrl = "";
       if (photo) {
         const photoRef = ref(storage, `parts/${Date.now()}-${photo.name}`);
-        await uploadBytes(photoRef, photo);
+        await uploadBytes(photoRef, photo, imageUploadMetadata(photo));
         finalImageUrl = await getDownloadURL(photoRef);
       } else if (photoPreview) {
         finalImageUrl = editingPart?.imageUrl || "";

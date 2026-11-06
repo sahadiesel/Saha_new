@@ -8,6 +8,7 @@ import { doc, onSnapshot, updateDoc, deleteDoc, arrayUnion, arrayRemove, serverT
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
 import { storageFileUrl } from "@/firebase/location";
+import { compressImageIfNeeded, imageUploadMetadata } from "@/lib/image-compress";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { safeFormat, APP_DATE_FORMAT, APP_DATE_TIME_FORMAT } from '@/lib/date-utils';
@@ -67,8 +68,6 @@ import {
   jobPartsStepSatisfied,
 } from "@/lib/job-workflow";
 
-const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
-
 /** เอกสารอ้างอิงบนหน้างาน — จำกัดชนิดให้ตรงกับ Record ป้ายชื่อ (แก้ TS บน DocType กว้าง) */
 const JOB_REFERENCE_DOC_TYPES = ["QUOTATION", "DELIVERY_NOTE", "TAX_INVOICE", "RECEIPT"] as const;
 type JobReferenceDocType = (typeof JOB_REFERENCE_DOC_TYPES)[number];
@@ -105,57 +104,6 @@ const getStatusStyles = (status: Job['status']) => {
     default: return 'bg-secondary text-secondary-foreground';
   }
 }
-
-const compressImageIfNeeded = async (file: File): Promise<File> => {
-  if (file.size <= FILE_SIZE_THRESHOLD) return file;
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new window.Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(file);
-          return;
-        }
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        let quality = 0.9;
-        const attemptCompression = (q: number) => {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
-                  const compressedFile = new File([blob], file.name, {
-                    type: "image/jpeg",
-                    lastModified: Date.now(),
-                  });
-                  resolve(compressedFile);
-                } else {
-                  attemptCompression(q - 0.1);
-                }
-              } else {
-                resolve(file); // Fallback to original
-              }
-            },
-            "image/jpeg",
-            q
-          );
-        };
-        attemptCompression(quality);
-      };
-      img.onerror = () => resolve(file);
-    };
-    reader.onerror = () => resolve(file);
-  });
-};
 
 function JobDetailsPageContent() {
   const router = useRouter();
@@ -588,8 +536,9 @@ function JobDetailsPageContent() {
       }
       setActivityPhotoFiles((prev) => [...prev, ...newFiles]);
       setActivityPhotoPreviews((prev) => [...prev, ...newPreviews]);
-    } catch {
-      toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "เกิดข้อผิดพลาดในการจัดการรูปภาพ";
+      toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ", description: message });
     } finally {
       setIsCompressing(false);
     }
@@ -636,7 +585,7 @@ function JobDetailsPageContent() {
       const photoURLs: string[] = [];
       for (const photo of activityPhotoFiles) {
         const photoRef = ref(storage, `jobs/${jobId}/activity/${Date.now()}-${photo.name}`);
-        await uploadBytes(photoRef, photo);
+        await uploadBytes(photoRef, photo, imageUploadMetadata(photo));
         photoURLs.push(await getDownloadURL(photoRef));
       }
       const batch = writeBatch(db);
@@ -701,7 +650,7 @@ function JobDetailsPageContent() {
         for (const file of files) {
             const processed = await compressImageIfNeeded(file);
             const photoRef = ref(storage!, `jobs/${jobId}/photos/${Date.now()}-${processed.name}`);
-            await uploadBytes(photoRef, processed);
+            await uploadBytes(photoRef, processed, imageUploadMetadata(processed));
             photoURLs.push(await getDownloadURL(photoRef));
         }
         const batch = writeBatch(db);

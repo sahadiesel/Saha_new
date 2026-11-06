@@ -48,59 +48,7 @@ import { vendorTypeLabel } from "@/lib/ui-labels";
 import { buildPurchaseVendorSnapshot } from "@/lib/vendor-form";
 import type { PurchaseDoc, Vendor, AccountingAccount, Part } from "@/lib/types";
 import Link from "next/link";
-
-const FILE_SIZE_THRESHOLD = 500 * 1024; // 500KB
-
-const compressImageIfNeeded = async (file: File): Promise<File> => {
-  if (file.size <= FILE_SIZE_THRESHOLD) return file;
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new window.Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(file);
-          return;
-        }
-
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-
-        let quality = 0.9;
-        const attemptCompression = (q: number) => {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                if (blob.size <= FILE_SIZE_THRESHOLD || q <= 0.1) {
-                  const compressedFile = new File([blob], file.name, {
-                    type: "image/jpeg",
-                    lastModified: Date.now(),
-                  });
-                  resolve(compressedFile);
-                } else {
-                  attemptCompression(q - 0.1);
-                }
-              } else {
-                resolve(file); 
-              }
-            },
-            "image/jpeg",
-            q
-          );
-        };
-        attemptCompression(quality);
-      };
-      img.onerror = () => resolve(file);
-    };
-    reader.onerror = () => resolve(file);
-  });
-};
+import { compressImageIfNeeded, imageUploadMetadata } from "@/lib/image-compress";
 
 const lineItemSchema = z.object({
   partId: z.string().min(1, "กรุณาเลือกอะไหล่จากระบบ"),
@@ -312,8 +260,9 @@ export function PurchaseDocForm() {
         setPhotos(prev => [...prev, ...processedFiles]);
         const newPreviews = processedFiles.map(file => URL.createObjectURL(file));
         setPhotoPreviews(prev => [...prev, ...newPreviews]);
-      } catch (err) {
-        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการจัดการรูปภาพ";
+        toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ", description: message });
       } finally {
         setIsCompressing(false);
         e.target.value = '';
@@ -354,7 +303,7 @@ export function PurchaseDocForm() {
       if (photos.length > 0) {
         for (const file of photos) {
           const photoRef = ref(storage, `purchases/${Date.now()}-${file.name}`);
-          await uploadBytes(photoRef, file);
+          await uploadBytes(photoRef, file, imageUploadMetadata(file));
           const url = await getDownloadURL(photoRef);
           uploadedPhotos.push(url);
         }

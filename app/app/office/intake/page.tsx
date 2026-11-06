@@ -27,7 +27,7 @@ import { JOB_DEPARTMENTS, DATA_LIMITS } from "@/lib/constants";
 import { Loader2, Camera, X, ChevronsUpDown, PlusCircle, ImageIcon, AlertCircle, Hash, ExternalLink, ScanBarcode, Building2, User, Search } from "lucide-react";
 import type { Customer } from "@/lib/types";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
-import { compressImageIfNeeded } from "@/lib/image-compress";
+import { compressImageIfNeeded, imageUploadMetadata } from "@/lib/image-compress";
 import { deptLabel } from "@/lib/ui-labels";
 import { createJob } from "@/firebase/jobs";
 
@@ -159,8 +159,9 @@ export default function IntakePage() {
         setPhotos(prev => [...prev, ...processedFiles]);
         const newPreviews = processedFiles.map(file => URL.createObjectURL(file));
         setPhotoPreviews(prev => [...prev, ...newPreviews]);
-      } catch (err) {
-        toast({ variant: "destructive", title: "เกิดข้อผิดพลาดในการจัดการรูปภาพ" });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการจัดการรูปภาพ";
+        toast({ variant: "destructive", title: "จัดการรูปไม่สำเร็จ", description: message });
       } finally {
         setIsCompressing(false);
         e.target.value = '';
@@ -196,7 +197,7 @@ export default function IntakePage() {
         for (const photo of photos) {
             const tempName = `${Date.now()}-${photo.name || 'blob'}`;
             const photoRef = ref(storage, `jobs/temp/${tempName}`);
-            await uploadBytes(photoRef, photo);
+            await uploadBytes(photoRef, photo, imageUploadMetadata(photo));
             const url = await getDownloadURL(photoRef);
             photoURLs.push(url);
         }
