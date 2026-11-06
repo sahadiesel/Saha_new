@@ -1,5 +1,5 @@
 /** Firestore named database and Storage bucket in asia-southeast1 (Singapore). */
-export const FIRESTORE_DATABASE_ID = "shddatastg";
+export const FIRESTORE_DATABASE_ID = "shddatasg";
 export const STORAGE_BUCKET = "shd-bucket-sg";
 
 const LEGACY_STORAGE_BUCKETS = [

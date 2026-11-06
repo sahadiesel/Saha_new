@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-const firestoreDatabaseId = 'shddatastg';
+const firestoreDatabaseId = 'shddatasg';
 const storageBucketName = 'shd-bucket-sg';
 
 FirebaseFirestore get appFirestore => FirebaseFirestore.instanceFor(databaseId: firestoreDatabaseId);
