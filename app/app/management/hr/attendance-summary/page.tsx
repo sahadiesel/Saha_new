@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { doc, collection, query, where, orderBy, getDocs, getDoc, Timestamp } from "firebase/firestore";
@@ -303,7 +304,7 @@ export default function ManagementHRAttendanceSummaryPage() {
       } catch (err: any) {
           if (err.message?.includes('requires an index')) {
               const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-              if (urlMatch) setIndexCreationUrl(urlMatch[0]);
+              if (urlMatch) setIndexCreationUrl(firestoreIndexUrl(urlMatch[0]));
           }
           setError(err);
       } finally {

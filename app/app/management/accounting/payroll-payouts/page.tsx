@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useMemo, useState, useEffect, useCallback } from "react";
 import {
@@ -285,7 +286,7 @@ export default function PayrollPayoutsPage() {
     }, (err: any) => {
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
       toast({ variant: 'destructive', title: 'ไม่สามารถโหลดบัญชี', description: err.message });
     });

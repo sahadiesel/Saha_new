@@ -141,7 +141,7 @@ class _IntakePageState extends State<IntakePage> {
         final photo = _photos[i];
         final bytes = await photo.readAsBytes();
         final name = '${DateTime.now().millisecondsSinceEpoch}-$i.jpg';
-        final ref = FirebaseStorage.instance.ref('jobs/temp/$name');
+        final ref = appStorage.ref('jobs/temp/$name');
         await ref.putData(
           bytes,
           SettableMetadata(contentType: photo.mimeType ?? 'image/jpeg'),

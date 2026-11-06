@@ -1,5 +1,6 @@
-
 "use client";
+
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/context/auth-context";
@@ -225,7 +226,7 @@ function AppDashboardPage() {
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setEntries([]);
         mark("entries");
@@ -241,7 +242,7 @@ function AppDashboardPage() {
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setObligations([]);
         mark("obligations");
@@ -298,7 +299,7 @@ function AppDashboardPage() {
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setVatDocuments([]);
         mark("vatDocs");
@@ -319,7 +320,7 @@ function AppDashboardPage() {
       (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setVatPurchaseDocs([]);
         mark("vatPurchases");

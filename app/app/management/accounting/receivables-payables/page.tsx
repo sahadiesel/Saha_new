@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useMemo, Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -624,7 +625,7 @@ function ObligationList({ type, searchTerm, monthFilter, paymentFilter, accounts
                         toast({
                             variant: 'destructive',
                             title: 'ต้องสร้าง Firestore index',
-                            description: `เปิดลิงก์นี้ในเบราว์เซอร์แล้วกดสร้างดัชนี จากนั้นรีเฟรชหน้าลูกหนี้: ${urlMatch[0]}`,
+                            description: `เปิดลิงก์นี้ในเบราว์เซอร์แล้วกดสร้างดัชนี จากนั้นรีเฟรชหน้าลูกหนี้: ${firestoreIndexUrl(urlMatch[0])}`,
                         });
                     }
                     const snap = await getDocs(

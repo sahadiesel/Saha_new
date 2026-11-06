@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
@@ -170,7 +171,7 @@ export function JobTableList({
       setError(err);
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexUrl(urlMatch[0]);
+        if (urlMatch) setIndexUrl(firestoreIndexUrl(urlMatch[0]));
       }
     } finally {
       setLoading(false);

@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useMemo, useState, useEffect } from 'react';
 import { collection, query, where, orderBy, type Query } from 'firebase/firestore';
@@ -39,7 +40,7 @@ export default function AttendanceHistoryPage() {
     if (error?.message?.includes('requires an index')) {
         const urlMatch = error.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) {
-            setIndexCreationUrl(urlMatch[0]);
+            setIndexCreationUrl(firestoreIndexUrl(urlMatch[0]));
         }
     } else {
         setIndexCreationUrl(null);

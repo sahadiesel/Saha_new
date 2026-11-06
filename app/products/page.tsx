@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { collection, query, where, onSnapshot, type FirestoreError } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
-import { storageFileUrl } from "@/firebase/location";
+import { storageFileUrl, firestoreIndexUrl } from "@/firebase/location";
 import { PublicHeader } from "@/components/public-header";
 import { PublicFooter } from "@/components/public-footer";
 import Image from "next/image";
@@ -115,7 +115,7 @@ export default function PublicProductsPage() {
       error: (err: FirestoreError) => {
         if (err.message?.includes('requires an index')) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setLoading(false);
       }

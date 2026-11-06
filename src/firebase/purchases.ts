@@ -1,4 +1,5 @@
 'use client';
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import {
   type Firestore,
@@ -60,7 +61,7 @@ export async function findNextAvailablePurchaseSequence(db: Firestore, prefixYea
   } catch (e: any) {
     if (e.message?.includes('requires an index')) {
       const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-      return { sequence: 1, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+      return { sequence: 1, indexErrorUrl: urlMatch ? firestoreIndexUrl(urlMatch[0]) : undefined };
     }
     throw e;
   }

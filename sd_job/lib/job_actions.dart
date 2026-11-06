@@ -108,7 +108,7 @@ Future<void> addProgressPhotos({
   }
 
   final urls = <String>[];
-  final storage = FirebaseStorage.instance;
+  final storage = appStorage;
   for (var index = 0; index < images.length; index++) {
     final ref = storage.ref('jobs/${job.id}/activity/${DateTime.now().millisecondsSinceEpoch}-$index.jpg');
     await ref.putData(images[index], SettableMetadata(contentType: 'image/jpeg'));

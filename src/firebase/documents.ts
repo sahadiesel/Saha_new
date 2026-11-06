@@ -1,5 +1,6 @@
-
 'use client';
+
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import {
   type Firestore,
@@ -79,7 +80,7 @@ export async function findDocSequenceUsage(
   } catch (e: any) {
     if (e.message?.includes("requires an index")) {
       const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-      return { max: 0, used: new Set(), indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+      return { max: 0, used: new Set(), indexErrorUrl: urlMatch ? firestoreIndexUrl(urlMatch[0]) : undefined };
     }
     throw e;
   }
@@ -259,7 +260,7 @@ export async function getNextTempDocNo(
   } catch (e: any) {
     if (e.message?.includes("requires an index")) {
       const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-      return { docNo: `${prefix}-TEMP-0001`, indexErrorUrl: urlMatch ? urlMatch[0] : undefined };
+      return { docNo: `${prefix}-TEMP-0001`, indexErrorUrl: urlMatch ? firestoreIndexUrl(urlMatch[0]) : undefined };
     }
     throw e;
   }

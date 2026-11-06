@@ -1,5 +1,6 @@
-
 "use client";
+
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -623,7 +624,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     } catch (e: any) {
       if (e.message?.includes('requires an index')) {
         const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
       throw e;
     }

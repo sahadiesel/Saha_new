@@ -40,7 +40,7 @@ import {
 import type { Part } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import Image from "next/image";
-import { storageFileUrl } from "@/firebase/location";
+import { storageFileUrl, firestoreIndexUrl } from "@/firebase/location";
 import Link from "next/link";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { onSnapshot } from "firebase/firestore";
@@ -110,7 +110,7 @@ export default function WebManagementProductsPage() {
         console.error("Web Parts Error:", err);
         if (err.message?.includes('requires an index')) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setLoading(false);
       }

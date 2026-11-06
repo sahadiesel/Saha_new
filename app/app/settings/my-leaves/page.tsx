@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import Image from "next/image";
@@ -150,7 +151,7 @@ export default function MyLeavesPage() {
     if (error?.message?.includes('requires an index')) {
         const urlMatch = error.message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) {
-            setIndexCreationUrl(urlMatch[0]);
+            setIndexCreationUrl(firestoreIndexUrl(urlMatch[0]));
         }
     } else {
         setIndexCreationUrl(null);

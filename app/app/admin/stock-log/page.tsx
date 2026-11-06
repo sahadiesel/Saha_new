@@ -1,17 +1,23 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { collection, query, orderBy, limit, type Query } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, Timestamp, type Query } from "firebase/firestore";
 import { useFirebase, useCollection } from "@/firebase";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Search, History, ClipboardList, TrendingUp, TrendingDown, ShoppingCart, User } from "lucide-react";
 import { safeFormat, APP_DATE_TIME_FORMAT } from "@/lib/date-utils";
 import type { StockActivity } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const MONTHS = [
+  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+];
 
 const getActivityTypeStyles = (type: StockActivity['type']) => {
   switch (type) {
@@ -25,11 +31,27 @@ const getActivityTypeStyles = (type: StockActivity['type']) => {
 
 export default function StockLogPage() {
   const { db } = useFirebase();
+  const now = useMemo(() => new Date(), []);
+  const [year, setYear] = useState(() => now.getFullYear());
+  const [month, setMonth] = useState(() => now.getMonth() + 1);
   const [searchTerm, setSearchTerm] = useState("");
+  const years = useMemo(() => {
+    const current = now.getFullYear();
+    return Array.from({ length: 5 }, (_, i) => current - i);
+  }, [now]);
 
-  const logQuery = useMemo(() => 
-    db ? query(collection(db, "stockActivities"), orderBy("createdAt", "desc"), limit(500)) : null
-  , [db]);
+  const logQuery = useMemo(() => {
+    if (!db) return null;
+    const start = Timestamp.fromDate(new Date(year, month - 1, 1));
+    const end = Timestamp.fromDate(new Date(year, month, 1));
+    return query(
+      collection(db, "stockActivities"),
+      where("createdAt", ">=", start),
+      where("createdAt", "<", end),
+      orderBy("createdAt", "desc"),
+      limit(500)
+    );
+  }, [db, year, month]);
 
   const { data: logs, isLoading } = useCollection<StockActivity>(logQuery as Query<StockActivity> | null);
 
@@ -51,12 +73,34 @@ export default function StockLogPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <CardTitle className="text-lg flex items-center gap-2">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            <CardTitle className="text-lg flex items-center gap-2 shrink-0">
               <History className="h-5 w-5 text-primary" />
               รายการความเคลื่อนไหวล่าสุด
             </CardTitle>
-            <div className="relative w-full sm:w-80">
+            <div className="flex gap-2">
+              <Select value={String(year)} onValueChange={(value) => setYear(Number(value))}>
+                <SelectTrigger className="h-9 w-[108px]" aria-label="ปี">
+                  <SelectValue placeholder="ปี" />
+                </SelectTrigger>
+                <SelectContent>
+                  {years.map((item) => (
+                    <SelectItem key={item} value={String(item)}>{item}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={String(month)} onValueChange={(value) => setMonth(Number(value))}>
+                <SelectTrigger className="h-9 w-[148px]" aria-label="เดือน">
+                  <SelectValue placeholder="เดือน" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MONTHS.map((label, index) => (
+                    <SelectItem key={label} value={String(index + 1)}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="relative w-full xl:ml-auto xl:w-80">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
                 placeholder="ค้นหารหัสอะไหล่, ชื่อสินค้า, หรือชื่อพนักงาน..." 
@@ -68,16 +112,16 @@ export default function StockLogPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="border rounded-xl overflow-hidden shadow-sm">
-            <Table>
+          <div className="border rounded-xl overflow-x-auto shadow-sm">
+            <Table className="table-fixed min-w-[920px]">
               <TableHeader className="bg-muted/50">
                 <TableRow>
-                  <TableHead>วัน/เวลา</TableHead>
-                  <TableHead>สินค้า (รหัส/ชื่อ)</TableHead>
-                  <TableHead>ประเภท</TableHead>
-                  <TableHead className="text-right">จำนวนเดิม</TableHead>
-                  <TableHead className="text-right">ปรับปรุง</TableHead>
-                  <TableHead className="text-right">ยอดใหม่</TableHead>
+                  <TableHead className="w-[108px]">วัน/เวลา</TableHead>
+                  <TableHead className="w-[34%]">สินค้า (รหัส/ชื่อ)</TableHead>
+                  <TableHead className="w-[132px]">ประเภท</TableHead>
+                  <TableHead className="w-[88px] text-right">จำนวนเดิม</TableHead>
+                  <TableHead className="w-[88px] text-right">ปรับปรุง</TableHead>
+                  <TableHead className="w-[88px] text-right">ยอดใหม่</TableHead>
                   <TableHead>เหตุผล / ผู้ทำรายการ</TableHead>
                 </TableRow>
               </TableHeader>
@@ -95,10 +139,10 @@ export default function StockLogPage() {
                         </TableCell>
                         <TableCell>
                           <p className="font-bold text-[11px] font-mono text-primary uppercase">{log.partCode}</p>
-                          <p className="text-xs line-clamp-1 max-w-[180px]">{log.partName}</p>
+                          <p className="text-sm leading-snug line-clamp-2">{log.partName}</p>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={style.variant} className="text-[9px] px-1.5 h-5">
+                          <Badge variant={style.variant} className="whitespace-nowrap text-[11px] px-2 h-6">
                             <style.icon className="mr-1 h-2.5 w-2.5" />
                             {style.label}
                           </Badge>
@@ -121,7 +165,7 @@ export default function StockLogPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={7} className="h-32 text-center text-muted-foreground italic">
-                      ไม่พบประวัติการปรับปรุงสต็อกที่ระบุ
+                      ไม่พบความเคลื่อนไหวใน{MONTHS[month - 1]} {year}
                     </TableCell>
                   </TableRow>
                 )}

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
@@ -28,7 +28,7 @@ export default function QuotationTemplatesPage() {
 
   useEffect(() => {
     if (!db) return;
-    const q = query(collection(db, "quotationTemplates"), orderBy("updatedAt", "desc"));
+    const q = query(collection(db, "quotationTemplates"));
     return onSnapshot(q, (snap) => {
       setTemplates(snap.docs.map(d => ({ id: d.id, ...d.data() } as QuotationTemplate)));
       setLoading(false);
@@ -36,9 +36,11 @@ export default function QuotationTemplatesPage() {
   }, [db]);
 
   const filteredTemplates = useMemo(() => {
-    if (!searchTerm) return templates;
-    const q = searchTerm.toLowerCase();
-    return templates.filter(t => t.name.toLowerCase().includes(q));
+    const q = searchTerm.trim().toLowerCase();
+    const list = q ? templates.filter(t => t.name.toLowerCase().includes(q)) : templates;
+    return [...list].sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "th", { sensitivity: "base", numeric: true })
+    );
   }, [templates, searchTerm]);
 
   const handleDelete = async () => {
@@ -81,10 +83,10 @@ export default function QuotationTemplatesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ชื่อ Template</TableHead>
-                  <TableHead>จำนวนรายการ</TableHead>
-                  <TableHead>อัปเดตล่าสุด</TableHead>
-                  <TableHead className="text-right">จัดการ</TableHead>
+                  <TableHead className="h-7">ชื่อ Template</TableHead>
+                  <TableHead className="h-7">จำนวนรายการ</TableHead>
+                  <TableHead className="h-7">อัปเดตล่าสุด</TableHead>
+                  <TableHead className="h-7 text-right">จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -93,12 +95,12 @@ export default function QuotationTemplatesPage() {
                 ) : filteredTemplates.length > 0 ? (
                   filteredTemplates.map(t => (
                     <TableRow key={t.id}>
-                      <TableCell className="font-medium">{t.name}</TableCell>
-                      <TableCell>{t.items.length} รายการ</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{safeFormat(t.updatedAt, "dd/MM/yyyy HH:mm")}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="py-2 font-medium">{t.name}</TableCell>
+                      <TableCell className="py-2">{t.items.length} รายการ</TableCell>
+                      <TableCell className="py-2 text-xs text-muted-foreground">{safeFormat(t.updatedAt, "dd/MM/yyyy HH:mm")}</TableCell>
+                      <TableCell className="py-2 text-right">
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4"/></Button></DropdownMenuTrigger>
+                          <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4"/></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild><Link href={`/app/office/documents/quotation/templates/${t.id}`}><Edit className="mr-2 h-4 w-4"/>แก้ไข</Link></DropdownMenuItem>
                             <DropdownMenuItem className="text-destructive" onClick={() => setTemplateToDelete(t)}><Trash2 className="mr-2 h-4 w-4"/>ลบ</DropdownMenuItem>

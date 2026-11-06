@@ -1,5 +1,6 @@
-
 "use client";
+
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect, Suspense } from "react";
 import { useAuth } from "@/context/auth-context";
@@ -440,7 +441,7 @@ function AccountingInboxPageContent() {
     const onPendingDocDateError = (err: FirestoreError) => {
       if (err.message?.includes("requires an index")) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
       pendingDocDateReady = true;
       publish();
@@ -493,7 +494,7 @@ function AccountingInboxPageContent() {
             );
           } else if (err.message?.includes("requires an index")) {
             const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-            if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+            if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
           }
           activeReadyFlags.add(idx);
           publish();
@@ -544,7 +545,7 @@ function AccountingInboxPageContent() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const urlMatch = msg.match(/https?:\/\/[^\s]+/);
-        if (urlMatch && !cancelled) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch && !cancelled) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
     };
 
@@ -579,7 +580,7 @@ function AccountingInboxPageContent() {
     const onReceiptQueryError = (err: FirestoreError) => {
       if (err.message?.includes("requires an index")) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
     };
 
@@ -625,7 +626,7 @@ function AccountingInboxPageContent() {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("requires an index")) {
           const urlMatch = msg.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
       }
     })();

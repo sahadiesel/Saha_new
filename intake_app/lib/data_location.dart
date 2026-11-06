@@ -1,9 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 const firestoreDatabaseId = 'shddatasg';
 const storageBucketName = 'shd-bucket-sg';
 
-FirebaseFirestore get appFirestore => FirebaseFirestore.instanceFor(databaseId: firestoreDatabaseId);
+FirebaseFirestore get appFirestore => FirebaseFirestore.instanceFor(
+      app: Firebase.app(),
+      databaseId: firestoreDatabaseId,
+    );
+
+FirebaseStorage get appStorage => FirebaseStorage.instanceFor(
+      app: Firebase.app(),
+      bucket: storageBucketName,
+    );
 
 String storageFileUrl(String url) {
   const legacy = [

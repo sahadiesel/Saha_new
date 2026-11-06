@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import 'data_location.dart';
@@ -45,7 +44,7 @@ class _StoragePhotoState extends State<StoragePhoto> {
       return;
     }
     try {
-      final data = await FirebaseStorage.instance.refFromURL(storageFileUrl(widget.url)).getData(8 * 1024 * 1024);
+      final data = await appStorage.refFromURL(storageFileUrl(widget.url)).getData(8 * 1024 * 1024);
       if (!mounted) return;
       if (data == null || data.isEmpty) {
         setState(() => _failed = true);

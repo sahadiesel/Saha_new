@@ -1,5 +1,6 @@
-
 "use client";
+
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -345,7 +346,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     } catch (e: any) {
       if (e.message?.includes('requires an index')) {
         const urlMatch = e.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+        if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
       }
       throw e;
     }

@@ -4,7 +4,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { storageFileUrl } from "@/firebase/location";
+import { storageFileUrl, firestoreIndexUrl } from "@/firebase/location";
 import { useRouter, usePathname } from "next/navigation";
 import { 
   collection, 
@@ -349,7 +349,7 @@ export function JobList({
       }
       if (err.message?.includes('requires an index')) {
         const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-        if (urlMatch) setIndexUrl(urlMatch[0]);
+        if (urlMatch) setIndexUrl(firestoreIndexUrl(urlMatch[0]));
       }
       setError(err);
       setLoading(false);

@@ -1,4 +1,5 @@
 "use client";
+import { firestoreIndexUrl } from "@/firebase/location";
 
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
@@ -196,7 +197,7 @@ export default function CashbookPage() {
       error: (err: FirestoreError) => {
         if (err.message?.includes("requires an index")) {
           const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-          if (urlMatch) setIndexErrorUrl(urlMatch[0]);
+          if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
         }
         setLoading(false);
       }

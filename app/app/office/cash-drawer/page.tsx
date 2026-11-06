@@ -21,7 +21,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase } from "@/firebase";
-import { storageFileUrl } from "@/firebase/location";
+import { storageFileUrl, firestoreIndexUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -205,7 +205,7 @@ export default function OfficeCashDrawerPage() {
     }, (err: FirestoreError) => {
         if (err.message?.includes('requires an index')) {
             const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
-            if (urlMatch) setHistoryIndexUrl(urlMatch[0]);
+            if (urlMatch) setHistoryIndexUrl(firestoreIndexUrl(urlMatch[0]));
         }
     });
 
