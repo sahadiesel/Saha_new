@@ -12,6 +12,7 @@ import { Loader2, Search, Box, MapPin, ScanBarcode, X, AlertCircle } from "lucid
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import Image from "next/image";
+import { storageFileUrl } from "@/firebase/location";
 import type { Part } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -135,7 +136,7 @@ export default function OfficePartSearchPage() {
                 <div className="flex flex-row items-center p-2 gap-4">
                   <div className="relative h-12 w-12 rounded border bg-muted shrink-0 overflow-hidden shadow-sm">
                     {part.imageUrl ? (
-                      <Image src={part.imageUrl} alt={part.name} fill className="object-cover" />
+                      <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" />
                     ) : (
                       <Box className="h-6 w-6 m-3 text-muted-foreground/30" />
                     )}

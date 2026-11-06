@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { storageFileUrl } from "@/firebase/location";
 import { useSearchParams } from "next/navigation";
 import {
   collection,
@@ -373,12 +374,12 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
                     {job.photos.filter(Boolean).map((url, i) => (
                       <a
                         key={`${url}-${i}`}
-                        href={url}
+                        href={storageFileUrl(url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="relative aspect-square overflow-hidden rounded-lg border border-white/10"
                       >
-                        <Image src={url!} alt="" fill unoptimized className="object-cover hover:opacity-90" />
+                        <Image src={storageFileUrl(url!)} alt="" fill unoptimized className="object-cover hover:opacity-90" />
                       </a>
                     ))}
                   </div>

@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { doc, onSnapshot, updateDoc, deleteDoc, arrayUnion, arrayRemove, serverTimestamp, Timestamp, collection, query, where, getDocs, getDoc, writeBatch, orderBy, deleteField, getCountFromServer, type Query } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useFirebase, useCollection, useDoc, type WithId } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { safeFormat, APP_DATE_FORMAT, APP_DATE_TIME_FORMAT } from '@/lib/date-utils';
@@ -737,7 +738,7 @@ function JobDetailsPageContent() {
       batch.update(jobDocRef, { photos: arrayRemove(url), lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() });
       batch.set(doc(collection(jobDocRef, "activities")), { text: `ลบรูปภาพประกอบงานออก 1 รูป`, userName: profile.displayName, userId: profile.uid, createdAt: serverTimestamp() });
       await batch.commit();
-      await deleteObject(ref(storage, url)).catch(e => console.warn("File already deleted", e));
+      await deleteObject(ref(storage, storageFileUrl(url))).catch(e => console.warn("File already deleted", e));
       toast({ title: "ลบรูปภาพสำเร็จแล้วค่ะ" });
     } catch (error: any) { toast({ variant: "destructive", title: "ลบไม่สำเร็จ", description: error.message }); } finally { setIsAddingPhotos(false); }
   };
@@ -759,7 +760,7 @@ function JobDetailsPageContent() {
     setDeletingActivityId(activity.id);
     try {
       const urls = (activity.photos || []).filter(Boolean) as string[];
-      await Promise.all(urls.map((url) => deleteObject(ref(storage, url)).catch((err) => console.warn("activity storage delete", err))));
+      await Promise.all(urls.map((url) => deleteObject(ref(storage, storageFileUrl(url))).catch((err) => console.warn("activity storage delete", err))));
       await deleteDoc(activityRef);
       toast({ title: "ลบรายการกิจกรรมแล้ว" });
     } catch (error: unknown) {
@@ -787,7 +788,7 @@ function JobDetailsPageContent() {
             photos: arrayRemove(url)
         });
         
-        await deleteObject(ref(storage, url)).catch(e => console.warn("File already deleted from storage", e));
+        await deleteObject(ref(storage, storageFileUrl(url))).catch(e => console.warn("File already deleted from storage", e));
         
         toast({ title: "ลบรูปกิจกรรมสำเร็จแล้วค่ะ" });
     } catch (error: any) {
@@ -1413,7 +1414,7 @@ function JobDetailsPageContent() {
             <CardContent>{job.photos && job.photos.some(Boolean) ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{job.photos.filter(Boolean).map((url, i) => (
                     <div key={`${url}-${i}`} className="relative group aspect-square">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full"><Image src={url} alt={`Job photo ${i+1}`} width={200} height={200} unoptimized className="rounded-md border object-cover w-full h-full hover:opacity-80 transition-opacity" /></a>
+                        <a href={storageFileUrl(url)} target="_blank" rel="noopener noreferrer" className="block h-full w-full"><Image src={storageFileUrl(url)} alt={`Job photo ${i+1}`} width={200} height={200} unoptimized className="rounded-md border object-cover w-full h-full hover:opacity-80 transition-opacity" /></a>
                         {isUserAdmin && !isViewOnly && <Button type="button" variant="destructive" size="icon" className="absolute -top-2 -right-2 h-6 w-6 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" onClick={(e) => { e.preventDefault(); handleDeletePhoto(url); }} disabled={isAddingPhotos}><Trash2 className="h-3 w-3" /></Button>}
                     </div>
                 ))}</div>
@@ -1617,8 +1618,8 @@ function JobDetailsPageContent() {
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
                                   {activity.photos.filter(Boolean).map((url, i) => (
                                       <div key={`${url}-${i}`} className="relative group aspect-square">
-                                          <a href={url} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
-                                              <Image src={url} alt="Activity" width={100} height={100} unoptimized className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
+                                          <a href={storageFileUrl(url)} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
+                                              <Image src={storageFileUrl(url)} alt="Activity" width={100} height={100} unoptimized className="rounded-md object-cover w-full aspect-square hover:opacity-80 transition-opacity" />
                                           </a>
                                           {canDeleteEntireActivity && !job.isArchived && (
                                               <Button 

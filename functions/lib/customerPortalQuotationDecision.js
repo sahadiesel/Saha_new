@@ -4,6 +4,7 @@ exports.customerPortalQuotationDecision = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const phone_utils_1 = require("./phone-utils");
+const location_1 = require("./location");
 function actorLabel(user, job) {
     var _a;
     const snapName = (_a = job.customerSnapshot) === null || _a === void 0 ? void 0 : _a.name;
@@ -48,7 +49,7 @@ exports.customerPortalQuotationDecision = (0, https_1.onCall)({ region: "us-cent
     if (!((_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid)) {
         throw new https_1.HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
     }
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
     const payload = (request.data || {});
     const jobId = String(payload.jobId || "").trim();
     const decisionRaw = String(payload.decision || "").trim().toUpperCase();

@@ -4,9 +4,10 @@ exports.postJobCustomerChatMessage = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const phone_utils_1 = require("./phone-utils");
+const location_1 = require("./location");
 /** เรียกเมื่อรันจริงเท่านั้น — ห้าม top-level getFirestore() เพราะ index.ts import โมดูลนี้ก่อน initializeApp() */
 function db() {
-    return (0, firestore_1.getFirestore)();
+    return (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
 }
 /**
  * ลูกค้าส่งข้อความแชตต่อ job — ตรวจสิทธิ์ด้วยเบอร์มาตรฐาน (เทียบกับ customerId / snapshot ของงาน)

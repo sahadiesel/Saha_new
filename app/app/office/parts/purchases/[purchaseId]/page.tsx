@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import { doc } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -91,8 +92,8 @@ function PurchaseDocView({ document }: { document: PurchaseDoc }) {
                             <h4 className="font-semibold text-sm">รูปบิลที่แนบ:</h4>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                 {document.billPhotos.map((url, i) => (
-                                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block border rounded-md overflow-hidden bg-muted aspect-square relative">
-                                        <Image src={url} alt={`Bill photo ${i+1}`} fill className="object-cover hover:scale-105 transition-transform" />
+                                    <a key={i} href={storageFileUrl(url)} target="_blank" rel="noopener noreferrer" className="block border rounded-md overflow-hidden bg-muted aspect-square relative">
+                                        <Image src={storageFileUrl(url)} alt={`Bill photo ${i+1}`} fill className="object-cover hover:scale-105 transition-transform" />
                                     </a>
                                 ))}
                             </div>

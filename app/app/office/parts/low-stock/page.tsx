@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import type { Part } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import Image from "next/image";
+import { storageFileUrl } from "@/firebase/location";
 
 export default function LowStockPartsPage() {
   const { db } = useFirebase();
@@ -120,7 +121,7 @@ export default function LowStockPartsPage() {
                       <TableCell>
                         <div className="relative w-10 h-10 rounded border bg-muted overflow-hidden mx-auto">
                           {part.imageUrl ? (
-                            <Image src={part.imageUrl} alt={part.name} fill className="object-cover" />
+                            <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" />
                           ) : (
                             <Box className="w-5 h-5 m-2.5 text-muted-foreground/30" />
                           )}

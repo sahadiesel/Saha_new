@@ -8,6 +8,7 @@ import * as z from "zod";
 import { doc, collection, onSnapshot, query, where, serverTimestamp, runTransaction } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useDoc } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 
@@ -772,7 +773,7 @@ export function PurchaseServiceForm() {
                       <div className="flex flex-wrap gap-2">
                           {docToEdit?.billPhotos?.map((url, i) => (
                               <div key={`existing-${i}`} className="relative aspect-square w-20 border rounded-md overflow-hidden bg-muted">
-                                <Image src={url} alt="existing bill" fill className="object-cover" />
+                                <Image src={storageFileUrl(url)} alt="existing bill" fill className="object-cover" />
                                 <Badge className="absolute bottom-0 right-0 rounded-none text-[8px] h-3 px-1">Cloud</Badge>
                               </div>
                           ))}

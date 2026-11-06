@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createJob = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
+const location_1 = require("./location");
 /**
  * เปิดใบงาน — ให้เว็บและแอป Android เรียกฟังก์ชันเดียวกัน (region us-central1)
  *
@@ -33,7 +34,7 @@ const MAX_DESCRIPTION = 1000;
 const MAX_DETAIL = 200;
 const MAX_PHOTOS = 4;
 function db() {
-    return (0, firestore_1.getFirestore)();
+    return (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
 }
 function sanitizeForFirestore(data) {
     if (Array.isArray(data)) {
@@ -98,6 +99,7 @@ function projectBuckets() {
         buckets.add(`${project}.appspot.com`);
         buckets.add(`${project}.firebasestorage.app`);
     }
+    buckets.add(location_1.STORAGE_BUCKET);
     if (process.env.FIREBASE_CONFIG) {
         try {
             const parsed = JSON.parse(process.env.FIREBASE_CONFIG);

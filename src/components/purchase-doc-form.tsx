@@ -9,6 +9,7 @@ import * as z from "zod";
 import { doc, collection, onSnapshot, query, where, updateDoc, serverTimestamp, addDoc, getDocs, limit, orderBy, runTransaction, Timestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useDoc } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { BrowserMultiFormatReader } from '@zxing/browser';
@@ -744,7 +745,7 @@ export function PurchaseDocForm() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                           {docToEdit?.billPhotos?.map((url, i) => (
-                              <div key={`existing-${i}`} className="relative aspect-square w-20 border rounded-md overflow-hidden bg-muted"><Image src={url} alt="existing" fill className="object-cover" /><Badge className="absolute bottom-0 right-0 rounded-none text-[8px] h-3 px-1">Cloud</Badge></div>
+                              <div key={`existing-${i}`} className="relative aspect-square w-20 border rounded-md overflow-hidden bg-muted"><Image src={storageFileUrl(url)} alt="existing" fill className="object-cover" /><Badge className="absolute bottom-0 right-0 rounded-none text-[8px] h-3 px-1">Cloud</Badge></div>
                           ))}
                           {photoPreviews.map((p, i) => (
                               <div key={`new-${i}`} className="relative aspect-square w-20 border rounded-md overflow-hidden bg-muted"><Image src={p} alt="preview" fill className="object-cover" /><Button type="button" variant="destructive" size="icon" className="absolute top-0 right-0 h-5 w-5 rounded-none" onClick={() => { setPhotos(prev => prev.filter((_, idx) => idx !== i)); setPhotoPreviews(prev => prev.filter((_, idx) => idx !== i)); }}><X className="h-3 w-3"/></Button></div>

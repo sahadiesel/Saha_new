@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { customerDocumentIdFromPhone } from "./phone-utils";
+import { FIRESTORE_DATABASE_ID } from "./location";
 
 type Decision = "APPROVE" | "NO_REPAIR" | "REQUEST_CHANGES";
 type MessageVariant = "jobPage" | "documentPage";
@@ -61,7 +62,7 @@ export const customerPortalQuotationDecision = onCall(
       throw new HttpsError("unauthenticated", "ต้องเข้าสู่ระบบ");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     const payload = (request.data || {}) as {
       jobId?: string;
       decision?: string;

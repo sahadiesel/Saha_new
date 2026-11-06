@@ -6,12 +6,13 @@
 import { ai } from '@/ai/genkit';
 import { z } from 'genkit';
 import { firebaseConfig } from '@/firebase/config';
+import { FIRESTORE_DATABASE_ID } from '@/firebase/location';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, collection, query, getDocs, orderBy, limit } from 'firebase/firestore';
 
 function getServerFirestore() {
   const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  return getFirestore(app);
+  return getFirestore(app, FIRESTORE_DATABASE_ID);
 }
 
 // --- Tools ---

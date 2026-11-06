@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Query, onSnapshot, DocumentData, FirestoreError } from 'firebase/firestore';
+import { remapStorageFields } from '@/firebase/location';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
@@ -22,7 +23,7 @@ export function useCollection<T = DocumentData>(query: Query<T> | null) {
     const unsubscribe = onSnapshot(
       query,
       (snapshot) => {
-        setData(snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id } as WithId<T>)));
+        setData(snapshot.docs.map((doc) => remapStorageFields({ ...doc.data(), id: doc.id }) as WithId<T>));
         setIsLoading(false);
         setError(null);
       },

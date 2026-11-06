@@ -4,6 +4,7 @@ exports.adminResetCustomerPasswordAfterForgot = exports.submitCustomerPasswordRe
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-admin/firestore");
 const auth_1 = require("firebase-admin/auth");
+const location_1 = require("./location");
 const customerPortalSignup_1 = require("./customerPortalSignup");
 const phone_utils_1 = require("./phone-utils");
 function normalizeNationalIdDigits(raw) {
@@ -14,7 +15,7 @@ function isValidThaiNationalId13(digits) {
 }
 async function assertCallerIsAdmin(uid) {
     var _a;
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
     const snap = await db.collection("users").doc(uid).get();
     const role = (_a = snap.data()) === null || _a === void 0 ? void 0 : _a.role;
     if (role !== "ADMIN") {
@@ -34,7 +35,7 @@ exports.submitCustomerPasswordResetRequest = (0, https_1.onCall)({ region: "us-c
     if (!isValidThaiNationalId13(nidSubmitted)) {
         throw new https_1.HttpsError("invalid-argument", "เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก");
     }
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
     let customer;
     try {
         customer = await (0, customerPortalSignup_1.findCustomerDocByPhoneRaw)(phoneRaw);
@@ -103,7 +104,7 @@ exports.adminResetCustomerPasswordAfterForgot = (0, https_1.onCall)({ region: "u
     if (!newPassword || newPassword.length < 6) {
         throw new https_1.HttpsError("invalid-argument", "รหัสผ่านอย่างน้อย 6 ตัวอักษร");
     }
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
     const reqRef = db.collection("customerPasswordResetRequests").doc(requestDocId);
     const reqSnap = await reqRef.get();
     if (!reqSnap.exists) {

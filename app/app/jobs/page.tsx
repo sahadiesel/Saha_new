@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { collection, onSnapshot, query, type FirestoreError } from "firebase/firestore";
 import { format } from "date-fns";
 import { useFirebase } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,7 +102,7 @@ function JobCard({ job }: { job: Job }) {
 
         {thumbUrl ? (
             <Image
-                src={thumbUrl}
+                src={storageFileUrl(thumbUrl)}
                 alt={job.description || "Job image"}
                 fill
                 unoptimized
@@ -144,7 +145,7 @@ function CompactJobCard({ job }: { job: Job }) {
                 <div className="flex gap-3">
                     {thumbUrl && (
                         <div className="relative w-12 h-12 rounded-md bg-muted flex-shrink-0 overflow-hidden">
-                            <Image src={thumbUrl} alt="Job" fill unoptimized className="object-cover" />
+                            <Image src={storageFileUrl(thumbUrl)} alt="Job" fill unoptimized className="object-cover" />
                         </div>
                     )}
                     <div className="flex-grow overflow-hidden">

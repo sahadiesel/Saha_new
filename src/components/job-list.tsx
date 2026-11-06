@@ -4,6 +4,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { storageFileUrl } from "@/firebase/location";
 import { useRouter, usePathname } from "next/navigation";
 import { 
   collection, 
@@ -669,7 +670,7 @@ export function JobList({
             <Card key={job.id} className="flex flex-col overflow-hidden hover:shadow-md transition-shadow">
               <div className="relative aspect-video bg-muted">
                 {thumbUrl ? (
-                  <Image src={thumbUrl} alt={job.description} fill unoptimized className="object-cover" />
+                  <Image src={storageFileUrl(thumbUrl)} alt={job.description} fill unoptimized className="object-cover" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-muted-foreground"><FileImage className="h-10 w-10 opacity-20" /></div>
                 )}

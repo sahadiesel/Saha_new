@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { FIRESTORE_DATABASE_ID } from "./location";
 import {
   lookupCustomerForPortalSignup,
   rejectPortalCustomerRegistration,
@@ -30,7 +31,7 @@ export {
   adminResetCustomerPasswordAfterForgot,
   createJob,
 };
-const db = getFirestore();
+const db = getFirestore(FIRESTORE_DATABASE_ID);
 
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---
 export const closeJobAfterAccounting = onCall(

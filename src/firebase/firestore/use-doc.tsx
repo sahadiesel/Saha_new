@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { DocumentReference, onSnapshot, DocumentData, FirestoreError } from 'firebase/firestore';
+import { remapStorageFields } from '@/firebase/location';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
 
@@ -21,7 +22,7 @@ export function useDoc<T = DocumentData>(ref: DocumentReference<T> | null) {
       ref,
       (snapshot) => {
         if (snapshot.exists()) {
-          setData({ ...snapshot.data(), id: snapshot.id } as T);
+          setData(remapStorageFields({ ...snapshot.data(), id: snapshot.id }) as T);
         } else {
           setData(null);
         }

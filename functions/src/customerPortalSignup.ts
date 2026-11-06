@@ -2,6 +2,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
+import { FIRESTORE_DATABASE_ID, STORAGE_BUCKET } from "./location";
 import {
   phoneSearchTokens,
   customerAuthEmailFromDocId,
@@ -25,7 +26,7 @@ function isSubstantialIdCardAddress(addr: string): boolean {
 type CustomerDoc = FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>;
 
 async function collectCustomerCandidates(tokens: string[]): Promise<CustomerDoc[]> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const byId = new Map<string, CustomerDoc>();
 
   for (const t of tokens) {
@@ -70,7 +71,7 @@ export async function findCustomerDocByPhoneRaw(raw: string): Promise<CustomerDo
 export async function registrationStateForCustomer(
   customer: CustomerDoc
 ): Promise<"NONE" | "PENDING" | "ACTIVE"> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const authUid = customer.data()?.authUid as string | undefined;
   if (!authUid) return "NONE";
   const u = await db.collection("users").doc(authUid).get();
@@ -173,7 +174,7 @@ export const provisionCustomerPortalProfile = onCall(
       throw new HttpsError("invalid-argument", "ชื่อไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
 
     let customer: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>;
     try {
@@ -221,7 +222,7 @@ export const provisionCustomerPortalProfile = onCall(
       throw new HttpsError("invalid-argument", "พาธไฟล์รูปบัตรประชาชนไม่ถูกต้อง");
     }
     try {
-      const file = getStorage().bucket().file(expectedStoragePath);
+      const file = getStorage().bucket(STORAGE_BUCKET).file(expectedStoragePath);
       const [exists] = await file.exists();
       if (!exists) {
         throw new HttpsError("failed-precondition", "ยังไม่พบไฟล์รูปบัตรประชาชน กรุณาอัปโหลดใหม่");
@@ -290,7 +291,7 @@ export const provisionCustomerPortalProfile = onCall(
 );
 
 async function assertAdmin(uid: string): Promise<void> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const snap = await db.collection("users").doc(uid).get();
   const role = snap.data()?.role as string | undefined;
   if (role !== "ADMIN") {
@@ -302,7 +303,7 @@ async function deleteCustomerIdCardFromStorage(objectPath: unknown): Promise<voi
   const p = String(objectPath || "").trim();
   if (!p.startsWith("customerPortalIdCards/")) return;
   try {
-    await getStorage().bucket().file(p).delete();
+    await getStorage().bucket(STORAGE_BUCKET).file(p).delete();
   } catch (e: unknown) {
     const code =
       typeof e === "object" && e !== null && "code" in e
@@ -315,7 +316,7 @@ async function deleteCustomerIdCardFromStorage(objectPath: unknown): Promise<voi
 
 /** ลบ Auth / users / ไฟล์บัตร / ฟิลด์พอร์ทัลบน customers — คงชื่อและเบอร์ */
 async function purgePortalRegistrationForCustomerId(customerId: string): Promise<void> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const custRef = db.collection("customers").doc(customerId);
   const custSnap = await custRef.get();
   if (!custSnap.exists) {
@@ -369,7 +370,7 @@ export const rejectPortalCustomerRegistration = onCall(
       throw new HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     const userSnap = await db.collection("users").doc(targetUid).get();
     if (!userSnap.exists) {
       throw new HttpsError("not-found", "ไม่พบผู้ใช้");
@@ -415,7 +416,7 @@ export const adminGetCustomerPortalIdCardDownloadUrl = onCall(
       throw new HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     const cust = await db.collection("customers").doc(customerId).get();
     if (!cust.exists) {
       throw new HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");
@@ -426,7 +427,7 @@ export const adminGetCustomerPortalIdCardDownloadUrl = onCall(
     }
 
     try {
-      const file = getStorage().bucket().file(path);
+      const file = getStorage().bucket(STORAGE_BUCKET).file(path);
       const [exists] = await file.exists();
       if (!exists) {
         throw new HttpsError("not-found", "ไม่พบไฟล์ใน Storage");
@@ -458,7 +459,7 @@ export const adminRevokeCustomerPortalRegistration = onCall(
       throw new HttpsError("invalid-argument", "ข้อมูลไม่ครบ");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     const custSnap = await db.collection("customers").doc(customerId).get();
     if (!custSnap.exists) {
       throw new HttpsError("not-found", "ไม่พบข้อมูลลูกค้า");

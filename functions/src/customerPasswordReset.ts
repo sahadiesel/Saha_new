@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { FIRESTORE_DATABASE_ID } from "./location";
 import { findCustomerDocByPhoneRaw, registrationStateForCustomer } from "./customerPortalSignup";
 import { normalizePhoneDigits } from "./phone-utils";
 
@@ -13,7 +14,7 @@ function isValidThaiNationalId13(digits: string): boolean {
 }
 
 async function assertCallerIsAdmin(uid: string): Promise<void> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const snap = await db.collection("users").doc(uid).get();
   const role = snap.data()?.role as string | undefined;
   if (role !== "ADMIN") {
@@ -38,7 +39,7 @@ export const submitCustomerPasswordResetRequest = onCall(
       throw new HttpsError("invalid-argument", "เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     let customer;
     try {
       customer = await findCustomerDocByPhoneRaw(phoneRaw);
@@ -136,7 +137,7 @@ export const adminResetCustomerPasswordAfterForgot = onCall(
       throw new HttpsError("invalid-argument", "รหัสผ่านอย่างน้อย 6 ตัวอักษร");
     }
 
-    const db = getFirestore();
+    const db = getFirestore(FIRESTORE_DATABASE_ID);
     const reqRef = db.collection("customerPasswordResetRequests").doc(requestDocId);
     const reqSnap = await reqRef.get();
     if (!reqSnap.exists) {

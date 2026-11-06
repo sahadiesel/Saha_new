@@ -16,6 +16,7 @@ import {
   customerPortalStatusBadgeClass,
 } from "@/lib/customer-job-portal-ui";
 import { cn } from "@/lib/utils";
+import { storageFileUrl } from "@/firebase/location";
 
 export function CustomerJobCard({ job }: { job: Job }) {
   const thumbUrl = job.photos?.find(Boolean);
@@ -25,7 +26,7 @@ export function CustomerJobCard({ job }: { job: Job }) {
     <Card className="flex flex-col overflow-hidden border-white/10 bg-slate-900/90 text-white hover:border-primary/40 transition-colors shadow-xl">
       <div className="relative aspect-video bg-slate-800">
         {thumbUrl ? (
-          <Image src={thumbUrl} alt="" fill unoptimized className="object-cover" />
+          <Image src={storageFileUrl(thumbUrl)} alt="" fill unoptimized className="object-cover" />
         ) : (
           <div className="flex h-full items-center justify-center text-slate-500">
             <FileImage className="h-12 w-12 opacity-25" />

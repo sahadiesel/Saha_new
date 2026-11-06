@@ -1,10 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { customerDocumentIdFromPhone } from "./phone-utils";
+import { FIRESTORE_DATABASE_ID } from "./location";
 
 /** เรียกเมื่อรันจริงเท่านั้น — ห้าม top-level getFirestore() เพราะ index.ts import โมดูลนี้ก่อน initializeApp() */
 function db() {
-  return getFirestore();
+  return getFirestore(FIRESTORE_DATABASE_ID);
 }
 
 /**

@@ -40,6 +40,7 @@ import {
 import type { Part } from "@/lib/types";
 import type { WithId } from "@/firebase";
 import Image from "next/image";
+import { storageFileUrl } from "@/firebase/location";
 import Link from "next/link";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
 import { onSnapshot } from "firebase/firestore";
@@ -270,7 +271,7 @@ export default function WebManagementProductsPage() {
                       <TableCell>
                         <div className="relative w-12 h-12 rounded-lg border bg-muted overflow-hidden shadow-sm">
                           {part.imageUrl ? (
-                            <Image src={part.imageUrl} alt={part.name} fill className="object-cover" />
+                            <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" />
                           ) : (
                             <Box className="w-6 h-6 m-3 text-muted-foreground/30" />
                           )}
@@ -364,7 +365,7 @@ export default function WebManagementProductsPage() {
                   <Button key={p.id} variant="ghost" className="w-full justify-between h-auto py-2 px-3 border-b last:border-0 rounded-none hover:bg-primary/5" onClick={() => handleToggleWeb(p.id, true)}>
                     <div className="flex items-center gap-3">
                       <div className="relative w-10 h-10 rounded border bg-muted overflow-hidden flex-shrink-0">
-                        {p.imageUrl ? <Image src={p.imageUrl} alt={p.name} fill className="object-cover" /> : <Box className="w-5 h-5 m-2.5 opacity-20" />}
+                        {p.imageUrl ? <Image src={storageFileUrl(p.imageUrl)} alt={p.name} fill className="object-cover" /> : <Box className="w-5 h-5 m-2.5 opacity-20" />}
                       </div>
                       <div className="text-left">
                         <p className="font-bold text-sm line-clamp-1">{p.name}</p>

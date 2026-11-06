@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { collection, query, where, onSnapshot, type FirestoreError } from "firebase/firestore";
 import { useFirebase } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { PublicHeader } from "@/components/public-header";
 import { PublicFooter } from "@/components/public-footer";
 import Image from "next/image";
@@ -247,7 +248,7 @@ export default function PublicProductsPage() {
                         {cart.map(item => (
                           <div key={item.id} className="flex gap-4 items-start">
                             <div className="relative h-16 w-16 rounded-lg bg-white/5 overflow-hidden border border-white/10 shrink-0">
-                              {item.imageUrl ? <Image src={item.imageUrl} alt={item.name} fill className="object-cover" /> : <Box className="h-6 w-6 m-5 opacity-20" />}
+                              {item.imageUrl ? <Image src={storageFileUrl(item.imageUrl)} alt={item.name} fill className="object-cover" /> : <Box className="h-6 w-6 m-5 opacity-20" />}
                             </div>
                             <div className="flex-1 min-w-0 space-y-1">
                               <p className="font-bold text-sm line-clamp-1">{item.name}</p>
@@ -319,7 +320,7 @@ export default function PublicProductsPage() {
                     <Card key={part.id} className="group border-none shadow-xl transition-all duration-500 overflow-hidden bg-white flex flex-col h-full hover:-translate-y-1">
                       <div className="relative aspect-square bg-slate-100 overflow-hidden cursor-pointer" onClick={() => setViewingPart(part)}>
                         {part.imageUrl ? (
-                          <Image src={part.imageUrl} alt={part.name} fill className="object-cover transition-transform duration-700 group-hover:scale-110" />
+                          <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover transition-transform duration-700 group-hover:scale-110" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-slate-200"><Box className="h-16 w-16 opacity-10" /></div>
                         )}
@@ -389,7 +390,7 @@ export default function PublicProductsPage() {
             <div className="grid md:grid-cols-2">
                 <div className="relative aspect-square md:aspect-auto bg-slate-100">
                     {viewingPart?.imageUrl ? (
-                        <Image src={viewingPart.imageUrl} alt={viewingPart.name} fill className="object-cover" />
+                        <Image src={storageFileUrl(viewingPart.imageUrl)} alt={viewingPart.name} fill className="object-cover" />
                     ) : (
                         <div className="flex h-full w-full items-center justify-center text-slate-200"><Box className="h-20 w-20 opacity-10" /></div>
                     )}

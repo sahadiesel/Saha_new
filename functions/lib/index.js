@@ -4,6 +4,7 @@ exports.chatWithJimmy = exports.migrateClosedJobsToArchive2026 = exports.closeJo
 const https_1 = require("firebase-functions/v2/https");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
+const location_1 = require("./location");
 const customerPortalSignup_1 = require("./customerPortalSignup");
 Object.defineProperty(exports, "lookupCustomerForPortalSignup", { enumerable: true, get: function () { return customerPortalSignup_1.lookupCustomerForPortalSignup; } });
 Object.defineProperty(exports, "rejectPortalCustomerRegistration", { enumerable: true, get: function () { return customerPortalSignup_1.rejectPortalCustomerRegistration; } });
@@ -20,7 +21,7 @@ Object.defineProperty(exports, "adminResetCustomerPasswordAfterForgot", { enumer
 const createJob_1 = require("./createJob");
 Object.defineProperty(exports, "createJob", { enumerable: true, get: function () { return createJob_1.createJob; } });
 (0, app_1.initializeApp)();
-const db = (0, firestore_1.getFirestore)();
+const db = (0, firestore_1.getFirestore)(location_1.FIRESTORE_DATABASE_ID);
 // --- 1. ฟังก์ชันปิดจ๊อบ (Close Job after Payment) ---
 exports.closeJobAfterAccounting = (0, https_1.onCall)({ region: "us-central1", cors: true }, async (request) => {
     if (!request.auth)

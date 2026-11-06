@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { collection, query, orderBy, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, updateDoc, where, getDocs, runTransaction } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase, useCollection } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
@@ -545,7 +546,7 @@ export default function PartsInventoryPage() {
                 {loading ? <TableRow><TableCell colSpan={9} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
                 : filteredParts.length > 0 ? filteredParts.map(part => (
                     <TableRow key={part.id}>
-                      <TableCell><div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">{part.imageUrl ? <Image src={part.imageUrl} alt={part.name} fill className="object-cover" /> : <Box className="w-6 h-6 m-3 text-muted-foreground/30" />}</div></TableCell>
+                      <TableCell><div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">{part.imageUrl ? <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" /> : <Box className="w-6 h-6 m-3 text-muted-foreground/30" />}</div></TableCell>
                       <TableCell><p className="font-bold text-sm font-mono">{part.code}</p><p className="text-sm line-clamp-2">{part.name}</p></TableCell>
                       <TableCell className={`${equalColClass} text-center`}>
                         <Badge
@@ -598,7 +599,7 @@ export default function PartsInventoryPage() {
                 <div className="md:col-span-2 space-y-4">
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
                     <div className="relative w-full aspect-square border rounded-md overflow-hidden bg-background shadow-inner">
-                      {photoPreview ? <><Image src={photoPreview} alt="Preview" fill className="object-cover" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 rounded-full" onClick={handleRemovePhoto} disabled={isSubmitting || isCompressing}><X className="h-3 w-3" /></Button></> : <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>}
+                      {photoPreview ? <><Image src={storageFileUrl(photoPreview)} alt="Preview" fill className="object-cover" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 rounded-full" onClick={handleRemovePhoto} disabled={isSubmitting || isCompressing}><X className="h-3 w-3" /></Button></> : <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm" className="w-full" disabled={isSubmitting || isCompressing}>{isCompressing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เลือกรูปภาพ</Button></DropdownMenuTrigger>

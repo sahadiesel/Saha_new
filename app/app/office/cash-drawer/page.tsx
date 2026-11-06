@@ -21,6 +21,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useFirebase } from "@/firebase";
+import { storageFileUrl } from "@/firebase/location";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -598,8 +599,8 @@ export default function OfficeCashDrawerPage() {
                             {t.photos && t.photos.length > 0 && (
                               <div className="flex gap-1 mt-2">
                                 {t.photos.map((url, idx) => (
-                                  <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="relative w-10 h-10 rounded border overflow-hidden block">
-                                    <Image src={url} alt="proof" fill className="object-cover" />
+                                  <a key={idx} href={storageFileUrl(url)} target="_blank" rel="noopener noreferrer" className="relative w-10 h-10 rounded border overflow-hidden block">
+                                    <Image src={storageFileUrl(url)} alt="proof" fill className="object-cover" />
                                   </a>
                                 ))}
                               </div>

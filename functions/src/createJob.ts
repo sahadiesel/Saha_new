@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { FIRESTORE_DATABASE_ID, STORAGE_BUCKET } from "./location";
 
 /**
  * เปิดใบงาน — ให้เว็บและแอป Android เรียกฟังก์ชันเดียวกัน (region us-central1)
@@ -36,7 +37,7 @@ const MAX_DETAIL = 200;
 const MAX_PHOTOS = 4;
 
 function db() {
-  return getFirestore();
+  return getFirestore(FIRESTORE_DATABASE_ID);
 }
 
 function sanitizeForFirestore(data: unknown): unknown {
@@ -104,6 +105,7 @@ function projectBuckets(): Set<string> {
     buckets.add(`${project}.appspot.com`);
     buckets.add(`${project}.firebasestorage.app`);
   }
+  buckets.add(STORAGE_BUCKET);
   if (process.env.FIREBASE_CONFIG) {
     try {
       const parsed = JSON.parse(process.env.FIREBASE_CONFIG) as { storageBucket?: string };
