@@ -56,7 +56,13 @@ import type { Job, Document, AccountingEntry, JobDepartment, AccountingObligatio
 import { JOB_DEPARTMENTS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { deptLabel } from "@/lib/ui-labels";
-import { buildJobsPageLink, type JobsDatePreset } from "@/lib/jobs-page-filters";
+import {
+  buildJobsPageLink,
+  isJobOutflow,
+  jobOutflowDate,
+  mergeLiveAndArchivedJobs,
+  type JobsDatePreset,
+} from "@/lib/jobs-page-filters";
 
 export const dynamic = 'force-dynamic';
 
@@ -141,7 +147,7 @@ const TrendIndicator = ({ value }: { value: number }) => {
   );
 };
 
-const isOutflow = (job: Job) => ["DONE", "WAITING_CUSTOMER_PICKUP", "PICKED_UP", "CLOSED"].includes(job.status);
+const isOutflow = (job: Job) => isJobOutflow(job.status);
 
 /** รายรับ-รายจ่ายเชิงดำเนินงาน: ไม่นับโอนระหว่างบัญชี (มี transferRefId คู่กับอีกรายการ) */
 const isInterAccountTransferEntry = (e: AccountingEntry) => Boolean(e.transferRefId);
@@ -192,7 +198,7 @@ function AppDashboardPage() {
     const failSafe = window.setTimeout(() => setCoreReady(true), 4000);
 
     const unsubJobs = onSnapshot(
-      query(collection(db, "jobs"), limit(500)),
+      query(collection(db, "jobs"), orderBy("createdAt", "desc"), limit(2000)),
       (snap) => {
         setJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
         mark("jobs");
@@ -269,16 +275,32 @@ function AppDashboardPage() {
     };
     const failSafe = window.setTimeout(() => setExtrasReady(true), 8000);
 
-    const unsubArchived = onSnapshot(
-      query(collection(db, `jobsArchive_${selectedYear}`), limit(200)),
-      (snap) => {
-        setArchivedJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job)));
-        mark("archived");
-      },
-      () => {
-        setArchivedJobs([]);
-        mark("archived");
-      }
+    // โหลด archive ปีปัจจุบัน + ปีก่อน (กราฟ 6 เดือนอาจข้ามปี)
+    const archiveBags: Record<number, Job[]> = {};
+    const flushArchives = () => {
+      setArchivedJobs(Object.values(archiveBags).flat());
+    };
+    const archiveYears = [selectedYear, selectedYear - 1];
+    let archiveMarked = false;
+    const markArchivedOnce = () => {
+      if (archiveMarked) return;
+      archiveMarked = true;
+      mark("archived");
+    };
+    const unsubArchives = archiveYears.map((year) =>
+      onSnapshot(
+        query(collection(db, `jobsArchive_${year}`), limit(1500)),
+        (snap) => {
+          archiveBags[year] = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Job));
+          flushArchives();
+          markArchivedOnce();
+        },
+        () => {
+          archiveBags[year] = [];
+          flushArchives();
+          markArchivedOnce();
+        }
+      )
     );
 
     const vatLookbackYmd = format(startOfMonth(subMonths(startOfToday(), 14)), "yyyy-MM-dd");
@@ -338,7 +360,7 @@ function AppDashboardPage() {
 
     return () => {
       window.clearTimeout(failSafe);
-      unsubArchived();
+      unsubArchives.forEach((u) => u());
       unsubVatDocs();
       unsubVatPurchases();
       unsubCustomers();
@@ -357,13 +379,17 @@ function AppDashboardPage() {
     const isInPeriod = (d: Date | null) => d && isWithinInterval(d, { start: startOfDay(from), end: endOfDay(to) });
     const isInPrevPeriod = (d: Date | null) => d && isWithinInterval(d, { start: startOfDay(prevFrom), end: endOfDay(prevTo) });
 
+    // รวมงานสด + archive — งานปิดแล้วถูกลบจาก jobs จึงต้องนับจาก archive ด้วย
+    const allJobs = mergeLiveAndArchivedJobs(jobs, archivedJobs);
+
     // 1. KPI Calculations
-    const currentInflow = jobs.filter(j => isInPeriod(toDateSafe(j.createdAt)));
-    const prevInflow = jobs.filter(j => isInPrevPeriod(toDateSafe(j.createdAt)));
+    const currentInflow = allJobs.filter(j => isInPeriod(toDateSafe(j.createdAt)));
+    const prevInflow = allJobs.filter(j => isInPrevPeriod(toDateSafe(j.createdAt)));
 
-    const currentOutflow = jobs.filter(j => isOutflow(j) && isInPeriod(toDateSafe(j.lastActivityAt)));
-    const prevOutflow = jobs.filter(j => isOutflow(j) && isInPrevPeriod(toDateSafe(j.lastActivityAt)));
+    const currentOutflow = allJobs.filter(j => isOutflow(j) && isInPeriod(jobOutflowDate(j)));
+    const prevOutflow = allJobs.filter(j => isOutflow(j) && isInPrevPeriod(jobOutflowDate(j)));
 
+    // คงค้างนับเฉพาะงานที่ยังอยู่ในคอลเลกชัน jobs (ยังไม่ archive)
     const backlog = jobs.filter(j => !isOutflow(j));
     
     const currentCashIn = entries
@@ -382,18 +408,19 @@ function AppDashboardPage() {
     const arBalance = obligations.filter(o => o.type === 'AR' && o.status !== 'PAID').reduce((s, o) => s + (o.balance || 0), 0);
     const apBalance = obligations.filter(o => o.type === 'AP' && o.status !== 'PAID').reduce((s, o) => s + (o.balance || 0), 0);
 
-    // 2. Charts: Job Volume (6 Months)
+    // 2. Charts: Job Volume (6 Months) — ยึดปลายช่วงที่เลือก (to) ไม่ใช่ from
+    const chartAnchor = endOfMonth(to);
     const last6Months = Array.from({ length: 6 }).map((_, i) => {
-      const mStart = startOfMonth(subMonths(from, 5 - i));
+      const mStart = startOfMonth(subMonths(chartAnchor, 5 - i));
       const mEnd = endOfMonth(mStart);
       const interval = { start: mStart, end: mEnd };
       
-      const inf = jobs.filter(j => {
+      const inf = allJobs.filter(j => {
         const d = toDateSafe(j.createdAt);
         return d && isWithinInterval(d, interval);
       }).length;
-      const outf = jobs.filter(j => {
-        const d = toDateSafe(j.lastActivityAt);
+      const outf = allJobs.filter(j => {
+        const d = jobOutflowDate(j);
         return isOutflow(j) && d && isWithinInterval(d, interval);
       }).length;
       
@@ -731,7 +758,7 @@ function AppDashboardPage() {
         <Card className="h-full flex flex-col">
           <CardHeader>
             <CardTitle>ปริมาณงาน (6 เดือน)</CardTitle>
-            <CardDescription>เปรียบเทียบงานเข้าและงานเสร็จ</CardDescription>
+            <CardDescription>งานเข้าตามวันเปิดงาน · งานเสร็จตามวันปิด/done (รวมงานที่ archive แล้ว)</CardDescription>
           </CardHeader>
           <CardContent className="flex-1">
             <div className="h-[280px]">

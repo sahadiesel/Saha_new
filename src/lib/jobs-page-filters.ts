@@ -103,6 +103,85 @@ export function isJobOutflow(status: string | undefined): boolean {
   );
 }
 
+/** อ่าน YYYY-MM-DD เป็น local date */
+function parseJobYmd(s: string | undefined | null): Date | null {
+  if (!s || typeof s !== "string" || s.length < 10) return null;
+  const [y, m, day] = s.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !day) return null;
+  const d = new Date(y, m - 1, day);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toDateSafeLocal(ts: unknown): Date | null {
+  if (!ts) return null;
+  if (ts instanceof Date) return Number.isNaN(ts.getTime()) ? null : ts;
+  if (typeof (ts as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const d = (ts as { toDate: () => Date }).toDate();
+      return Number.isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof (ts as { seconds?: number }).seconds === "number") {
+    return new Date((ts as { seconds: number }).seconds * 1000);
+  }
+  if (typeof ts === "string") {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+type JobDateFields = {
+  status?: string;
+  closedDate?: string;
+  archivedAtDate?: string;
+  pickupDate?: string;
+  doneAt?: string;
+  lastActivityAt?: unknown;
+  updatedAt?: unknown;
+  createdAt?: unknown;
+  id?: string;
+  originalJobId?: string;
+  isArchived?: boolean;
+};
+
+/**
+ * วันที่ถือว่า "งานเสร็จ" สำหรับ KPI/กราฟ
+ * ลำดับ: closedDate → archivedAtDate → doneAt → pickupDate → lastActivityAt (สำรอง)
+ * ไม่ใช้ lastActivityAt เป็นหลัก เพราะถูกอัปเดตทุกครั้งที่แก้ใบงาน
+ */
+export function jobOutflowDate(job: JobDateFields): Date | null {
+  const fromYmd =
+    parseJobYmd(job.closedDate) ||
+    parseJobYmd(job.archivedAtDate) ||
+    parseJobYmd(job.doneAt) ||
+    parseJobYmd(job.pickupDate);
+  if (fromYmd) return fromYmd;
+  return toDateSafeLocal(job.lastActivityAt) || toDateSafeLocal(job.updatedAt);
+}
+
+/** รวมงานสด + archive โดยไม่นับซ้ำ (archive ใช้ originalJobId) */
+export function mergeLiveAndArchivedJobs<T extends JobDateFields>(
+  live: T[],
+  archived: T[]
+): T[] {
+  const byKey = new Map<string, T>();
+  for (const j of live) {
+    const key = String(j.id || "").trim();
+    if (key) byKey.set(key, j);
+  }
+  for (const j of archived) {
+    const key = String(j.originalJobId || j.id || "").trim();
+    if (!key) continue;
+    const existing = byKey.get(key);
+    // ถ้ามีใน live แล้ว ใช้ live; ถ้าไม่มี ใส่งาน archive
+    if (!existing) byKey.set(key, j);
+  }
+  return Array.from(byKey.values());
+}
+
 export function jobsMetricLabel(metric: JobsPageMetric): string {
   switch (metric) {
     case "inflow":

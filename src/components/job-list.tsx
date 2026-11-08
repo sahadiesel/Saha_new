@@ -582,7 +582,11 @@ export function JobList({
         salesDocStatus: 'APPROVED',
       });
     } else if (type === 'FINISH_JOB') {
-      await handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล');
+      const todayYmd = new Date();
+      const doneAt = `${todayYmd.getFullYear()}-${String(todayYmd.getMonth() + 1).padStart(2, "0")}-${String(todayYmd.getDate()).padStart(2, "0")}`;
+      await handleUpdateStatus(job.id, 'DONE', 'ช่างแจ้งซ่อมเสร็จสิ้น - รอดำเนินการทำบิล', {
+        doneAt,
+      });
     } else if (type === 'ACCEPT_JOB') {
       await handleAcceptJob(job);
     }

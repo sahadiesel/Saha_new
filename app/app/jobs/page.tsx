@@ -29,6 +29,7 @@ import {
   buildJobsPageLink,
   isDateInRange,
   isJobOutflow,
+  jobOutflowDate,
   jobsMetricLabel,
   JOBS_DATE_PRESET_LABELS,
   parseYmdDate,
@@ -387,7 +388,7 @@ function ManagementJobsPageContent() {
           result = jobs.filter(
             (j) =>
               isJobOutflow(j.status) &&
-              isDateInRange(toDateSafe(j.lastActivityAt), activeDateRange)
+              isDateInRange(jobOutflowDate(j), activeDateRange)
           );
         } else {
           result = jobs.filter((j) => !isJobOutflow(j.status));

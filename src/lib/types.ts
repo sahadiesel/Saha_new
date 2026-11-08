@@ -196,6 +196,8 @@ export interface Job {
   assigneeUid?: string;
   assigneeName?: string;
   pickupDate?: string; // YYYY-MM-DD
+  /** วันที่ย้ายสถานะเป็น DONE (YYYY-MM-DD) — ใช้ KPI งานเสร็จ */
+  doneAt?: string;
   closedDate?: string; // YYYY-MM-DD
   salesDocType?: 'QUOTATION' | 'DELIVERY_NOTE' | 'TAX_INVOICE';
   salesDocId?: string;
