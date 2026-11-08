@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle, MoreHorizontal, Eye, RefreshCw, TrendingUp, TrendingDown, Filter, ChevronsUpDown, QrCode, Barcode } from "lucide-react";
+import { Loader2, PlusCircle, Search, Edit, Trash2, Camera, X, Save, Box, MapPin, ImageIcon, Info, ScanBarcode, AlertCircle, MoreHorizontal, Eye, RefreshCw, TrendingUp, TrendingDown, Filter, ChevronsUpDown, QrCode, Barcode, ZoomIn } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -94,6 +94,7 @@ export default function PartsInventoryPage() {
 
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
   
   const [codeType, setCodeType] = useState<"BARCODE" | "QRCODE">("BARCODE");
   
@@ -495,7 +496,23 @@ export default function PartsInventoryPage() {
                 {loading ? <TableRow><TableCell colSpan={9} className="h-24 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></TableCell></TableRow>
                 : filteredParts.length > 0 ? filteredParts.map(part => (
                     <TableRow key={part.id}>
-                      <TableCell><div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">{part.imageUrl ? <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" /> : <Box className="w-6 h-6 m-3 text-muted-foreground/30" />}</div></TableCell>
+                      <TableCell>
+                        <div className="relative w-12 h-12 rounded border bg-muted overflow-hidden">
+                          {part.imageUrl ? (
+                            <>
+                              <Image src={storageFileUrl(part.imageUrl)} alt={part.name} fill className="object-cover" />
+                              <button
+                                type="button"
+                                className="absolute inset-0 cursor-zoom-in"
+                                onClick={() => setZoomedImageUrl(storageFileUrl(part.imageUrl!))}
+                                aria-label={`ขยายรูป ${part.name}`}
+                              />
+                            </>
+                          ) : (
+                            <Box className="w-6 h-6 m-3 text-muted-foreground/30" />
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell><p className="font-bold text-sm font-mono">{part.code}</p><p className="text-sm line-clamp-2">{part.name}</p></TableCell>
                       <TableCell className={`${equalColClass} text-center`}>
                         <Badge
@@ -547,8 +564,23 @@ export default function PartsInventoryPage() {
               <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <div className="md:col-span-2 space-y-4">
                   <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg bg-muted/20 gap-4">
-                    <div className="relative w-full aspect-square border rounded-md overflow-hidden bg-background shadow-inner">
-                      {photoPreview ? <><Image src={storageFileUrl(photoPreview)} alt="Preview" fill className="object-cover" /><Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 rounded-full" onClick={handleRemovePhoto} disabled={isSubmitting || isCompressing}><X className="h-3 w-3" /></Button></> : <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>}
+                    <div className="relative w-full aspect-square border rounded-md overflow-hidden bg-background shadow-inner group">
+                      {photoPreview ? (
+                        <>
+                          <Image src={storageFileUrl(photoPreview)} alt="Preview" fill className="object-cover" />
+                          <button
+                            type="button"
+                            className="absolute inset-0 z-[1] cursor-zoom-in flex items-center justify-center bg-black/0 hover:bg-black/25 transition-colors"
+                            onClick={() => setZoomedImageUrl(storageFileUrl(photoPreview))}
+                            aria-label="ขยายรูปภาพ"
+                          >
+                            <ZoomIn className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 drop-shadow transition-opacity" />
+                          </button>
+                          <Button type="button" variant="destructive" size="icon" className="absolute top-1 right-1 z-10 h-6 w-6 rounded-full" onClick={handleRemovePhoto} disabled={isSubmitting || isCompressing}><X className="h-3 w-3" /></Button>
+                        </>
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-12 w-12 opacity-20" /></div>
+                      )}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm" className="w-full" disabled={isSubmitting || isCompressing}>{isCompressing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />} เลือกรูปภาพ</Button></DropdownMenuTrigger>
@@ -763,6 +795,35 @@ export default function PartsInventoryPage() {
           </Form>
         </DialogContent>
       </Dialog>
+
+      {zoomedImageUrl && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ดูรูปภาพขยาย"
+          onClick={() => setZoomedImageUrl(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setZoomedImageUrl(null);
+          }}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            onClick={() => setZoomedImageUrl(null)}
+            aria-label="ปิด"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={zoomedImageUrl}
+            alt="รูปขยาย"
+            className="max-w-[95vw] max-h-[90vh] w-auto h-auto object-contain rounded-md shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       <Dialog open={isAdjustingStock} onOpenChange={setIsAdjustingStock}>
         <DialogContent className="sm:max-w-md">

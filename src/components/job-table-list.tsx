@@ -62,6 +62,26 @@ interface JobTableListProps {
   emptyDescription?: string;
   source?: 'active' | 'archive';
   year?: number;
+  /** 1–12; omit or 0 = ทุกเดือน */
+  month?: number;
+  /** ลดความสูงแถว ~30% */
+  dense?: boolean;
+}
+
+function jobActivityYmd(job: Job): string | null {
+  if (job.archivedAtDate) return job.archivedAtDate;
+  if (job.closedDate) return job.closedDate;
+  if (job.doneAt && /^\d{4}-\d{2}-\d{2}/.test(job.doneAt)) return job.doneAt.slice(0, 10);
+  const ts = job.lastActivityAt as { toDate?: () => Date; seconds?: number } | undefined;
+  if (ts?.toDate) {
+    const d = ts.toDate();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  if (typeof ts?.seconds === "number") {
+    const d = new Date(ts.seconds * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  return null;
 }
 
 const getStatusStyles = (status: Job['status']) => {
@@ -90,6 +110,8 @@ export function JobTableList({
   emptyDescription = "ไม่มีข้อมูลงานซ่อมที่ตรงกับเงื่อนไข",
   source = 'active',
   year = new Date().getFullYear(),
+  month = 0,
+  dense = false,
 }: JobTableListProps) {
   const { db } = useFirebase();
   const { profile, user } = useAuth();
@@ -164,6 +186,14 @@ export function JobTableList({
           (j.mechanicDetails?.registrationNumber || "").toLowerCase().includes(term)
         );
       }
+
+      if (month >= 1 && month <= 12) {
+        const mm = String(month).padStart(2, "0");
+        jobsData = jobsData.filter((j) => {
+          const ymd = jobActivityYmd(j);
+          return ymd ? ymd.slice(5, 7) === mm : false;
+        });
+      }
       
       setJobs(jobsData);
     } catch (err: any) {
@@ -176,7 +206,7 @@ export function JobTableList({
     } finally {
       setLoading(false);
     }
-  }, [db, user, source, year, department, orderByField, orderByDirection, filterConfig.key, searchTerm]);
+  }, [db, user, source, year, month, department, orderByField, orderByDirection, filterConfig.key, searchTerm]);
 
   useEffect(() => {
     fetchData();
@@ -249,31 +279,31 @@ export function JobTableList({
           <div className="border rounded-lg bg-card overflow-hidden">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-6">ลูกค้า (Customer)</TableHead>
-                  <TableHead className="hidden md:table-cell">แผนก</TableHead>
-                  <TableHead className="hidden lg:table-cell">รายละเอียด</TableHead>
-                  <TableHead>สถานะ</TableHead>
-                  <TableHead className="hidden md:table-cell">อัปเดตล่าสุด</TableHead>
-                  <TableHead className="text-right pr-6">จัดการ</TableHead>
+                <TableRow className={dense ? "h-9" : undefined}>
+                  <TableHead className={cn("pl-6", dense && "h-9 py-2")}>ลูกค้า (Customer)</TableHead>
+                  <TableHead className={cn("hidden md:table-cell", dense && "h-9 py-2")}>แผนก</TableHead>
+                  <TableHead className={cn("hidden lg:table-cell", dense && "h-9 py-2")}>รายละเอียด</TableHead>
+                  <TableHead className={dense ? "h-9 py-2" : undefined}>สถานะ</TableHead>
+                  <TableHead className={cn("hidden md:table-cell", dense && "h-9 py-2")}>อัปเดตล่าสุด</TableHead>
+                  <TableHead className={cn("text-right pr-6", dense && "h-9 py-2")}>จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {jobs.map(job => (
-                  <TableRow key={job.id} className="hover:bg-muted/30 transition-colors">
-                    <TableCell className="pl-6 py-4">
-                      <div className="font-mono text-[11px] font-bold text-primary mb-0.5">{jobDisplayRef(job)}</div>
-                      <div className="font-semibold">{job.customerSnapshot.name}</div>
-                      <div className="text-xs text-muted-foreground">{job.customerSnapshot.phone}</div>
+                  <TableRow key={job.id} className={cn("hover:bg-muted/30 transition-colors", dense && "h-auto")}>
+                    <TableCell className={cn("pl-6", dense ? "py-[0.7rem] leading-tight" : "py-4")}>
+                      <div className={cn("font-mono text-[11px] font-bold text-primary", dense ? "mb-0 leading-none" : "mb-0.5")}>{jobDisplayRef(job)}</div>
+                      <div className={cn("font-semibold", dense && "text-sm leading-tight")}>{job.customerSnapshot.name}</div>
+                      <div className={cn("text-xs text-muted-foreground", dense && "leading-tight")}>{job.customerSnapshot.phone}</div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
-                    <TableCell className="max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground">{job.description}</TableCell>
-                    <TableCell><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
-                    <TableCell className="text-right pr-6">
+                    <TableCell className={cn("hidden md:table-cell", dense && "py-[0.7rem]")}><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
+                    <TableCell className={cn("max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground", dense && "py-[0.7rem]")}>{job.description}</TableCell>
+                    <TableCell className={dense ? "py-[0.7rem]" : undefined}><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
+                    <TableCell className={cn("hidden md:table-cell text-xs text-muted-foreground", dense && "py-[0.7rem]")}>{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
+                    <TableCell className={cn("text-right pr-6", dense && "py-[0.7rem]")}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                          <Button variant="ghost" size="icon" className={cn("rounded-full", dense ? "h-7 w-7" : "h-8 w-8")}>
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
