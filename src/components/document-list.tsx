@@ -160,6 +160,44 @@ function rollingYearMonths(count = 36): string[] {
   return months;
 }
 
+const THAI_MONTH_OPTIONS = [
+  ["01", "มกราคม"],
+  ["02", "กุมภาพันธ์"],
+  ["03", "มีนาคม"],
+  ["04", "เมษายน"],
+  ["05", "พฤษภาคม"],
+  ["06", "มิถุนายน"],
+  ["07", "กรกฎาคม"],
+  ["08", "สิงหาคม"],
+  ["09", "กันยายน"],
+  ["10", "ตุลาคม"],
+  ["11", "พฤศจิกายน"],
+  ["12", "ธันวาคม"],
+] as const;
+
+function quotationYearChoices(count = 12): string[] {
+  const year = new Date().getFullYear();
+  return Array.from({ length: count }, (_, i) => String(year - i));
+}
+
+type QuotationDateScope =
+  | { mode: "recent" }
+  | { mode: "range"; start: string; end: string }
+  | { mode: "ranges"; ranges: { start: string; end: string }[] };
+
+/** ใบเสนอราคา: ช่วงวันที่ที่จะดึงจาก Firestore — ทุกปี+ทุกเดือนจึงกลับไปโหลดชุดล่าสุดแบบจำกัดจำนวน */
+function quotationDateScope(year: string, month: string): QuotationDateScope {
+  if (year === "ALL" && month === "ALL") return { mode: "recent" };
+  if (year === "ALL") {
+    return {
+      mode: "ranges",
+      ranges: quotationYearChoices().map((y) => documentMonthBounds(`${y}-${month}`)),
+    };
+  }
+  if (month === "ALL") return { mode: "range", start: `${year}-01-01`, end: `${year}-12-31` };
+  return { mode: "range", ...documentMonthBounds(`${year}-${month}`) };
+}
+
 /** docDate เป็น YYYY-MM-DD — คืนวันแรก/วันสุดท้ายของเดือน YYYY-MM */
 function documentMonthBounds(yyyyMm: string): { start: string; end: string } {
   const [yStr, mStr] = yyyyMm.split("-");
@@ -288,6 +326,10 @@ export function DocumentList({
   const [monthFilter, setMonthFilter] = useState(() =>
     usesMonthScopedLoad ? currentYearMonth() : "ALL"
   );
+  const [quotationYear, setQuotationYear] = useState(() => String(new Date().getFullYear()));
+  const [quotationMonth, setQuotationMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
+  const [quotationScopedDocuments, setQuotationScopedDocuments] = useState<Document[]>([]);
+  const [quotationScopedLoading, setQuotationScopedLoading] = useState(docType === "QUOTATION");
   const [indexErrorUrl, setIndexErrorUrl] = useState<string | null>(null);
   
   const [docToAction, setDocToAction] = useState<Document | null>(null);
@@ -367,9 +409,15 @@ export function DocumentList({
     deferredSearchTerm.length >= 2 &&
     isQuotationDocNoSearch(deferredSearchTerm);
 
+  const quotationScope = useMemo(
+    () => (docType === "QUOTATION" ? quotationDateScope(quotationYear, quotationMonth) : { mode: "recent" as const }),
+    [docType, quotationYear, quotationMonth]
+  );
+
   const listDocuments = useMemo(() => {
     if (usesMonthScopedLoad && monthFilter !== "ALL") return monthScopedDocuments;
     if (quotationDocNoSearchActive) return quotationSearchDocuments;
+    if (docType === "QUOTATION" && quotationScope.mode !== "recent") return quotationScopedDocuments;
     return allDocuments;
   }, [
     usesMonthScopedLoad,
@@ -378,13 +426,18 @@ export function DocumentList({
     allDocuments,
     quotationDocNoSearchActive,
     quotationSearchDocuments,
+    docType,
+    quotationScope.mode,
+    quotationScopedDocuments,
   ]);
 
   const listLoading = quotationDocNoSearchActive
     ? quotationSearchLoading
-    : usesMonthScopedLoad && monthFilter !== "ALL"
-      ? monthScopedLoading
-      : loading;
+    : docType === "QUOTATION" && quotationScope.mode !== "recent"
+      ? quotationScopedLoading
+      : usesMonthScopedLoad && monthFilter !== "ALL"
+        ? monthScopedLoading
+        : loading;
 
   const recentQuotationPrefixes = useMemo(() => {
     const prefixes = new Set<string>();
@@ -533,6 +586,9 @@ export function DocumentList({
 
   useEffect(() => {
     if (!db) return;
+    if (docType === "QUOTATION" && quotationScope.mode !== "recent") {
+      return;
+    }
     if (usesMonthScopedLoad && monthFilter !== "ALL") {
       return;
     }
@@ -592,7 +648,7 @@ export function DocumentList({
       }
     );
     return () => unsubscribe();
-  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, recentFetchLimit, usesMonthScopedLoad, monthFilter, toast]);
+  }, [db, docType, orderByField, orderByDirection, quotationFetchLimit, recentFetchLimit, usesMonthScopedLoad, monthFilter, quotationScope.mode, toast]);
 
   useEffect(() => {
     if (!db || !usesMonthScopedLoad || monthFilter === "ALL") {
@@ -632,6 +688,53 @@ export function DocumentList({
     );
     return () => unsubscribe();
   }, [db, docType, monthFilter, usesMonthScopedLoad, toast]);
+
+  useEffect(() => {
+    if (!db || docType !== "QUOTATION" || quotationScope.mode === "recent") {
+      setQuotationScopedDocuments([]);
+      setQuotationScopedLoading(false);
+      return;
+    }
+    const ranges = quotationScope.mode === "range" ? [quotationScope] : quotationScope.ranges;
+    setQuotationScopedLoading(true);
+    const buckets = new Map<number, Document[]>();
+    const ready = new Set<number>();
+    const unsubs = ranges.map((range, index) => {
+      const monthQuery = query(
+        collection(db, "documents"),
+        where("docType", "==", "QUOTATION"),
+        where("docDate", ">=", range.start),
+        where("docDate", "<=", range.end),
+        orderBy("docDate", "desc")
+      );
+      return onSnapshot(
+        monthQuery,
+        (snapshot) => {
+          buckets.set(index, snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Document)));
+          ready.add(index);
+          const merged: Document[] = [];
+          buckets.forEach((docs) => merged.push(...docs));
+          setQuotationScopedDocuments(merged);
+          if (ready.size === ranges.length) setQuotationScopedLoading(false);
+        },
+        (err) => {
+          if (err.message?.includes("requires an index")) {
+            const urlMatch = err.message.match(/https?:\/\/[^\s]+/);
+            if (urlMatch) setIndexErrorUrl(firestoreIndexUrl(urlMatch[0]));
+          } else {
+            toast({
+              variant: "destructive",
+              title: "เกิดข้อผิดพลาด",
+              description: "ไม่สามารถโหลดใบเสนอราคาตามปี/เดือนที่เลือกได้",
+            });
+          }
+          setQuotationScopedDocuments([]);
+          setQuotationScopedLoading(false);
+        }
+      );
+    });
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }, [db, docType, quotationScope, toast]);
 
   const processedDocuments = useMemo(() => {
     let filtered = [...listDocuments];
@@ -731,7 +834,7 @@ export function DocumentList({
   const paginatedDocuments = useMemo(() => processedDocuments.slice(currentPage * limitProp, (currentPage + 1) * limitProp), [processedDocuments, currentPage, limitProp]);
   const totalPages = Math.max(1, Math.ceil(processedDocuments.length / limitProp));
   
-  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter, quotationFetchLimit, recentFetchLimit]);
+  useEffect(() => { setCurrentPage(0); }, [searchTerm, statusFilter, prefixFilter, monthFilter, quotationFetchLimit, recentFetchLimit, quotationYear, quotationMonth]);
 
   /** ใบลดหนี้/เพิ่มหนี้ = แก้ยอดบิล ไม่ควรไปย้อนสถานะงานหรือลิงก์ sales ใน job */
   const shouldUnlinkJobOnCancelOrDelete = (docObj: Document) =>
@@ -1033,6 +1136,42 @@ export function DocumentList({
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 bg-background"
             /></div>
+            {docType === "QUOTATION" && (
+              <>
+                <div className="w-full md:w-32">
+                  <Select value={quotationYear} onValueChange={(year) => {
+                    if (quotationDateScope(year, quotationMonth).mode !== "recent") setQuotationScopedLoading(true);
+                    setQuotationYear(year);
+                  }}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="ปี" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">ทุกปี</SelectItem>
+                      {quotationYearChoices().map((year) => (
+                        <SelectItem key={year} value={year}>{year}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="w-full md:w-40">
+                  <Select value={quotationMonth} onValueChange={(month) => {
+                    if (quotationDateScope(quotationYear, month).mode !== "recent") setQuotationScopedLoading(true);
+                    setQuotationMonth(month);
+                  }}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="เดือน" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                      {THAI_MONTH_OPTIONS.map(([value, label]) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
             <div className="w-full md:w-56"><Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="bg-background"><div className="flex items-center gap-2"><Filter className="h-3.5 w-3.5 text-muted-foreground"/><SelectValue placeholder="สถานะ..." /></div></SelectTrigger><SelectContent>{uniqueStatuses.map(status => (<SelectItem key={status} value={status}>{status === "ALL" ? "ทุกสถานะ" : docStatusLabel(status, docType)}</SelectItem>))}</SelectContent></Select></div>
           </div>
           {usesMonthScopedLoad && (
@@ -1062,9 +1201,15 @@ export function DocumentList({
                   ? "ค้นหาเลขที่จากทั้งระบบ (เช่น 029 → QJ2026-0290, 0291, …)"
                   : deferredSearchTerm.length >= 2
                     ? "ค้นหาชื่อลูกค้า/เบอร์โทร/ทะเบียน — ทำงานในรายการที่โหลดแล้ว"
-                    : `แสดง ${allDocuments.length} ใบล่าสุด (โหลดสูงสุด ${quotationFetchLimit} ฉบับ เรียงตามเลขที่)`}
+                    : quotationScope.mode === "recent"
+                      ? `ทุกปี ทุกเดือน แสดง ${allDocuments.length} ใบล่าสุด (โหลดสูงสุด ${quotationFetchLimit} ฉบับ)`
+                      : quotationMonth === "ALL"
+                        ? `แสดงใบเสนอราคาปี ${quotationYear} ทั้งปี (${quotationScopedDocuments.length} ฉบับ)`
+                        : quotationYear === "ALL"
+                          ? `แสดงเดือน${THAI_MONTH_OPTIONS.find(([value]) => value === quotationMonth)?.[1] || quotationMonth} ของทุกปีในช่วงที่เลือก (${quotationScopedDocuments.length} ฉบับ)`
+                          : `แสดงใบเสนอราคา ${THAI_MONTH_OPTIONS.find(([value]) => value === quotationMonth)?.[1] || quotationMonth} ${quotationYear} (${quotationScopedDocuments.length} ฉบับ)`}
               </span>
-              {allDocuments.length >= quotationFetchLimit && quotationFetchLimit < 1000 && (
+              {quotationScope.mode === "recent" && allDocuments.length >= quotationFetchLimit && quotationFetchLimit < 1000 && (
                 <Button
                   type="button"
                   variant="secondary"
