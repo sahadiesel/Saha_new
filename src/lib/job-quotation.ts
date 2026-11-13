@@ -42,18 +42,32 @@ export function resolveJobQuotationEditId(
     relatedQuotations?: Document[];
   }
 ): string | null {
+  const quotations = options?.relatedQuotations;
+  const latestOf = (id: string | null | undefined): string | null => {
+    if (!id) return null;
+    let current = id;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const linked = quotations?.find((q) => q.id === current);
+      if (!linked?.supersededByDocId) return current;
+      current = linked.supersededByDocId;
+    }
+    return id;
+  };
+
   if (job.salesDocId && job.salesDocType === "QUOTATION" && job.salesDocStatus !== "CANCELLED") {
-    return job.salesDocId;
+    return latestOf(job.salesDocId);
   }
 
   const fromMap = options?.draftQuotationByJobId?.[job.id];
-  if (fromMap) return fromMap;
+  if (fromMap) return latestOf(fromMap);
 
-  const quotations = options?.relatedQuotations;
   if (quotations?.length) {
-    const draft = quotations.find((q) => q.status === "DRAFT");
+    const open = quotations.filter((q) => !q.supersededByDocId && q.status !== "CANCELLED");
+    const draft = open.find((q) => q.status === "DRAFT");
     if (draft) return draft.id;
-    const active = quotations.find((q) => q.status !== "CANCELLED" && q.status !== "REJECTED");
+    const active = open.find((q) => q.status !== "REJECTED") || quotations.find((q) => !q.supersededByDocId);
     if (active) return active.id;
   }
 

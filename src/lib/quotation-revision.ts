@@ -20,3 +20,31 @@ export function getQuotationRevisionNo(doc: {
   if (typeof doc.quotationRevisionNo === "number") return doc.quotationRevisionNo;
   return parseQuotationBaseDocNo(doc.docNo).revisionNo;
 }
+
+type QuotationRevisionIdentity = {
+  id: string;
+  docNo: string;
+  quotationRevisionNo?: number;
+  quotationRootDocNo?: string;
+  supersededByDocId?: string;
+};
+
+function quotationBaseDocNo(doc: QuotationRevisionIdentity): string {
+  return (doc.quotationRootDocNo || parseQuotationBaseDocNo(doc.docNo).baseDocNo).trim();
+}
+
+/** ฉบับที่ถูกแทนที่แล้วแก้ไม่ได้ — แก้ได้เฉพาะฉบับล่าสุดในชุดเดียวกัน */
+export function isLatestQuotationRevision(
+  doc: QuotationRevisionIdentity,
+  siblings: QuotationRevisionIdentity[] = []
+): boolean {
+  if (doc.supersededByDocId) return false;
+  const base = quotationBaseDocNo(doc);
+  const rev = getQuotationRevisionNo(doc);
+  for (const other of siblings) {
+    if (other.id === doc.id) continue;
+    if (quotationBaseDocNo(other) !== base) continue;
+    if (getQuotationRevisionNo(other) > rev) return false;
+  }
+  return true;
+}

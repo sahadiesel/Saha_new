@@ -113,3 +113,30 @@ export async function createQuotationRevision(
 
   return { docId, docNo, revisionNo: nextRevisionNo };
 }
+
+/** ตามสาย revision ไปจนถึงฉบับที่ยังไม่ถูกแทนที่ */
+export async function resolveLatestQuotationId(db: Firestore, startId: string): Promise<string> {
+  let currentId = startId;
+  const seen = new Set<string>();
+  for (let hop = 0; hop < 15 && !seen.has(currentId); hop++) {
+    seen.add(currentId);
+    const snap = await getDoc(doc(db, "documents", currentId));
+    if (!snap.exists()) return currentId;
+    const supersededByDocId = (snap.data() as Document).supersededByDocId;
+    if (supersededByDocId && !seen.has(supersededByDocId)) {
+      currentId = supersededByDocId;
+      continue;
+    }
+    const newer = await getDocs(
+      query(
+        collection(db, "documents"),
+        where("revisedFromDocId", "==", currentId),
+        limit(1)
+      )
+    );
+    const nextId = newer.docs[0]?.id;
+    if (!nextId || seen.has(nextId)) return currentId;
+    currentId = nextId;
+  }
+  return currentId;
+}

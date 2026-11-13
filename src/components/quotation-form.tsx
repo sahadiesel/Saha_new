@@ -1,7 +1,7 @@
 "use client";
 import { firestoreIndexUrl } from "@/firebase/location";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -31,7 +31,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
-import { createQuotationRevision } from "@/firebase/quotation-revision";
+import { createQuotationRevision, resolveLatestQuotationId } from "@/firebase/quotation-revision";
 import { informCustomerOfJobQuotation } from "@/firebase/job-quotation-inform";
 import type { Job, StoreSettings, Customer, Document as DocumentType, QuotationTemplate } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
@@ -250,6 +250,28 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
     });
   }, [job, docToEdit, customers, jobId, form]);
 
+  const revisionRedirectedFrom = useRef<string | null>(null);
+  /** ฉบับที่ถูกแทนที่แล้วเปิดแก้ไขไม่ได้ — ส่งไปฉบับล่าสุด */
+  useEffect(() => {
+    if (!db || !editDocId || !docToEdit || docToEdit.docType !== "QUOTATION") return;
+    if (revisionRedirectedFrom.current === editDocId) return;
+    let cancelled = false;
+    void resolveLatestQuotationId(db, editDocId).then((latestId) => {
+      if (cancelled || !latestId || latestId === editDocId) return;
+      revisionRedirectedFrom.current = editDocId;
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("editDocId", latestId);
+      router.replace(`/app/office/documents/quotation/new?${params.toString()}`);
+      toast({
+        title: "ฉบับนี้ดูได้อย่างเดียว",
+        description: "เปิดฉบับแก้ไขล่าสุดให้แล้ว",
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [db, editDocId, docToEdit, router, searchParams, toast]);
+
   /** ถ้ามีฉบับร่างอยู่แล้ว — เปิดแก้ไขแทนการสร้างใหม่ */
   useEffect(() => {
     if (!db || isEditing || !jobId) return;
@@ -378,6 +400,17 @@ export function QuotationForm({ jobId, editDocId }: { jobId: string | null, edit
 
     try {
         if (isEditing && editDocId) {
+            const latestId = await resolveLatestQuotationId(db, editDocId);
+            if (latestId !== editDocId) {
+              toast({
+                title: "ฉบับนี้ดูได้อย่างเดียว",
+                description: "แก้ไขได้เฉพาะฉบับล่าสุดของชุดนี้",
+              });
+              const params = new URLSearchParams(searchParams.toString());
+              params.set("editDocId", latestId);
+              router.replace(`/app/office/documents/quotation/new?${params.toString()}`);
+              return;
+            }
             const wasDraft = docToEdit?.status === "DRAFT";
             const upgradeToFinal = mode === "final" && wasDraft && !!docToEdit?.jobId;
 
