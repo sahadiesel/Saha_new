@@ -52,6 +52,7 @@ export default function OfficeAllJobsPage() {
         orderByDirection="desc"
         emptyTitle="ไม่พบรายการงาน"
         emptyDescription="ไม่มีงานที่กำลังดำเนินการในระบบที่ตรงตามเงื่อนไข"
+        showVehicleColumns
       />
     </>
   );

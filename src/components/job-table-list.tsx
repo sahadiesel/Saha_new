@@ -66,6 +66,22 @@ interface JobTableListProps {
   month?: number;
   /** ลดความสูงแถว ~30% */
   dense?: boolean;
+  /** แสดงยี่ห้อและทะเบียนรถ พร้อมจัดความกว้างคอลัมน์ — ใช้เฉพาะหน้ารายการงานทั้งหมด */
+  showVehicleColumns?: boolean;
+}
+
+function jobBrandAndPlate(job: Job): { brand: string; plate: string } {
+  const car = job.carServiceDetails;
+  if (car?.brand || car?.licensePlate) {
+    return { brand: car.brand?.trim() || "", plate: car.licensePlate?.trim() || "" };
+  }
+  const part = job.commonrailDetails?.brand || job.commonrailDetails?.registrationNumber
+    ? job.commonrailDetails
+    : job.mechanicDetails;
+  return {
+    brand: part?.brand?.trim() || "",
+    plate: part?.registrationNumber?.trim() || "",
+  };
 }
 
 function jobActivityYmd(job: Job): string | null {
@@ -112,6 +128,7 @@ export function JobTableList({
   year = new Date().getFullYear(),
   month = 0,
   dense = false,
+  showVehicleColumns = false,
 }: JobTableListProps) {
   const { db } = useFirebase();
   const { profile, user } = useAuth();
@@ -277,30 +294,48 @@ export function JobTableList({
       <Card className="border-none shadow-none bg-transparent">
         <CardContent className="p-0">
           <div className="border rounded-lg bg-card overflow-hidden">
-            <Table>
+            <Table className={showVehicleColumns ? "table-fixed" : undefined}>
               <TableHeader>
                 <TableRow className={dense ? "h-9" : undefined}>
-                  <TableHead className={cn("pl-6", dense && "h-9 py-2")}>ลูกค้า (Customer)</TableHead>
-                  <TableHead className={cn("hidden md:table-cell", dense && "h-9 py-2")}>แผนก</TableHead>
-                  <TableHead className={cn("hidden lg:table-cell", dense && "h-9 py-2")}>รายละเอียด</TableHead>
-                  <TableHead className={dense ? "h-9 py-2" : undefined}>สถานะ</TableHead>
-                  <TableHead className={cn("hidden md:table-cell", dense && "h-9 py-2")}>อัปเดตล่าสุด</TableHead>
-                  <TableHead className={cn("text-right pr-6", dense && "h-9 py-2")}>จัดการ</TableHead>
+                  <TableHead className={cn("pl-6", showVehicleColumns && "w-[18%]", dense && "h-9 py-2")}>ลูกค้า (Customer)</TableHead>
+                  {showVehicleColumns && (
+                    <>
+                      <TableHead className="w-[11%]">ยี่ห้อ</TableHead>
+                      <TableHead className="w-[12%]">ทะเบียนรถ</TableHead>
+                    </>
+                  )}
+                  <TableHead className={cn("hidden md:table-cell", showVehicleColumns && "w-[12%]", dense && "h-9 py-2")}>แผนก</TableHead>
+                  <TableHead className={cn("hidden lg:table-cell", showVehicleColumns && "w-[13%]", dense && "h-9 py-2")}>รายละเอียด</TableHead>
+                  <TableHead className={cn(showVehicleColumns && "w-[16%]", dense && "h-9 py-2")}>สถานะ</TableHead>
+                  <TableHead className={cn("hidden md:table-cell whitespace-nowrap", showVehicleColumns && "w-[12%]", dense && "h-9 py-2")}>อัปเดตล่าสุด</TableHead>
+                  <TableHead className={cn("text-right", showVehicleColumns ? "w-[6%] pr-3" : "pr-6", dense && "h-9 py-2")}>จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {jobs.map(job => (
+                {jobs.map(job => {
+                  const vehicle = showVehicleColumns ? jobBrandAndPlate(job) : null;
+                  return (
                   <TableRow key={job.id} className={cn("hover:bg-muted/30 transition-colors", dense && "h-auto")}>
-                    <TableCell className={cn("pl-6", dense ? "py-[0.7rem] leading-tight" : "py-4")}>
+                    <TableCell className={cn("pl-6", showVehicleColumns && "overflow-hidden", dense ? "py-[0.7rem] leading-tight" : "py-4")}>
                       <div className={cn("font-mono text-[11px] font-bold text-primary", dense ? "mb-0 leading-none" : "mb-0.5")}>{jobDisplayRef(job)}</div>
-                      <div className={cn("font-semibold", dense && "text-sm leading-tight")}>{job.customerSnapshot.name}</div>
-                      <div className={cn("text-xs text-muted-foreground", dense && "leading-tight")}>{job.customerSnapshot.phone}</div>
+                      <div className={cn("font-semibold", showVehicleColumns && "truncate", dense && "text-sm leading-tight")}>{job.customerSnapshot.name}</div>
+                      <div className={cn("text-xs text-muted-foreground", showVehicleColumns && "truncate", dense && "leading-tight")}>{job.customerSnapshot.phone}</div>
                     </TableCell>
-                    <TableCell className={cn("hidden md:table-cell", dense && "py-[0.7rem]")}><Badge variant="outline" className="font-normal">{deptLabel(job.department)}</Badge></TableCell>
-                    <TableCell className={cn("max-w-[200px] truncate hidden lg:table-cell text-sm text-muted-foreground", dense && "py-[0.7rem]")}>{job.description}</TableCell>
-                    <TableCell className={dense ? "py-[0.7rem]" : undefined}><Badge className={cn(getStatusStyles(job.status))}>{jobStatusLabel(job.status)}</Badge></TableCell>
-                    <TableCell className={cn("hidden md:table-cell text-xs text-muted-foreground", dense && "py-[0.7rem]")}>{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
-                    <TableCell className={cn("text-right pr-6", dense && "py-[0.7rem]")}>
+                    {vehicle && (
+                      <>
+                        <TableCell className={cn("overflow-hidden text-sm", dense ? "py-[0.7rem]" : "py-4")}>
+                          <div className={cn("truncate", !vehicle.brand && "text-muted-foreground")}>{vehicle.brand || "—"}</div>
+                        </TableCell>
+                        <TableCell className={cn("overflow-hidden text-sm font-medium", dense ? "py-[0.7rem]" : "py-4")}>
+                          <div className={cn("truncate", !vehicle.plate && "font-normal text-muted-foreground")}>{vehicle.plate || "—"}</div>
+                        </TableCell>
+                      </>
+                    )}
+                    <TableCell className={cn("hidden md:table-cell", showVehicleColumns && "overflow-hidden", dense && "py-[0.7rem]")}><Badge variant="outline" className={cn("font-normal", showVehicleColumns && "max-w-full truncate")}>{deptLabel(job.department)}</Badge></TableCell>
+                    <TableCell className={cn("truncate hidden lg:table-cell text-sm text-muted-foreground", showVehicleColumns ? "overflow-hidden" : "max-w-[200px]", dense && "py-[0.7rem]")}>{job.description}</TableCell>
+                    <TableCell className={cn(showVehicleColumns && "overflow-hidden", dense ? "py-[0.7rem]" : undefined)}><Badge className={cn(getStatusStyles(job.status), showVehicleColumns && "max-w-full truncate")}>{jobStatusLabel(job.status)}</Badge></TableCell>
+                    <TableCell className={cn("hidden md:table-cell whitespace-nowrap text-xs text-muted-foreground", dense && "py-[0.7rem]")}>{safeFormat(job.lastActivityAt, APP_DATE_TIME_FORMAT)}</TableCell>
+                    <TableCell className={cn("text-right", showVehicleColumns ? "pr-3" : "pr-6", dense && "py-[0.7rem]")}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" className={cn("rounded-full", dense ? "h-7 w-7" : "h-8 w-8")}>
@@ -330,7 +365,8 @@ export function JobTableList({
                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
