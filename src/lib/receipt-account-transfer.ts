@@ -9,7 +9,7 @@ import {
 import { format } from "date-fns";
 import type { Document } from "@/lib/types";
 import { sanitizeForFirestore } from "@/lib/utils";
-import { receiptCashbookEntryId } from "@/lib/receipt-tax-invoice-link";
+import { receiptCashbookEntryId, receiptCashbookEntryIds } from "@/lib/receipt-tax-invoice-link";
 
 type TransferActor = { uid: string; displayName: string };
 
@@ -36,21 +36,21 @@ export async function updateConfirmedReceiptCashbookDate(
     return { updated: false, entryId: null };
   }
 
-  const entryId = receipt.accountingEntryId || receiptCashbookEntryId(receipt.id);
-  const entryRef = doc(db, "accountingEntries", entryId);
-  const entrySnap = await getDoc(entryRef);
+  const entryIds = receiptCashbookEntryIds(receipt);
+  const entrySnaps = await Promise.all(entryIds.map((id) => getDoc(doc(db, "accountingEntries", id))));
+  const existingEntries = entrySnaps.filter((s) => s.exists());
 
   const arPaymentId = receipt.confirmedPayment?.arPaymentId || `ARPAY_${receipt.id}`;
   const arPayRef = doc(db, "arPayments", arPaymentId);
   const arPaySnap = await getDoc(arPayRef);
 
-  if (!entrySnap.exists() && !arPaySnap.exists()) {
+  if (existingEntries.length === 0 && !arPaySnap.exists()) {
     return { updated: false, entryId: null };
   }
 
   const batch = writeBatch(db);
-  if (entrySnap.exists()) {
-    batch.update(entryRef, {
+  for (const entrySnap of existingEntries) {
+    batch.update(entrySnap.ref, {
       entryDate: date,
       updatedAt: serverTimestamp(),
     });
@@ -63,7 +63,10 @@ export async function updateConfirmedReceiptCashbookDate(
   }
   await batch.commit();
 
-  return { updated: true, entryId: entrySnap.exists() ? entryId : null };
+  return {
+    updated: true,
+    entryId: existingEntries[0]?.id || receiptCashbookEntryId(receipt.id),
+  };
 }
 
 /**
@@ -78,6 +81,10 @@ export async function transferConfirmedReceiptAccount(
 ): Promise<{ transferred: boolean; amount: number }> {
   const oldAccountId =
     receipt.confirmedPayment?.accountId || receipt.receivedAccountId || "";
+  if ((receipt.receivedPayments || []).length > 1 || (receipt.confirmedPayment?.allocations || []).length > 1) {
+    return { transferred: false, amount: 0 };
+  }
+
   if (!oldAccountId || !newAccountId || oldAccountId === newAccountId) {
     return { transferred: false, amount: 0 };
   }

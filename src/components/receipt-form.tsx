@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, ArrowLeft, UserPlus, X } from "lucide-react";
+import { Loader2, Save, ChevronsUpDown, AlertCircle, Info, Send, Trash2, XCircle, ArrowLeft, UserPlus, X, PlusCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -54,6 +54,12 @@ import {
   receiptCustomerFromSourceSnapshot,
   taxDocumentCustomerDisplayName,
 } from "@/lib/customer-utils";
+import {
+  mergeSuggestedPaymentsFromDocs,
+  methodFromAccountType,
+  receiptPaymentsFromDocument,
+  sumPaymentLines,
+} from "@/lib/receipt-received-payments";
 
 const receiptFormSchema = z.object({
   customerId: z.string().min(1, "กรุณาเลือกลูกค้า"),
@@ -117,6 +123,10 @@ export function ReceiptForm() {
   const [bootstrapSourceDoc, setBootstrapSourceDoc] = useState<DocumentType | null>(null);
   const [editableLines, setEditableLines] = useState<EditableReceiptLine[]>([]);
   const [linesSourceKey, setLinesSourceKey] = useState("");
+  const [receivedPayments, setReceivedPayments] = useState<{ accountId: string; amount: number }[]>([
+    { accountId: "", amount: 0 },
+  ]);
+  const [paymentsSourceKey, setPaymentsSourceKey] = useState("");
 
   const storeSettingsRef = useMemo(() => (db ? doc(db, "settings", "store") : null), [db]);
   const { data: storeSettings } = useDoc<StoreSettings>(storeSettingsRef);
@@ -236,10 +246,15 @@ export function ReceiptForm() {
         customerId: docToEdit.customerId || docToEdit.customerSnapshot?.id || "",
         sourceDocIds: docToEdit.referencesDocIds || [],
         paymentDate: docToEdit.paymentDate || docToEdit.docDate || format(new Date(), "yyyy-MM-dd"),
-        accountId: docToEdit.receivedAccountId || "",
+        accountId: receiptPaymentsFromDocument(docToEdit)[0]?.accountId || docToEdit.receivedAccountId || "",
         amount: docToEdit.grandTotal,
         notes: docToEdit.notes || "",
       });
+      const savedPays = receiptPaymentsFromDocument(docToEdit);
+      if (savedPays.length > 0) {
+        setReceivedPayments(savedPays.map((p) => ({ accountId: p.accountId, amount: p.amount })));
+        setPaymentsSourceKey(`edit:${docToEdit.id}`);
+      }
     }
   }, [docToEdit, form, isSubmitting]);
 
@@ -463,18 +478,39 @@ export function ReceiptForm() {
       const p = parseFloat(presetAmountParam);
       if (Number.isFinite(p)) {
         form.setValue("amount", Math.round(p * 100) / 100);
-        if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues("accountId") && !editDocId) {
-          form.setValue("accountId", selected[0].suggestedAccountId);
-        }
         return;
       }
     }
     form.setValue("amount", rounded);
-
-    if (selected.length > 0 && selected[0].suggestedAccountId && !form.getValues("accountId") && !editDocId) {
-      form.setValue("accountId", selected[0].suggestedAccountId);
-    }
   }, [watchedSourceDocIds, displaySourceDocs, form, editDocId, docToEdit, presetAmountParam, editableLines.length]);
+
+  useEffect(() => {
+    if (editDocId) return;
+    const selected = displaySourceDocs.filter((d) => watchedSourceDocIds.includes(d.id));
+    const key = `new:${watchedSourceDocIds.join("|")}`;
+    if (key === paymentsSourceKey) return;
+    if (!watchedSourceDocIds.length) {
+      setReceivedPayments([{ accountId: "", amount: 0 }]);
+      setPaymentsSourceKey("");
+      form.setValue("accountId", "");
+      return;
+    }
+    const merged = mergeSuggestedPaymentsFromDocs(selected);
+    const receiptAmount = Math.round((Number(form.getValues("amount")) || 0) * 100) / 100;
+    if (merged.length > 0) {
+      setReceivedPayments(merged.map((p) => ({ accountId: p.accountId, amount: p.amount })));
+      form.setValue("accountId", merged[0].accountId);
+    } else {
+      setReceivedPayments([
+        {
+          accountId: selected[0]?.suggestedAccountId || "",
+          amount: receiptAmount,
+        },
+      ]);
+      form.setValue("accountId", selected[0]?.suggestedAccountId || "");
+    }
+    setPaymentsSourceKey(key);
+  }, [watchedSourceDocIds, displaySourceDocs, editDocId, paymentsSourceKey, form]);
 
   // สร้างรายการแก้ไขได้เมื่อเลือกบิล/โหลดใบเสร็จ — ไม่ทับการแก้ของผู้ใช้จนกว่าชุดบิลจะเปลี่ยน
   useEffect(() => {
@@ -726,9 +762,30 @@ export function ReceiptForm() {
           ? Math.round((amount2dec - vatAmount) * 100) / 100
           : amount2dec;
 
+        const paymentLines = receivedPayments
+          .filter((p) => p.accountId && (Number(p.amount) || 0) > 0.009)
+          .map((p) => {
+            const acc = accounts.find((a) => a.id === p.accountId);
+            return {
+              accountId: p.accountId,
+              amount: Math.round((Number(p.amount) || 0) * 100) / 100,
+              method: methodFromAccountType(acc?.type),
+              accountName: acc?.name,
+            };
+          });
+        if (paymentLines.length === 0) {
+          throw new Error("กรุณาเลือกบัญชีรับเงินอย่างน้อย 1 บัญชี");
+        }
+        const paySum = paymentLines.reduce((s, p) => s + p.amount, 0);
+        if (Math.abs(paySum - amount2dec) > 0.06) {
+          throw new Error(
+            `ยอดเข้าบัญชีรวม ${paySum.toLocaleString("th-TH", { minimumFractionDigits: 2 })} ไม่ตรงยอดใบเสร็จ`
+          );
+        }
+
         const oldAccountId =
           docToEdit.confirmedPayment?.accountId || docToEdit.receivedAccountId || "";
-        const newAccountId = data.accountId;
+        const newAccountId = paymentLines[0].accountId;
         let transferNote = "";
         let dateNote = "";
 
@@ -771,20 +828,25 @@ export function ReceiptForm() {
             docDate: newReceiptDate,
             paymentDate: newReceiptDate,
             receivedAccountId: newAccountId || oldAccountId,
+            receivedPayments: paymentLines,
+            paymentMethod: paymentLines.every((p) => p.method === "CASH") ? "CASH" : "TRANSFER",
+            paymentInstrument: paymentLines.every((p) => p.method === "CASH") ? "CASH" : "TRANSFER",
             confirmedPayment: {
               ...(docToEdit.confirmedPayment || {}),
               accountId: newAccountId || oldAccountId,
-              method:
-                docToEdit.confirmedPayment?.method ||
-                (docToEdit.paymentInstrument === "CASH" || docToEdit.paymentMethod === "CASH"
-                  ? "CASH"
-                  : "TRANSFER"),
+              method: paymentLines[0]?.method || "TRANSFER",
               receivedDate: newReceiptDate,
               netReceivedTotal:
                 docToEdit.confirmedPayment?.netReceivedTotal ?? amount2dec,
               withholdingTotal: docToEdit.confirmedPayment?.withholdingTotal ?? 0,
               arPaymentId:
                 docToEdit.confirmedPayment?.arPaymentId ?? `ARPAY_${docToEdit.id}`,
+              allocations: paymentLines.map((p) => ({
+                accountId: p.accountId,
+                method: p.method,
+                amount: p.amount,
+                accountName: p.accountName,
+              })),
             },
             customerSnapshot: { ...customer, id: canonicalCustomerId },
             storeSnapshot: { ...storeSettings },
@@ -810,18 +872,29 @@ export function ReceiptForm() {
     }
     
     const selectedDocs = displaySourceDocs.filter(d => data.sourceDocIds.includes(d.id));
-    const account = accounts.find(a => a.id === data.accountId);
+    const paymentLines = receivedPayments
+      .filter((p) => p.accountId && (Number(p.amount) || 0) > 0.009)
+      .map((p) => {
+        const acc = accounts.find((a) => a.id === p.accountId);
+        return {
+          accountId: p.accountId,
+          amount: Math.round((Number(p.amount) || 0) * 100) / 100,
+          method: methodFromAccountType(acc?.type),
+          accountName: acc?.name,
+        };
+      });
+    const account = accounts.find((a) => a.id === (paymentLines[0]?.accountId || data.accountId));
 
     const canonicalCustomerId =
       data.customerId || selectedDocs[0]?.customerId || selectedDocs[0]?.customerSnapshot?.id || "";
 
     const customer = resolveReceiptCustomer(canonicalCustomerId, selectedDocs);
 
-    if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || !account) {
+    if (!db || !customer || !storeSettings || !profile || selectedDocs.length === 0 || paymentLines.length === 0 || !account) {
       toast({
         variant: "destructive",
         title: "ข้อมูลไม่ครบถ้วน",
-        description: "กรุณาเลือกบัญชีและบิลอย่างน้อย 1 ใบ — ถ้าไม่มีชื่อลูกค้า ให้ตรวจว่าใบกำกับมีข้อมูลลูกค้าครบ",
+        description: "กรุณาเลือกบัญชีรับเงินอย่างน้อย 1 บัญชี และบิลอย่างน้อย 1 ใบ",
       });
       return;
     }
@@ -863,8 +936,18 @@ export function ReceiptForm() {
     const amount2dec =
       Math.round(itemsFromLines.reduce((s, i) => s + i.total, 0) * 100) / 100 ||
       Math.round(data.amount * 100) / 100;
-    const payInstrument = account.type === "CASH" ? "CASH" : "TRANSFER";
-    const payMethodLegacy = payInstrument === "CASH" ? "CASH" : "TRANSFER";
+    const paySum = paymentLines.reduce((s, p) => s + p.amount, 0);
+    if (Math.abs(paySum - amount2dec) > 0.06) {
+      setIsSubmitting(false);
+      toast({
+        variant: "destructive",
+        title: "ยอดเข้าบัญชีไม่ตรง",
+        description: `รวมเข้าบัญชี ${paySum.toLocaleString("th-TH", { minimumFractionDigits: 2 })} ต้องเท่ากับยอดใบเสร็จ ${amount2dec.toLocaleString("th-TH", { minimumFractionDigits: 2 })} — แยกบรรทัดได้ เช่น เงินสดส่วนหนึ่ง โอนส่วนหนึ่ง`,
+      });
+      return;
+    }
+    const payInstrument = paymentLines.every((p) => p.method === "CASH") ? "CASH" : "TRANSFER";
+    const payMethodLegacy = payInstrument;
 
     const items = itemsFromLines.length > 0 ? itemsFromLines : selectedDocs.map(doc => {
       const docCustomerId = resolveDocCustomerId(doc);
@@ -912,7 +995,8 @@ export function ReceiptForm() {
         paymentMethod: payMethodLegacy,
         paymentInstrument: payInstrument,
         paymentDate: data.paymentDate,
-        receivedAccountId: data.accountId,
+        receivedAccountId: paymentLines[0].accountId,
+        receivedPayments: paymentLines,
         receiptStatus: "ISSUED_NOT_CONFIRMED" as const,
       };
 
@@ -1463,38 +1547,109 @@ export function ReceiptForm() {
                   </FormItem>
                 )}
               />
-              <FormField
-                name="accountId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>เข้าบัญชี</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      value={field.value}
-                      disabled={isSubmitting}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="เลือกบัญชีที่เงินเข้า..." />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {accounts.map((acc) => (
-                          <SelectItem key={acc.id} value={acc.id}>
-                            {acc.name} ({acc.type === "CASH" ? "เงินสด" : "ธนาคาร"})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {isEditingConfirmedReceipt && (
-                      <p className="text-[10px] text-muted-foreground">
-                        เปลี่ยนบัญชีได้เมื่อระบุผิด — ระบบจะย้ายเงินออกจากบัญชีเดิมและเข้าบัญชีใหม่ใน cashbook
-                      </p>
-                    )}
-                    <FormMessage />
-                  </FormItem>
+              <div className="space-y-2">
+                <FormLabel>เข้าบัญชี</FormLabel>
+                <div className="border rounded-md overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>บัญชี</TableHead>
+                        <TableHead className="w-32 text-right">จำนวน</TableHead>
+                        <TableHead className="w-10" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {receivedPayments.map((p, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="p-2">
+                            <Select
+                              value={p.accountId}
+                              onValueChange={(v) => {
+                                const next = [...receivedPayments];
+                                next[i] = { ...next[i], accountId: v };
+                                setReceivedPayments(next);
+                                form.setValue("accountId", next.find((x) => x.accountId)?.accountId || v);
+                              }}
+                              disabled={isSubmitting}
+                            >
+                              <SelectTrigger className="h-9 text-sm">
+                                <SelectValue placeholder="เลือกบัญชีที่เงินเข้า..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {accounts.map((acc) => (
+                                  <SelectItem key={acc.id} value={acc.id}>
+                                    {acc.name} ({acc.type === "CASH" ? "เงินสด" : "ธนาคาร"})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="p-2">
+                            <Input
+                              type="number"
+                              className="h-9 text-right"
+                              value={p.amount || ""}
+                              disabled={isSubmitting}
+                              onChange={(e) => {
+                                const next = [...receivedPayments];
+                                next[i] = { ...next[i], amount: parseFloat(e.target.value) || 0 };
+                                setReceivedPayments(next);
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="p-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive"
+                              disabled={isSubmitting || receivedPayments.length <= 1}
+                              onClick={() => {
+                                const next = receivedPayments.filter((_, idx) => idx !== i);
+                                setReceivedPayments(next.length ? next : [{ accountId: "", amount: 0 }]);
+                                form.setValue("accountId", next[0]?.accountId || "");
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 border-dashed"
+                  disabled={isSubmitting}
+                  onClick={() => setReceivedPayments([...receivedPayments, { accountId: "", amount: 0 }])}
+                >
+                  <PlusCircle className="mr-2 h-3.5 w-3.5" /> เพิ่มบัญชีรับเงิน
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  ค่าเริ่มต้นมาจากที่ออฟฟิศระบุตอนส่งบัญชี — แยกได้หลายบัญชี เช่น เงินสดส่วนหนึ่ง โอนเข้าธนาคารส่วนหนึ่ง รวม{" "}
+                  {sumPaymentLines(receivedPayments).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </p>
+                {isEditingConfirmedReceipt && (
+                  <p className="text-[10px] text-muted-foreground">
+                    เปลี่ยนบัญชีได้เมื่อระบุผิด — ถ้ามีบัญชีเดียว ระบบจะย้ายเงินใน cashbook ให้
+                  </p>
                 )}
-              />
+                <FormField
+                  control={form.control}
+                  name="accountId"
+                  render={({ field }) => (
+                    <FormItem className="hidden">
+                      <FormControl>
+                        <input type="hidden" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
             {/* sync hidden amount for zod validation */}
             <input type="hidden" {...form.register("amount", { valueAsNumber: true })} />

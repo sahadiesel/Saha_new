@@ -645,6 +645,13 @@ export interface Document {
   checkDueDate?: string;
   paymentDate?: string; // For Receipt
   receivedAccountId?: string;
+  /** บัญชีรับเงินหลายช่องทาง (เงินสด + โอน) — ตามที่ออฟฟิศระบุและบัญชียืนยัน */
+  receivedPayments?: {
+    method: "CASH" | "TRANSFER";
+    accountId: string;
+    amount: number;
+    accountName?: string;
+  }[];
   cashReceived?: number;
   withholdingEnabled?: boolean;
   withholdingAmount?: number;
@@ -683,6 +690,13 @@ export interface Document {
     netReceivedTotal: number;
     withholdingTotal: number;
     arPaymentId: string;
+    allocations?: {
+      accountId: string;
+      method: string;
+      amount: number;
+      accountName?: string;
+      entryId?: string;
+    }[];
   };
 
   /** ใบเสร็จที่ยกเลิกหลัง confirm — id รายการตัดรายรับใน cashbook */

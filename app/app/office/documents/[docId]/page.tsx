@@ -26,6 +26,10 @@ import {
   taxDocumentCustomerDisplayName,
 } from "@/lib/customer-utils";
 import { enrichReceiptItemsWithSourceDocs } from "@/lib/receipt-line-description";
+import {
+  formatReceiptPaymentLineLabel,
+  receiptPaymentsFromDocument,
+} from "@/lib/receipt-received-payments";
 import { documentPrintMoneyLines } from "@/lib/document-amounts";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/auth-context";
@@ -106,12 +110,14 @@ function DocumentView({
     customer,
     labelSuffix,
     accountName,
+    paymentLineLabels,
     receiptSourceDocs,
 }: { 
     document: Document, 
     customer: any,
     labelSuffix?: 'ORIGINAL' | 'COPY',
     accountName?: string,
+    paymentLineLabels?: string[],
     receiptSourceDocs?: Document[],
 }) {
     const docTypeDisplay: Record<string, string> = {
@@ -509,7 +515,16 @@ function DocumentView({
                                         {isReceipt && (
                                             <div className="p-3 border rounded bg-muted/5 space-y-1">
                                                 <p className="text-[10px] font-bold text-primary uppercase tracking-widest">ข้อมูลการชำระเงิน</p>
-                                                <p className="text-xs font-bold">ชำระโดย: <span className="font-normal">{accountName || (document.paymentMethod === 'CASH' ? 'เงินสด' : 'เงินโอน')}</span></p>
+                                                {(paymentLineLabels && paymentLineLabels.length > 0) ? (
+                                                  paymentLineLabels.map((label, i) => (
+                                                    <p key={i} className="text-xs font-bold">
+                                                      {i === 0 ? "ชำระโดย: " : ""}
+                                                      <span className="font-normal">{label}</span>
+                                                    </p>
+                                                  ))
+                                                ) : (
+                                                  <p className="text-xs font-bold">ชำระโดย: <span className="font-normal">{accountName || (document.paymentMethod === 'CASH' ? 'เงินสด' : 'เงินโอน')}</span></p>
+                                                )}
                                                 <p className="text-[10px] text-muted-foreground italic">วันที่ได้รับเงิน: {safeFormat(new Date(document.paymentDate || document.docDate), 'dd/MM/yyyy')}</p>
                                             </div>
                                         )}
@@ -633,6 +648,7 @@ function DocumentPageContent() {
         "ORIGINAL_ONLY" | "ORIGINAL_PLUS_1_COPY" | "ORIGINAL_PLUS_2_COPIES"
     >("ORIGINAL_PLUS_1_COPY");
     const [accountName, setAccountName] = useState<string>("");
+    const [paymentLineLabels, setPaymentLineLabels] = useState<string[]>([]);
     const [receiptSourceDocs, setReceiptSourceDocs] = useState<Document[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [informConfirmOpen, setInformConfirmOpen] = useState(false);
@@ -768,13 +784,39 @@ function DocumentPageContent() {
     }, [document?.id, document?.docType]);
 
     useEffect(() => {
-        if (document?.docType === 'RECEIPT' && document.receivedAccountId && db) {
-            getDoc(doc(db, 'accountingAccounts', document.receivedAccountId)).then(snap => {
-                if (snap.exists()) {
-                    setAccountName(snap.data().name);
-                }
-            });
+        if (document?.docType !== "RECEIPT" || !db) {
+            setPaymentLineLabels([]);
+            return;
         }
+        const lines = receiptPaymentsFromDocument(document);
+        if (lines.length === 0) {
+            if (document.receivedAccountId) {
+                getDoc(doc(db, "accountingAccounts", document.receivedAccountId)).then((snap) => {
+                    if (snap.exists()) setAccountName(snap.data().name);
+                });
+            }
+            setPaymentLineLabels([]);
+            return;
+        }
+        let cancelled = false;
+        void (async () => {
+            const labels: string[] = [];
+            for (const line of lines) {
+                let name = line.accountName || "";
+                if (!name && line.accountId) {
+                    const snap = await getDoc(doc(db, "accountingAccounts", line.accountId));
+                    if (snap.exists()) name = String(snap.data().name || "");
+                }
+                labels.push(formatReceiptPaymentLineLabel(line, name));
+            }
+            if (!cancelled) {
+                setPaymentLineLabels(labels);
+                setAccountName(labels.join(" / "));
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
     }, [document, db]);
 
     const handleBack = () => {
@@ -885,22 +927,22 @@ function DocumentPageContent() {
                     <div className="min-w-[210mm] print:min-w-0 print:m-0">
                         {showMultiCopy ? (
                             <div className="space-y-8 print:space-y-0">
-                                <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
+                                <DocumentView document={document} customer={effectiveCustomer} labelSuffix="ORIGINAL" accountName={accountName} paymentLineLabels={paymentLineLabels} receiptSourceDocs={receiptSourceDocs} />
                                 {printChoice !== "ORIGINAL_ONLY" && (
                                     <>
                                         <div className="hidden print:block print-doc-page-break break-before-page" />
-                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
+                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} paymentLineLabels={paymentLineLabels} receiptSourceDocs={receiptSourceDocs} />
                                     </>
                                 )}
                                 {printChoice === "ORIGINAL_PLUS_2_COPIES" && (
                                     <>
                                         <div className="hidden print:block print-doc-page-break break-before-page" />
-                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
+                                        <DocumentView document={document} customer={effectiveCustomer} labelSuffix="COPY" accountName={accountName} paymentLineLabels={paymentLineLabels} receiptSourceDocs={receiptSourceDocs} />
                                     </>
                                 )}
                             </div>
                         ) : (
-                            <DocumentView document={document} customer={effectiveCustomer} accountName={accountName} receiptSourceDocs={receiptSourceDocs} />
+                            <DocumentView document={document} customer={effectiveCustomer} accountName={accountName} paymentLineLabels={paymentLineLabels} receiptSourceDocs={receiptSourceDocs} />
                         )}
                     </div>
                 </div>

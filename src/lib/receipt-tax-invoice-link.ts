@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import type { Document, AccountingObligation } from "@/lib/types";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
+import { receiptCashbookLineId, receiptPaymentsFromDocument } from "@/lib/receipt-received-payments";
 
 export type TaxInvoiceReceiptUi = {
   key: string;
@@ -48,21 +49,34 @@ export async function isReceiptLinkActive(
   return r.docType === "RECEIPT" && r.status !== "CANCELLED";
 }
 
-export function receiptCashbookEntryId(receiptId: string): string {
-  return `RECEIPT_${receiptId}`;
+export function receiptCashbookEntryId(receiptId: string, index = 0): string {
+  return receiptCashbookLineId(receiptId, index);
+}
+
+export function receiptCashbookEntryIds(
+  receipt: Pick<Document, "id" | "accountingEntryId" | "receivedPayments" | "confirmedPayment">
+): string[] {
+  const ids = new Set<string>();
+  if (receipt.accountingEntryId) ids.add(receipt.accountingEntryId);
+  ids.add(receiptCashbookLineId(receipt.id, 0));
+  const lines = receiptPaymentsFromDocument(receipt);
+  lines.forEach((_, i) => ids.add(receiptCashbookLineId(receipt.id, i)));
+  for (const alloc of receipt.confirmedPayment?.allocations || []) {
+    if (alloc.entryId) ids.add(alloc.entryId);
+  }
+  return Array.from(ids);
 }
 
 /** มีรายการ cashbook ของใบเสร็จนี้แล้วหรือไม่ */
 export async function receiptHasCashbookEntry(
   db: Firestore,
-  receipt: Pick<Document, "id" | "accountingEntryId">
+  receipt: Pick<Document, "id" | "accountingEntryId" | "receivedPayments" | "confirmedPayment">
 ): Promise<boolean> {
-  if (receipt.accountingEntryId) {
-    const byField = await getDoc(doc(db, "accountingEntries", receipt.accountingEntryId));
-    if (byField.exists()) return true;
+  for (const id of receiptCashbookEntryIds(receipt)) {
+    const snap = await getDoc(doc(db, "accountingEntries", id));
+    if (snap.exists()) return true;
   }
-  const canonical = await getDoc(doc(db, "accountingEntries", receiptCashbookEntryId(receipt.id)));
-  return canonical.exists();
+  return false;
 }
 
 /** สถานะแสดงบนรายการใบกำกับ/ใบเพิ่มหนี้ — คำนึง receiptDocId/receiptStatus */

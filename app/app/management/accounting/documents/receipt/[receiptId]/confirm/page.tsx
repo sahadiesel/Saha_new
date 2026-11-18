@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, ArrowLeft, Calculator, Info, AlertCircle, CalendarDays, Wallet, Percent, Check } from "lucide-react";
+import { Loader2, Save, ArrowLeft, Calculator, Info, AlertCircle, CalendarDays, Wallet, Percent, Check, PlusCircle, Trash2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -48,6 +48,15 @@ import {
 } from "@/lib/receipt-tax-invoice-link";
 import { isReceiptPaymentConfirmed } from "@/lib/reverse-confirmed-receipt";
 import { extractDocNoFromReceiptDescription } from "@/lib/receipt-line-description";
+import {
+  formatReceiptPaymentLineLabel,
+  mergeSuggestedPaymentsFromDocs,
+  methodFromAccountType,
+  receiptPaymentsFromDocument,
+  scalePaymentLinesToTotal,
+  sumPaymentLines,
+  type ReceiptPaymentLine,
+} from "@/lib/receipt-received-payments";
 
 const confirmReceiptSchema = z.object({
   accountId: z.string().min(1, "กรุณาเลือกบัญชีที่รับเงิน"),
@@ -134,6 +143,7 @@ function ConfirmReceiptPageContent() {
   
   const [showFinalConfirm, setShowFinalConfirm] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<ConfirmReceiptFormData | null>(null);
+  const [confirmPayments, setConfirmPayments] = useState<ReceiptPaymentLine[]>([]);
 
   const form = useForm<ConfirmReceiptFormData>({
     resolver: zodResolver(confirmReceiptSchema),
@@ -285,10 +295,29 @@ function ConfirmReceiptPageContent() {
             ? initialNetTotal
             : Number(receiptData.grandTotal) || 0;
 
+        const officePays = receiptPaymentsFromDocument(receiptData);
+        const fromInvoices = mergeSuggestedPaymentsFromDocs(fetchedInvoices);
+        let payLines = officePays.length > 0 ? officePays : fromInvoices;
+        const paySum = sumPaymentLines(payLines);
+        const netTarget = Math.round(fallbackNet * 100) / 100;
+        if (payLines.length > 0 && netTarget > 0.009 && Math.abs(paySum - netTarget) > 0.06) {
+          payLines = scalePaymentLinesToTotal(payLines, netTarget);
+        }
+        if (payLines.length === 0) {
+          payLines = [
+            {
+              accountId: receiptData.receivedAccountId || accountsData[0]?.id || "",
+              amount: netTarget,
+              method: "TRANSFER",
+            },
+          ];
+        }
+        setConfirmPayments(payLines);
+
         form.reset({
-            accountId: receiptData.receivedAccountId || accountsData[0]?.id || "",
+            accountId: payLines[0]?.accountId || receiptData.receivedAccountId || accountsData[0]?.id || "",
             paymentDate: receiptData.paymentDate || dfFormat(new Date(), "yyyy-MM-dd"),
-            netReceivedTotal: Math.round(fallbackNet * 100) / 100,
+            netReceivedTotal: sumPaymentLines(payLines) || netTarget,
             whtPercent: fetchedInvoices.some((inv) => whtApplyDefaults[inv.id]) ? 3 : 0
         });
 
@@ -391,18 +420,37 @@ function ConfirmReceiptPageContent() {
             const jobSnaps = await Promise.all(jobIdsToRead.map(id => transaction.get(doc(db, 'jobs', id!))));
             const jobSnapMap = Object.fromEntries(jobSnaps.map(s => [s.id, s]));
 
-            const account = accounts.find(a => a.id === data.accountId);
+            const payLines = confirmPayments
+              .filter((p) => p.accountId && (p.amount || 0) > 0.009)
+              .map((p) => {
+                const acc = accounts.find((a) => a.id === p.accountId);
+                return {
+                  accountId: p.accountId,
+                  amount: Math.round((p.amount || 0) * 100) / 100,
+                  method: methodFromAccountType(acc?.type),
+                  accountName: acc?.name || p.accountName,
+                };
+              });
+            if (payLines.length === 0) throw new Error("กรุณาเลือกบัญชีรับเงินอย่างน้อย 1 บัญชี");
+            const paySum = sumPaymentLines(payLines);
+            if (Math.abs(paySum - data.netReceivedTotal) > 0.06) {
+              throw new Error("ยอดเข้าบัญชีรวมต้องเท่ากับยอดเงินที่ได้รับจริง");
+            }
+
+            const account = accounts.find(a => a.id === payLines[0].accountId);
             if (!account) throw new Error("ไม่พบข้อมูลบัญชีที่เลือก");
-            const paymentMethod = account.type === 'CASH' ? 'CASH' : 'TRANSFER';
+            const paymentMethod = payLines.every((p) => p.method === "CASH") ? "CASH" : "TRANSFER";
 
             const arPaymentId = `ARPAY_${receipt.id}`;
             const arPaymentRef = doc(db, 'arPayments', arPaymentId);
-            const entryId = receiptCashbookEntryId(receipt.id);
-            const entryRef = doc(db, 'accountingEntries', entryId);
-            const existingEntrySnap = await transaction.get(entryRef);
-            if (existingEntrySnap.exists()) {
+            const entryIds = payLines.map((_, i) => receiptCashbookEntryId(receipt.id, i));
+            const existingEntrySnaps = await Promise.all(
+              entryIds.map((id) => transaction.get(doc(db, "accountingEntries", id)))
+            );
+            if (existingEntrySnaps.some((s) => s.exists())) {
                 throw new Error("ALREADY_CONFIRMED");
             }
+            const entryId = entryIds[0];
 
             const customerName =
               rData.customerSnapshot?.taxName ||
@@ -430,34 +478,50 @@ function ConfirmReceiptPageContent() {
                 createdAt: serverTimestamp(),
             }));
             
-            transaction.set(entryRef, sanitizeForFirestore({
-                entryType: 'RECEIPT',
+            for (let i = 0; i < payLines.length; i++) {
+              const line = payLines[i];
+              const lineEntryId = entryIds[i];
+              const lineLabel = formatReceiptPaymentLineLabel(line, line.accountName);
+              transaction.set(doc(db, "accountingEntries", lineEntryId), sanitizeForFirestore({
+                entryType: "RECEIPT",
                 entryDate: data.paymentDate,
-                amount: data.netReceivedTotal,
-                accountId: data.accountId,
-                paymentMethod: paymentMethod,
-                categoryMain: 'เก็บเงินลูกหนี้',
-                categorySub: 'รับชำระตามบิลในระบบ',
-                description: `รับเงินตามใบเสร็จ: ${receiptDocNo} (${customerName})`,
-                sourceDocType: 'RECEIPT',
+                amount: line.amount,
+                accountId: line.accountId,
+                paymentMethod: line.method,
+                categoryMain: "เก็บเงินลูกหนี้",
+                categorySub: "รับชำระตามบิลในระบบ",
+                description: `รับเงินตามใบเสร็จ: ${receiptDocNo} (${customerName}) — ${lineLabel}`,
+                sourceDocType: "RECEIPT",
                 sourceDocId: receipt.id,
                 sourceDocNo: receiptDocNo,
                 customerNameSnapshot: customerName,
                 createdAt: serverTimestamp(),
-            }));
+              }));
+            }
             
             transaction.update(receiptRef, sanitizeForFirestore({
                 status: 'CONFIRMED',
                 receiptStatus: 'CONFIRMED',
                 accountingEntryId: entryId,
+                receivedAccountId: payLines[0].accountId,
+                receivedPayments: payLines,
+                paymentMethod,
+                paymentInstrument: paymentMethod,
                 ...(healedRefIds.length > 0 ? { referencesDocIds: healedRefIds } : {}),
                 confirmedPayment: {
-                    accountId: data.accountId,
+                    accountId: payLines[0].accountId,
                     method: paymentMethod,
                     receivedDate: data.paymentDate,
                     netReceivedTotal: data.netReceivedTotal,
                     withholdingTotal: totals.totalWht,
                     arPaymentId: arPaymentId,
+                    allocations: payLines.map((p, i) => ({
+                      accountId: p.accountId,
+                      method: p.method,
+                      amount: p.amount,
+                      accountName: p.accountName,
+                      entryId: entryIds[i],
+                    })),
                 },
                 updatedAt: serverTimestamp(),
             }));
@@ -594,11 +658,33 @@ function ConfirmReceiptPageContent() {
   };
 
   const handlePreSubmit = (data: ConfirmReceiptFormData) => {
+      const validPays = confirmPayments.filter((p) => p.accountId && (p.amount || 0) > 0.009);
+      if (validPays.length === 0) {
+          toast({ variant: "destructive", title: "ยังไม่ได้เลือกบัญชี", description: "กรุณาระบุบัญชีรับเงินอย่างน้อย 1 บัญชี" });
+          return;
+      }
+      if (validPays.some((p) => !p.accountId)) {
+          toast({ variant: "destructive", title: "บัญชีไม่ครบ", description: "ทุกบรรทัดรับเงินต้องเลือกบัญชี" });
+          return;
+      }
+      const paySum = sumPaymentLines(validPays);
+      if (Math.abs(paySum - data.netReceivedTotal) > 0.06) {
+          toast({
+            variant: "destructive",
+            title: "ยอดเข้าบัญชีไม่ตรง",
+            description: "รวมยอดแยกบัญชีต้องเท่ากับยอดเงินที่ได้รับจริง",
+          });
+          return;
+      }
       if (Math.abs(totals.unallocated) > 0.06) {
           toast({ variant: "destructive", title: "ยอดเงินไม่ลงตัว", description: "ยอดเงินที่ได้รับจริงไม่ตรงกับยอดในบิลที่จัดสรร กรุณาตรวจสอบอีกครั้งค่ะ" });
           return;
       }
-      setPendingFormData(data);
+      setPendingFormData({
+        ...data,
+        accountId: validPays[0].accountId,
+        netReceivedTotal: paySum,
+      });
       setShowFinalConfirm(true);
   }
 
@@ -679,16 +765,111 @@ function ConfirmReceiptPageContent() {
                                 </FormItem>
                               )}
                             />
-                            <FormField name="accountId" control={form.control} render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>เข้าบัญชี</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value}>
-                                  <FormControl><SelectTrigger><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger></FormControl>
-                                  <SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name} ({a.type === 'CASH' ? 'เงินสด' : 'โอน'})</SelectItem>)}</SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )} />
+                            <div className="space-y-2">
+                              <FormLabel>เข้าบัญชี</FormLabel>
+                              <div className="border rounded-md overflow-hidden">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>บัญชี (ค่าเริ่มต้นจากออฟฟิศ)</TableHead>
+                                      <TableHead className="w-32 text-right">จำนวน</TableHead>
+                                      <TableHead className="w-10" />
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {confirmPayments.map((p, i) => (
+                                      <TableRow key={i}>
+                                        <TableCell className="p-2">
+                                          <Select
+                                            value={p.accountId}
+                                            onValueChange={(v) => {
+                                              const acc = accounts.find((a) => a.id === v);
+                                              const next = [...confirmPayments];
+                                              next[i] = {
+                                                ...next[i],
+                                                accountId: v,
+                                                method: methodFromAccountType(acc?.type),
+                                                accountName: acc?.name,
+                                              };
+                                              setConfirmPayments(next);
+                                              form.setValue("accountId", next.find((x) => x.accountId)?.accountId || v);
+                                            }}
+                                          >
+                                            <SelectTrigger className="h-9">
+                                              <SelectValue placeholder="เลือกบัญชี..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {accounts.map((a) => (
+                                                <SelectItem key={a.id} value={a.id}>
+                                                  {a.name} ({a.type === "CASH" ? "เงินสด" : "โอน"})
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </TableCell>
+                                        <TableCell className="p-2">
+                                          <Input
+                                            type="number"
+                                            className="h-9 text-right"
+                                            value={p.amount || ""}
+                                            onChange={(e) => {
+                                              const next = [...confirmPayments];
+                                              next[i] = { ...next[i], amount: parseFloat(e.target.value) || 0 };
+                                              setConfirmPayments(next);
+                                              form.setValue("netReceivedTotal", sumPaymentLines(next), { shouldValidate: true });
+                                            }}
+                                          />
+                                        </TableCell>
+                                        <TableCell className="p-2">
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-destructive"
+                                            disabled={confirmPayments.length <= 1}
+                                            onClick={() => {
+                                              const next = confirmPayments.filter((_, idx) => idx !== i);
+                                              setConfirmPayments(next);
+                                              form.setValue("netReceivedTotal", sumPaymentLines(next), { shouldValidate: true });
+                                              form.setValue("accountId", next[0]?.accountId || "");
+                                            }}
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full h-8 border-dashed"
+                                onClick={() =>
+                                  setConfirmPayments([...confirmPayments, { accountId: "", amount: 0, method: "TRANSFER" }])
+                                }
+                              >
+                                <PlusCircle className="mr-2 h-3.5 w-3.5" /> เพิ่มบัญชีรับเงิน
+                              </Button>
+                              <p className="text-[11px] text-muted-foreground">
+                                แยกได้หลายบัญชี เช่น เงินสดส่วนหนึ่ง โอนเข้าธนาคารส่วนหนึ่ง — รวม{" "}
+                                {formatCurrency(sumPaymentLines(confirmPayments))}
+                              </p>
+                              <FormField
+                                name="accountId"
+                                control={form.control}
+                                render={({ field }) => (
+                                  <FormItem className="hidden">
+                                    <FormControl>
+                                      <input type="hidden" {...field} />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
                         </div>
 
                         <div className="grid md:grid-cols-2 gap-6">
@@ -815,6 +996,11 @@ function ConfirmReceiptPageContent() {
                             <p>ตรวจสอบข้อมูลครั้งสุดท้ายก่อนบันทึกบัญชี:</p>
                             <div className="p-4 bg-muted rounded-lg space-y-2 text-sm">
                                 <div className="flex justify-between"><span>ยอดรับจริง:</span><span className="font-bold text-primary">{formatCurrency(watchedNetReceivedTotal)} บาท</span></div>
+                                {confirmPayments.filter((p) => p.accountId && p.amount > 0.009).map((p, i) => (
+                                  <div key={i} className="flex justify-between text-xs text-muted-foreground">
+                                    <span>{formatReceiptPaymentLineLabel(p, accounts.find((a) => a.id === p.accountId)?.name)}</span>
+                                  </div>
+                                ))}
                                 <div className="flex justify-between"><span>หักภาษี (WHT) รวม:</span><span className="font-bold text-destructive">-{formatCurrency(totals.totalWht)} บาท</span></div>
                                 <div className="flex justify-between border-t pt-2 mt-2"><span>ยอดตัดหนี้รวม (Gross):</span><span className="font-bold text-green-600">{formatCurrency(totals.totalGross)} บาท</span></div>
                             </div>

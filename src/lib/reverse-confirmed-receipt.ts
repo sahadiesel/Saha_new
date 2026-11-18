@@ -15,6 +15,10 @@ import { format } from "date-fns";
 import type { Document, AccountingObligation } from "@/lib/types";
 import { sanitizeForFirestore } from "@/lib/utils";
 import { safeFormat, APP_DATE_FORMAT } from "@/lib/date-utils";
+import {
+  receiptPaymentsFromDocument,
+  receiptReversalLineId,
+} from "@/lib/receipt-received-payments";
 
 type ReceiptActor = { uid: string; displayName: string };
 
@@ -208,16 +212,14 @@ export async function reverseConfirmedReceipt(
   profile: ReceiptActor
 ): Promise<void> {
   const arPaymentId = receipt.confirmedPayment?.arPaymentId ?? `ARPAY_${receipt.id}`;
-  const reversalEntryId = `RECEIPT_REV_${receipt.id}`;
+  const reversalEntryId = receiptReversalLineId(receipt.id, 0);
   const noteLine = `\n[System] ยกเลิกหลังยืนยันรับเงิน ${safeFormat(new Date(), APP_DATE_FORMAT + " HH:mm")} โดย ${profile.displayName}`;
 
   await runTransaction(db, async (transaction) => {
     const receiptRef = doc(db, "documents", receipt.id);
-    const reversalRef = doc(db, "accountingEntries", reversalEntryId);
     const arPaymentRef = doc(db, "arPayments", arPaymentId);
 
     const receiptSnap = await transaction.get(receiptRef);
-    const reversalSnap = await transaction.get(reversalRef);
     const arPaymentSnap = await transaction.get(arPaymentRef);
 
     if (!receiptSnap.exists()) throw new Error("ไม่พบใบเสร็จในระบบ");
@@ -228,11 +230,19 @@ export async function reverseConfirmedReceipt(
     if (!isReceiptPaymentConfirmed(rData)) {
       throw new Error("ใบเสร็จนี้ยังไม่ได้ยืนยันรับเงิน — ใช้การยกเลิกแบบปกติ");
     }
-    if (reversalSnap.exists()) throw new Error("มีรายการตัดรายรับสำหรับใบเสร็จนี้แล้ว");
 
     const confirmed = rData.confirmedPayment;
     const netAmount = confirmed?.netReceivedTotal ?? rData.grandTotal ?? 0;
-    const accountId = confirmed?.accountId ?? rData.receivedAccountId;
+    const payLines = receiptPaymentsFromDocument(rData);
+    const reversalIds = (payLines.length > 0 ? payLines : [{ accountId: confirmed?.accountId || rData.receivedAccountId || "", amount: netAmount, method: "TRANSFER" as const }]).map(
+      (_, i) => receiptReversalLineId(receipt.id, i)
+    );
+    const reversalSnaps = await Promise.all(
+      reversalIds.map((id) => transaction.get(doc(db, "accountingEntries", id)))
+    );
+    if (reversalSnaps.some((s) => s.exists())) throw new Error("มีรายการตัดรายรับสำหรับใบเสร็จนี้แล้ว");
+
+    const accountId = payLines[0]?.accountId || confirmed?.accountId || rData.receivedAccountId;
     if (!accountId || netAmount <= 0) {
       throw new Error("ไม่พบข้อมูลบัญชี/ยอดรับเงิน — ไม่สามารถตัดรายรับได้");
     }
@@ -280,26 +290,39 @@ export async function reverseConfirmedReceipt(
     const customerName =
       rData.customerSnapshot?.taxName || rData.customerSnapshot?.name || "ลูกค้าทั่วไป";
     const receiptDocNo = rData.docNo || receipt.id;
-    const payMethod = confirmed?.method === "CASH" ? "CASH" : "TRANSFER";
+    const reversalLines =
+      payLines.length > 0
+        ? payLines
+        : [
+            {
+              accountId: accountId!,
+              amount: netAmount,
+              method: (confirmed?.method === "CASH" ? "CASH" : "TRANSFER") as "CASH" | "TRANSFER",
+            },
+          ];
 
-    transaction.set(
-      reversalRef,
-      sanitizeForFirestore({
-        entryType: "CASH_OUT",
-        entryDate: format(new Date(), "yyyy-MM-dd"),
-        amount: netAmount,
-        accountId,
-        paymentMethod: payMethod,
-        categoryMain: "เก็บเงินลูกหนี้",
-        categorySub: "ตัดรายรับ (ยกเลิกใบเสร็จ)",
-        description: `ตัดรายรับจากใบเสร็จ ${receiptDocNo} (${customerName}) — ยืนยันรับเงินผิดพลาด`,
-        sourceDocType: "RECEIPT",
-        sourceDocId: receipt.id,
-        sourceDocNo: receiptDocNo,
-        customerNameSnapshot: customerName,
-        createdAt: serverTimestamp(),
-      })
-    );
+    for (let i = 0; i < reversalLines.length; i++) {
+      const line = reversalLines[i];
+      const payMethod = line.method === "CASH" ? "CASH" : "TRANSFER";
+      transaction.set(
+        doc(db, "accountingEntries", reversalIds[i]),
+        sanitizeForFirestore({
+          entryType: "CASH_OUT",
+          entryDate: format(new Date(), "yyyy-MM-dd"),
+          amount: line.amount,
+          accountId: line.accountId,
+          paymentMethod: payMethod,
+          categoryMain: "เก็บเงินลูกหนี้",
+          categorySub: "ตัดรายรับ (ยกเลิกใบเสร็จ)",
+          description: `ตัดรายรับจากใบเสร็จ ${receiptDocNo} (${customerName}) — ยืนยันรับเงินผิดพลาด`,
+          sourceDocType: "RECEIPT",
+          sourceDocId: receipt.id,
+          sourceDocNo: receiptDocNo,
+          customerNameSnapshot: customerName,
+          createdAt: serverTimestamp(),
+        })
+      );
+    }
 
     if (arPaymentSnap.exists()) {
       transaction.update(arPaymentRef, {
