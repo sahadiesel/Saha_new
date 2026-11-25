@@ -182,7 +182,12 @@ export default function CustomerJobDetailPage({ params }: { params: Promise<{ jo
           }
         }
         docList.sort((a, b) => String(b.docDate).localeCompare(String(a.docDate)));
-        setDocuments(docList);
+        setDocuments(
+          docList.filter(
+            (d) =>
+              !(d.docType === "DELIVERY_NOTE" && String(d.status ?? "").toUpperCase() === "DRAFT")
+          )
+        );
       } catch (e: unknown) {
         setError((e as Error).message || "โหลดข้อมูลไม่สำเร็จ");
       } finally {

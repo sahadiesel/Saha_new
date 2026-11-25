@@ -1,17 +1,15 @@
 
 "use client";
 
-import { useMemo, Suspense } from "react";
+import { useMemo, useState, Suspense } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { doc } from "firebase/firestore";
 import { useFirebase, useDoc } from "@/firebase";
-import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, FileText, User, Calendar, ExternalLink, Loader2, Eye } from "lucide-react";
-import { useAuth } from "@/context/auth-context";
+import { AlertCircle, ArrowLeft, FileText, User, Calendar, ExternalLink, Loader2, Eye, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,10 +17,14 @@ import { safeFormat } from "@/lib/date-utils";
 import type { Document } from "@/lib/types";
 import { docStatusLabel } from "@/lib/ui-labels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { canSendTaxInvoiceToAccountingReview, sendTaxInvoiceToAccountingReview } from "@/firebase/documents";
 
 const getStatusVariant = (status: string) => {
   switch (status) {
     case 'DRAFT':
+    case 'FINAL':
     case 'PENDING_REVIEW':
       return 'secondary';
     case 'APPROVED':
@@ -43,12 +45,35 @@ function DeliveryNoteDetailPageContent() {
     const { docId } = useParams();
     const router = useRouter();
     const { db } = useFirebase();
+    const { toast } = useToast();
     const searchParams = useSearchParams();
+    const [isSendReviewOpen, setIsSendReviewOpen] = useState(false);
+    const [isSendingReview, setIsSendingReview] = useState(false);
 
     const docRef = useMemo(() => (db && typeof docId === 'string' ? doc(db, 'documents', docId) : null), [db, docId]);
     const { data: document, isLoading, error } = useDoc<Document>(docRef);
 
     const isCancelled = document?.status === 'CANCELLED';
+    const isInternalDraft = String(document?.status ?? "").toUpperCase() === "DRAFT";
+    const canSendReview = canSendTaxInvoiceToAccountingReview(document?.docType, document?.status);
+
+    const handleSendToAccounting = async () => {
+        if (!db || typeof docId !== "string") return;
+        setIsSendingReview(true);
+        try {
+            await sendTaxInvoiceToAccountingReview(db, docId);
+            toast({ title: "ส่งให้บัญชีตรวจสอบแล้ว", description: document?.docNo });
+            setIsSendReviewOpen(false);
+        } catch (e: unknown) {
+            toast({
+                variant: "destructive",
+                title: "ส่งไม่สำเร็จ",
+                description: e instanceof Error ? e.message : "ส่งให้บัญชีไม่สำเร็จ",
+            });
+        } finally {
+            setIsSendingReview(false);
+        }
+    };
 
     const handleBack = () => {
         const from = searchParams.get('from');
@@ -91,13 +116,26 @@ function DeliveryNoteDetailPageContent() {
                     <ArrowLeft className="mr-2 h-4 w-4"/> ย้อนกลับ
                 </Button>
                 <div className="flex flex-wrap gap-2">
-                    <Button asChild variant="default" size="sm">
+                    {canSendReview && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => setIsSendReviewOpen(true)}>
+                            <Send className="mr-2 h-4 w-4"/> ส่งให้บัญชีตรวจสอบ
+                        </Button>
+                    )}
+                    <Button asChild variant={isInternalDraft ? "outline" : "default"} size="sm">
                         <Link href={`/app/office/documents/${docId}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`}>
-                            <Eye className="mr-2 h-4 w-4"/> พรีวิว / พิมพ์เอกสาร
+                            <Eye className="mr-2 h-4 w-4"/> {isInternalDraft ? "ดูภายใน" : "พรีวิว / พิมพ์เอกสาร"}
                         </Link>
                     </Button>
                 </div>
             </div>
+
+            {isInternalDraft && (
+                <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>ฉบับร่าง — ดูภายในได้อย่างเดียว</AlertTitle>
+                    <AlertDescription>ยังพิมพ์หรือส่งบัญชีไม่ได้ จนกว่าจะบันทึกเป็นฉบับจริง</AlertDescription>
+                </Alert>
+            )}
 
             {isCancelled && (
                 <Alert variant="destructive">
@@ -193,7 +231,7 @@ function DeliveryNoteDetailPageContent() {
                             <div>
                                 <p className="text-xs text-muted-foreground mb-1">สถานะ</p>
                                 <Badge variant={getStatusVariant(document.status)} className="w-full justify-center py-1">
-                                    {docStatusLabel(document.status)}
+                                    {docStatusLabel(document.status, document.docType)}
                                 </Badge>
                             </div>
                         </CardContent>
@@ -222,6 +260,24 @@ function DeliveryNoteDetailPageContent() {
                     </Card>
                 </div>
             </div>
+
+            <AlertDialog open={isSendReviewOpen} onOpenChange={(open) => { if (!isSendingReview) setIsSendReviewOpen(open); }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>ส่งให้บัญชีตรวจสอบ {document.docNo}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            เอกสารจะเข้า Inbox ฝ่ายบัญชี (สถานะรอตรวจสอบ) เลขที่ใช้ตามเดิม
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isSendingReview}>ยกเลิก</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void handleSendToAccounting()} disabled={isSendingReview}>
+                            {isSendingReview ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
+                            ยืนยันส่งบัญชี
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

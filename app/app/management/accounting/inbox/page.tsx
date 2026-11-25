@@ -1461,6 +1461,7 @@ function AccountingInboxPageContent() {
               salesDocId: deleteField(),
               salesDocNo: deleteField(),
               salesDocType: deleteField(),
+              salesDocStatus: deleteField(),
               lastActivityAt: serverTimestamp(),
             });
             batch.set(doc(collection(jobRef, "activities")), {

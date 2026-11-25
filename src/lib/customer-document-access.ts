@@ -9,6 +9,10 @@ export async function customerCanViewDocument(db: Firestore, document: Document,
   const phone = customerPhone.trim();
   if (!phone) return false;
 
+  if (document.docType === "DELIVERY_NOTE" && String(document.status ?? "").toUpperCase() === "DRAFT") {
+    return false;
+  }
+
   if (document.jobId) {
     const live = await getDoc(doc(db, "jobs", document.jobId));
     if (live.exists() && String((live.data() as { customerId?: string }).customerId || "") === phone) {

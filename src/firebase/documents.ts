@@ -164,10 +164,13 @@ export function canSendTaxInvoiceToAccountingReview(
   docType: string | undefined,
   status: string | undefined
 ): boolean {
-  return docType === "TAX_INVOICE" && String(status ?? "").toUpperCase() === "FINAL";
+  return (
+    (docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE") &&
+    String(status ?? "").toUpperCase() === "FINAL"
+  );
 }
 
-/** ส่งใบกำกับสถานะฉบับจริง (รอส่งให้บัญชี) เข้า Inbox บัญชี */
+/** ส่งใบกำกับ/ใบส่งของสถานะฉบับจริง (รอส่งให้บัญชี) เข้า Inbox บัญชี */
 export async function sendTaxInvoiceToAccountingReview(
   db: Firestore,
   documentId: string
@@ -179,7 +182,8 @@ export async function sendTaxInvoiceToAccountingReview(
   if (!canSendTaxInvoiceToAccountingReview(data.docType, data.status)) {
     const st = String(data.status ?? "").toUpperCase();
     if (st === "PENDING_REVIEW") throw new Error("ใบนี้อยู่ใน Inbox บัญชีแล้ว");
-    throw new Error("ส่งให้บัญชีได้เฉพาะใบกำกับสถานะฉบับจริง (รอส่งให้บัญชี)");
+    if (st === "DRAFT") throw new Error("ฉบับร่างดูภายในได้อย่างเดียว — บันทึกฉบับจริงก่อนส่งบัญชี");
+    throw new Error("ส่งให้บัญชีได้เฉพาะเอกสารสถานะฉบับจริง (รอส่งให้บัญชี)");
   }
 
   const batch = writeBatch(db);
@@ -199,7 +203,7 @@ export async function sendTaxInvoiceToAccountingReview(
         status: "PICKED_UP",
         salesDocId: documentId,
         salesDocNo: data.docNo,
-        salesDocType: "TAX_INVOICE",
+        salesDocType: data.docType === "DELIVERY_NOTE" ? "DELIVERY_NOTE" : "TAX_INVOICE",
         salesDocStatus: "PENDING_REVIEW",
         lastActivityAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

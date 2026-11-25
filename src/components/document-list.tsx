@@ -251,13 +251,18 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
 
     let description = "สถานะเอกสารปกติ";
     switch(statusKey) {
-        case "DRAFT": description = "ออฟฟิศกำลังจัดทำ ยังไม่ได้ส่งให้บัญชีตรวจสอบ"; break;
+        case "DRAFT":
+            description =
+                doc.docType === "DELIVERY_NOTE"
+                    ? "ฉบับร่างดูภายในได้อย่างเดียว — ยังพิมพ์หรือส่งบัญชีไม่ได้ จนกว่าจะบันทึกฉบับจริง"
+                    : "ออฟฟิศกำลังจัดทำ ยังไม่ได้ส่งให้บัญชีตรวจสอบ";
+            break;
         case "FINAL":
             description =
                 doc.docType === "QUOTATION"
                     ? "ราคาฉบับจริง — พร้อมแจ้งลูกค้า / รอดำเนินการต่อ"
-                    : doc.docType === "TAX_INVOICE"
-                      ? "ออกเลขใบกำกับแล้ว — ยังไม่ได้ส่งฝ่ายบัญชีตรวจสอบ"
+                    : doc.docType === "TAX_INVOICE" || doc.docType === "DELIVERY_NOTE"
+                      ? "ออกฉบับจริงแล้ว — พิมพ์ได้ และยังไม่ได้ส่งฝ่ายบัญชีตรวจสอบ"
                       : "สถานะเอกสาร";
             break;
         case "PENDING_REVIEW": description = "ส่งเรื่องให้ฝ่ายบัญชีตรวจสอบแล้ว"; break;
@@ -283,7 +288,7 @@ const getDocDisplayStatus = (doc: Document): { key: string; label: string; descr
         return { key: "FINAL", label, description, variant: "secondary" };
     }
 
-    if (doc.docType === "TAX_INVOICE" && statusKey === "FINAL") {
+    if ((doc.docType === "TAX_INVOICE" || doc.docType === "DELIVERY_NOTE") && statusKey === "FINAL") {
         return { key: "FINAL", label, description, variant: "secondary" };
     }
 
@@ -461,7 +466,13 @@ export function DocumentList({
         base = [...base.slice(0, j + 1), "OFFERED", ...base.slice(j + 1)];
       }
     }
-    if (docType === "DELIVERY_NOTE") return base.filter((s) => s !== "APPROVED");
+    if (docType === "DELIVERY_NOTE") {
+      const i = base.indexOf("DRAFT");
+      if (i >= 0 && !base.includes("FINAL")) {
+        base = [...base.slice(0, i + 1), "FINAL", ...base.slice(i + 1)];
+      }
+      return base.filter((s) => s !== "APPROVED");
+    }
     if (docType === "TAX_INVOICE" || docType === "DEBIT_NOTE") {
       const available = new Set(listDocuments.map((d) => getDocDisplayStatus(d).key));
       const ordered = ["ALL", "DRAFT", "FINAL", "PENDING_REVIEW", "REJECTED", "APPROVED", "RECEIPT_ISSUED", "UNPAID", "PARTIAL", "PAID", "CANCELLED"]
@@ -869,6 +880,7 @@ export function DocumentList({
           salesDocId: deleteField(),
           salesDocNo: deleteField(),
           salesDocType: deleteField(),
+          salesDocStatus: deleteField(),
           lastActivityAt: serverTimestamp(),
         });
         const activityRef = doc(collection(jobRef, 'activities'));
@@ -1256,7 +1268,7 @@ export function DocumentList({
         {docToAction ? deleteDialogDescription(docToAction) : ""}
       </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ปิด</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} disabled={isActionLoading} className="bg-destructive hover:bg-destructive/90">{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : 'ยืนยันลบถาวร'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={isRevertAlertOpen} onOpenChange={setIsRevertAlertOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>กู้คืนเพื่อออกใบเสร็จ?</AlertDialogTitle><AlertDialogDescription>ระบบจะลบรายการรับเงินในสมุดบัญชีของบิลนี้ออก และเปลี่ยนสถานะกลับเป็น "รอออกใบเสร็จ" เพื่อให้คุณจัดการตามระบบใหม่ที่ถูกต้องได้ค่ะ</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={confirmRevertPayment} disabled={isActionLoading} className="bg-amber-600 hover:bg-amber-700">ยืนยันกู้คืน</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-      <AlertDialog open={isSendReviewAlertOpen} onOpenChange={(open) => { if (!isActionLoading) setIsSendReviewAlertOpen(open); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ส่งให้บัญชีตรวจสอบ {docToAction?.docNo}?</AlertDialogTitle><AlertDialogDescription>เอกสารจะเข้า Inbox ฝ่ายบัญชี (สถานะรอตรวจสอบ) เลขที่ใบกำกับใช้ตามเดิม</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={() => void confirmSendTaxInvoiceReview()} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : "ยืนยันส่งบัญชี"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={isSendReviewAlertOpen} onOpenChange={(open) => { if (!isActionLoading) setIsSendReviewAlertOpen(open); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>ส่งให้บัญชีตรวจสอบ {docToAction?.docNo}?</AlertDialogTitle><AlertDialogDescription>เอกสารจะเข้า Inbox ฝ่ายบัญชี (สถานะรอตรวจสอบ) เลขที่ใช้ตามเดิม</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={isActionLoading}>ยกเลิก</AlertDialogCancel><AlertDialogAction onClick={() => void confirmSendTaxInvoiceReview()} disabled={isActionLoading}>{isActionLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : "ยืนยันส่งบัญชี"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
       <Dialog
         open={billingReceiptOpen}

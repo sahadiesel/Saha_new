@@ -67,6 +67,8 @@ import {
   jobNeedsAdditionalPartsWithdrawal,
   jobPartsStepSatisfied,
 } from "@/lib/job-workflow";
+import { isLiveSalesBillOnJob, jobHasLiveSalesBill } from "@/lib/job-sales-bill";
+import { healStaleJobSalesBillLink } from "@/firebase/job-sales-bill";
 
 /** เอกสารอ้างอิงบนหน้างาน — จำกัดชนิดให้ตรงกับ Record ป้ายชื่อ (แก้ TS บน DocType กว้าง) */
 const JOB_REFERENCE_DOC_TYPES = ["QUOTATION", "DELIVERY_NOTE", "TAX_INVOICE", "RECEIPT"] as const;
@@ -313,29 +315,30 @@ function JobDetailsPageContent() {
                      (isJobInFinishedState && !allowEditing);
 
   const canUpdateActivity = isStaff && !isViewOnly;
-  
-  const isLockedForBilled = (job?.status === 'WAITING_CUSTOMER_PICKUP' || !!job?.salesDocId) && !allowEditing;
-  const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
-
-  const canEditIntakePhotos = isMgmtOrOffice && isStaff && !isViewOnly;
 
   const isAlreadyBilled = useMemo(() => {
     if (!job) return false;
     if (job.isArchived) return true;
     if (job.status === 'CLOSED') return true;
-    if (job.status === 'WAITING_CUSTOMER_PICKUP') return true;
-    const hasActiveBillField = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
-    if (hasActiveBillField) return true;
-    const hasLiveDn = relatedDocuments['DELIVERY_NOTE']?.some(d => d.status !== 'CANCELLED');
-    const hasLiveTi = relatedDocuments['TAX_INVOICE']?.some(d => d.status !== 'CANCELLED');
-    return !!(hasLiveDn || hasLiveTi);
-  }, [job, relatedDocuments]);
+    if (loadingDocs) return false;
+    return jobHasLiveSalesBill(job, relatedDocuments);
+  }, [job, relatedDocuments, loadingDocs]);
+  
+  const isLockedForBilled = isAlreadyBilled && !allowEditing;
+  const canEditDetails = isStaff && canManageWork && !job?.isArchived && (job?.status !== 'CLOSED' || allowEditing) && !isLockedForBilled;
+
+  const canEditIntakePhotos = isMgmtOrOffice && isStaff && !isViewOnly;
 
   useEffect(() => {
     if (searchParams.get('action') === 'revert' && job?.status === 'DONE' && canIssueBill) {
       setIsRevertDialogOpen(true);
     }
   }, [searchParams, job?.status, canIssueBill]);
+
+  useEffect(() => {
+    if (!db || !job || job.isArchived) return;
+    void healStaleJobSalesBillLink(db, job, profile).catch(() => {});
+  }, [db, job, profile]);
 
   const getJobRef = () => {
     if (!db || !job) return null;
@@ -1604,7 +1607,9 @@ function JobDetailsPageContent() {
                       const latestDoc =
                         docType === "QUOTATION" && job?.salesDocId
                           ? docs?.find((d) => d.id === job.salesDocId) ?? docs?.[0]
-                          : docs?.[0];
+                          : docType === "DELIVERY_NOTE" || docType === "TAX_INVOICE"
+                            ? docs?.find((d) => isLiveSalesBillOnJob(d, job))
+                            : docs?.[0];
                       return (
                         <div key={docType} className="flex justify-between items-start border-b border-muted/50 pb-2 last:border-0 last:pb-0">
                           <span className="text-muted-foreground pt-1">{label}:</span>

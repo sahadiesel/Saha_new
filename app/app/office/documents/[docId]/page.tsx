@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Printer, Loader2, CheckCircle2, Info } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, thaiBahtText } from "@/lib/utils";
@@ -770,14 +771,18 @@ function DocumentPageContent() {
         };
     }, []);
 
+    const isDeliveryNoteInternalDraft =
+        document?.docType === "DELIVERY_NOTE" &&
+        String(document?.status ?? "").toUpperCase() === "DRAFT";
+
     useEffect(() => {
-        if (document && searchParams.get('autoprint') === '1') {
+        if (document && searchParams.get('autoprint') === '1' && !isDeliveryNoteInternalDraft) {
             const timer = setTimeout(() => {
                 triggerPrintWithDocTitle(document.docNo);
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [document, searchParams]);
+    }, [document, searchParams, isDeliveryNoteInternalDraft]);
 
     useEffect(() => {
         setPrintChoice("ORIGINAL_PLUS_1_COPY");
@@ -823,7 +828,31 @@ function DocumentPageContent() {
         router.push(resolveDocumentBackHref(searchParams, document?.docType));
     };
 
+    useEffect(() => {
+        if (!isDeliveryNoteInternalDraft) return;
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+                e.preventDefault();
+                toast({
+                    variant: "destructive",
+                    title: "ฉบับร่างดูภายในได้อย่างเดียว",
+                    description: "บันทึกฉบับจริงก่อน จึงจะพิมพ์ได้",
+                });
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [isDeliveryNoteInternalDraft, toast]);
+
     const handlePrintRequest = () => {
+        if (isDeliveryNoteInternalDraft) {
+            toast({
+                variant: "destructive",
+                title: "ฉบับร่างดูภายในได้อย่างเดียว",
+                description: "บันทึกฉบับจริงก่อน จึงจะพิมพ์ได้",
+            });
+            return;
+        }
         if (['TAX_INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(document?.docType || '')) setIsPrintOptionsOpen(true);
         else triggerPrintWithDocTitle(document?.docNo);
     };
@@ -919,9 +948,20 @@ function DocumentPageContent() {
                                 ส่งให้ลูกค้าพิจารณาใบเสนอราคาอีกครั้ง
                             </Button>
                         )}
-                        <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
+                        {!isDeliveryNoteInternalDraft && (
+                            <Button onClick={handlePrintRequest}><Printer className="mr-2 h-4 w-4"/> สั่งพิมพ์ (Ctrl+P)</Button>
+                        )}
                     </div>
                 </div>
+                {isDeliveryNoteInternalDraft && (
+                    <Alert className="mx-4 md:mx-0 print:hidden">
+                        <Info className="h-4 w-4" />
+                        <AlertTitle>ฉบับร่าง — ดูภายในได้อย่างเดียว</AlertTitle>
+                        <AlertDescription>
+                            ยังพิมพ์หรือส่งบัญชีไม่ได้ จนกว่าจะบันทึกเป็นฉบับจริง
+                        </AlertDescription>
+                    </Alert>
+                )}
 
                 <div className="w-full overflow-x-auto pb-10 print:overflow-visible print:pb-0">
                     <div className="min-w-[210mm] print:min-w-0 print:m-0">

@@ -157,7 +157,7 @@ export function docStatusLabel(status: string | undefined, docType?: string): st
         if (s === 'CANCELLED') return 'ยกเลิก';
     }
 
-    if (docType === "TAX_INVOICE" && s === "FINAL") {
+    if ((docType === "TAX_INVOICE" || docType === "DELIVERY_NOTE") && s === "FINAL") {
         return "ฉบับจริง (รอส่งให้บัญชี)";
     }
 

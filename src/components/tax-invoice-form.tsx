@@ -60,6 +60,8 @@ import {
   isOfficialPrefixedDocNo,
   isTempPrefixedDocNo,
 } from "@/firebase/documents";
+import { documentMatchesJobCustomer } from "@/lib/job-sales-bill";
+import { healStaleJobSalesBillLink, unlinkPreviousJobIfBillMoved } from "@/firebase/job-sales-bill";
 import type { Job, StoreSettings, Customer, CustomerTaxProfile, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { cn, sanitizeForFirestore } from "@/lib/utils";
@@ -172,6 +174,11 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
   const { data: docToEdit, isLoading: isLoadingDocToEdit } = useDoc<DocumentType>(docToEditRef);
   const { data: storeSettings, isLoading: isLoadingStore } = useDoc<StoreSettings>(storeSettingsRef);
+
+  useEffect(() => {
+    if (!db || !job) return;
+    void healStaleJobSalesBillLink(db, job, profile);
+  }, [db, job, profile]);
   
   const form = useForm<TaxInvoiceFormData>({
     resolver: zodResolver(taxInvoiceFormSchema),
@@ -580,6 +587,13 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
                     });
                 }
             }
+            await unlinkPreviousJobIfBillMoved(db, {
+              batch,
+              documentId: effectiveEditDocId,
+              previousJobId: docToEdit?.jobId,
+              nextJobId: linkedJobId,
+              profile,
+            });
             await batch.commit();
         } else {
             await createDocument(
@@ -609,13 +623,22 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     } finally { setIsProcessing(false); }
   };
 
-  const checkUniqueness = async (jobIdVal: string) => {
+  const checkUniqueness = async (jobIdVal: string, customerIdVal?: string) => {
     if (!db || isEditing) return true;
     setIndexErrorUrl(null);
     try {
       const q = query(collection(db, "documents"), where("jobId", "==", jobIdVal), where("docType", "==", "TAX_INVOICE"), limit(5));
       const snap = await getDocs(q);
-      const activeDoc = snap.docs.find(d => d.data().status !== 'CANCELLED');
+      const probeJob = {
+        id: jobIdVal,
+        customerId: customerIdVal || job?.customerId,
+        customerSnapshot: job?.customerSnapshot,
+      };
+      const activeDoc = snap.docs.find((d) => {
+        const data = { id: d.id, ...d.data() } as DocumentType;
+        if (String(data.status ?? "").toUpperCase() === "CANCELLED") return false;
+        return documentMatchesJobCustomer(data, probeJob);
+      });
       if (activeDoc) {
         setExistingActiveDoc({ id: activeDoc.id, ...activeDoc.data() } as DocumentType);
         return false;
@@ -635,7 +658,7 @@ export function TaxInvoiceForm({ jobId: jobIdProp, editDocId: editDocIdProp }: {
     const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
       if (currentJobId) {
-        const ok = await checkUniqueness(currentJobId);
+        const ok = await checkUniqueness(currentJobId, data.customerId);
         if (!ok) {
           setPendingData({ ...data, jobId: currentJobId });
           setPendingSaveMode(mode);

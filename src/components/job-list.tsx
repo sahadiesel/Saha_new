@@ -105,6 +105,8 @@ import { jobNeedsInitialPartsAction } from "@/lib/job-workflow";
 import { jobHasEditableQuotation, resolveJobQuotationEditId, jobCanInformCustomerOfQuotation, jobQuotationInformDocId } from "@/lib/job-quotation";
 import { cancelJobAfterCustomerReject, reviseQuotationAfterCustomerReject } from "@/firebase/job-quotation-inform";
 import { appendDocumentReturnQuery, documentReturnQueryFromJob } from "@/lib/document-return-navigation";
+import { jobDoneWithStaleSalesBillFields, jobHasSalesBillFields } from "@/lib/job-sales-bill";
+import { healStaleJobSalesBillLink } from "@/firebase/job-sales-bill";
 
 const getStatusStyles = (status: Job['status']) => {
   switch (status) {
@@ -217,6 +219,26 @@ export function JobList({
     }
     return m;
   }, [jobs, officeCustomerChatReads, showOfficeCustomerChatUnread]);
+
+  useEffect(() => {
+    if (!db) return;
+    const stale = jobs.filter((j) => jobDoneWithStaleSalesBillFields(j));
+    if (stale.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      for (const job of stale) {
+        if (cancelled) return;
+        try {
+          await healStaleJobSalesBillLink(db, job, profile);
+        } catch {
+          /* งานอื่นยังใช้ต่อได้ */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, jobs, profile]);
 
   const officeChatUnreadJobCount = useMemo(() => {
     let n = 0;
@@ -656,7 +678,9 @@ export function JobList({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {jobs.map((job) => {
           const isOwnDept = profile?.department === job.department;
-          const hasActualBill = !!job.salesDocId && (job.salesDocType === 'DELIVERY_NOTE' || job.salesDocType === 'TAX_INVOICE');
+          const hasActualBill =
+            job.status !== "DONE" &&
+            jobHasSalesBillFields(job);
           const quotationEditId = resolveJobQuotationEditId(job, { draftQuotationByJobId });
           const hasQuotation = jobHasEditableQuotation(job, { draftQuotationByJobId });
           const canInformQuotation = jobCanInformCustomerOfQuotation(job, { draftQuotationByJobId });

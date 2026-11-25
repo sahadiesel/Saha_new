@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { 
   Loader2, Save, Trash2, PlusCircle, ArrowLeft, ChevronsUpDown, FileSearch, FileStack, 
   AlertCircle, Send, Search, Wallet, Eye, XCircle, Info, ExternalLink, CalendarDays,
-  Check, Ban
+  Check, Ban, FileCheck
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -44,6 +44,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO } from "date-fns";
 
 import { createDocument, getNextAvailableDocNo } from "@/firebase/documents";
+import { documentMatchesJobCustomer } from "@/lib/job-sales-bill";
+import { healStaleJobSalesBillLink, unlinkPreviousJobIfBillMoved } from "@/firebase/job-sales-bill";
 import type { Job, StoreSettings, Customer, Document as DocumentType, AccountingAccount, DocType, JobStatus } from "@/lib/types";
 import { safeFormat } from "@/lib/date-utils";
 import { DATA_LIMITS } from "@/lib/constants";
@@ -77,6 +79,7 @@ const deliveryNoteFormSchema = z.object({
 });
 
 type DeliveryNoteFormData = z.infer<typeof deliveryNoteFormSchema>;
+type DeliveryNoteSaveMode = "draft" | "official" | "review";
 
 const formatCurrency = (value: number | null | undefined) => {
   return (value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -102,7 +105,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
   const [referencedQuotationId, setReferencedQuotationId] = useState<string | null>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isReviewSubmission, setIsReviewSubmission] = useState(false);
+  const [pendingSaveMode, setPendingSaveMode] = useState<DeliveryNoteSaveMode>("draft");
   const [showReviewConfirm, setShowReviewConfirm] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<DeliveryNoteFormData | null>(null);
 
@@ -129,6 +132,11 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
   const { data: job, isLoading: isLoadingJob } = useDoc<Job>(jobDocRef);
   const { data: docToEdit, isLoading: isLoadingDocToEdit } = useDoc<DocumentType>(docToEditRef);
   const { data: storeSettings, isLoading: isLoadingStore } = useDoc<StoreSettings>(storeSettingsRef);
+
+  useEffect(() => {
+    if (!db || !job) return;
+    void healStaleJobSalesBillLink(db, job, profile);
+  }, [db, job, profile]);
   
   const form = useForm<DeliveryNoteFormData>({
     resolver: zodResolver(deliveryNoteFormSchema),
@@ -170,6 +178,17 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
   }, [isEditing, docToEdit, profile]);
 
   const isCancelled = docToEdit?.status === 'CANCELLED';
+  const docStatusKey = String(docToEdit?.status ?? "").toUpperCase();
+  const isOfficialUnsent = docStatusKey === "FINAL";
+  const alreadySentForReview = docStatusKey === "PENDING_REVIEW";
+  const canSaveOfficial =
+    !isCancelled && (!isEditing || ["DRAFT", "REJECTED", "FINAL", ""].includes(docStatusKey));
+  const canSendForAccountingReview = !isCancelled && isOfficialUnsent;
+  const keepIssuedStatus =
+    isEditing &&
+    !!docToEdit &&
+    !isCancelled &&
+    !["DRAFT", "REJECTED", "FINAL", ""].includes(docStatusKey);
 
   useEffect(() => {
     if (!isEditing && !form.getValues("issueDate")) {
@@ -253,13 +272,28 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
   const currentSuggestedTotal = useMemo(() => suggestedPayments.reduce((sum, p) => sum + (p.amount || 0), 0), [suggestedPayments]);
   const remainingAmount = useMemo(() => Math.round(((grandTotal || 0) - currentSuggestedTotal) * 100) / 100, [grandTotal, currentSuggestedTotal]);
 
-  const executeSave = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
+  const executeSave = async (data: DeliveryNoteFormData, mode: DeliveryNoteSaveMode) => {
     const customerSnapshot = customers.find(c => c.id === data.customerId) || docToEdit?.customerSnapshot || job?.customerSnapshot;
     if (!db || !customerSnapshot || !storeSettings || !profile) return;
+    if (mode === "review" && docStatusKey !== "FINAL") {
+      toast({
+        variant: "destructive",
+        title: "ยังเป็นฉบับร่าง",
+        description: "บันทึกฉบับจริงก่อน จึงจะพิมพ์หรือส่งบัญชีได้",
+      });
+      return;
+    }
     setIsProcessing(true);
     
-    const targetStatus = submitForReview ? 'PENDING_REVIEW' : 'DRAFT';
-    const targetJobStatus: JobStatus = submitForReview ? 'PICKED_UP' : 'WAITING_CUSTOMER_PICKUP';
+    const preserveIssued = keepIssuedStatus;
+    const targetStatus = preserveIssued
+      ? docToEdit.status
+      : mode === "review"
+        ? "PENDING_REVIEW"
+        : mode === "official"
+          ? "FINAL"
+          : "DRAFT";
+    const targetJobStatus: JobStatus = mode === "review" ? "PICKED_UP" : "WAITING_CUSTOMER_PICKUP";
     
     const linkedJobId = data.jobId || docToEdit?.jobId || effectiveJobId;
     const jobDetails = job || (isEditing && docToEdit?.jobId ? docToEdit.carSnapshot : null);
@@ -283,7 +317,13 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
           storeSnapshot: storeSettings, 
           withTax: false, 
           paymentSummary: { paidTotal: 0, balance: data.grandTotal, paymentStatus: 'UNPAID' }, 
-          arStatus: submitForReview ? 'PENDING' : (isEditing ? docToEdit?.arStatus : null), 
+          arStatus: preserveIssued
+            ? docToEdit?.arStatus
+            : mode === "review"
+              ? "PENDING"
+              : isEditing
+                ? docToEdit?.arStatus
+                : null, 
           referencesDocIds: referencedQuotationId ? [referencedQuotationId] : [] 
         };
         
@@ -301,11 +341,16 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
                 }
             }
             
-            batch.update(docRef, sanitizeForFirestore({ ...payload, status: targetStatus, updatedAt: serverTimestamp(), dispute: { isDisputed: false, reason: "" } }));
+            batch.update(docRef, sanitizeForFirestore({
+              ...payload,
+              status: targetStatus,
+              updatedAt: serverTimestamp(),
+              ...(preserveIssued ? {} : { dispute: { isDisputed: false, reason: "" } }),
+            }));
             
             if (jobRefForUpdate) {
                 batch.update(jobRefForUpdate, {
-                    status: targetJobStatus,
+                    ...(preserveIssued ? {} : { status: targetJobStatus }),
                     salesDocId: effectiveEditDocId,
                     salesDocNo: finalDocNo,
                     salesDocType: 'DELIVERY_NOTE',
@@ -314,10 +359,22 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
                     updatedAt: serverTimestamp()
                 });
             }
+            await unlinkPreviousJobIfBillMoved(db, {
+              batch,
+              documentId: effectiveEditDocId,
+              previousJobId: docToEdit?.jobId,
+              nextJobId: linkedJobId,
+              profile,
+            });
             await batch.commit();
             if (linkedJobId && !jobRefForUpdate) {
                 toast({
-                    title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ",
+                    title:
+                      mode === "review"
+                        ? "ส่งตรวจสอบสำเร็จ"
+                        : mode === "official"
+                          ? "บันทึกฉบับจริงแล้ว"
+                          : "บันทึกร่างสำเร็จ",
                     description: "ไม่พบงานลิงก์ในระบบ (งานอาจปิด/ย้ายประวัติแล้ว) — อัปเดตเฉพาะใบส่งของ",
                 });
                 router.push('/app/office/documents/delivery-note');
@@ -326,18 +383,35 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
         } else {
             await createDocument(db, 'DELIVERY_NOTE', payload, profile, linkedJobId ? targetJobStatus : undefined, { manualDocNo: data.isBackfill ? data.manualDocNo : undefined, initialStatus: targetStatus });
         }
-        toast({ title: submitForReview ? "ส่งตรวจสอบสำเร็จ" : "บันทึกร่างสำเร็จ" });
+        toast({
+          title: preserveIssued
+            ? "บันทึกใบส่งของแล้ว (สถานะเดิม)"
+            : mode === "review"
+              ? "ส่งตรวจสอบสำเร็จ"
+              : mode === "official"
+                ? "บันทึกฉบับจริงแล้ว — พิมพ์และส่งบัญชีได้"
+                : "บันทึกร่างสำเร็จ — ดูภายในได้อย่างเดียว ยังพิมพ์หรือส่งบัญชีไม่ได้",
+        });
         router.push('/app/office/documents/delivery-note');
     } catch (e: any) { toast({ variant: "destructive", title: "Error", description: e.message }); } finally { setIsProcessing(false); }
   };
 
-  const checkUniqueness = async (jobIdVal: string) => {
+  const checkUniqueness = async (jobIdVal: string, customerIdVal?: string) => {
     if (!db || isEditing) return true;
     setIndexErrorUrl(null);
     try {
       const q = query(collection(db, "documents"), where("jobId", "==", jobIdVal), where("docType", "==", "DELIVERY_NOTE"), limit(5));
       const snap = await getDocs(q);
-      const activeDoc = snap.docs.find(d => d.data().status !== 'CANCELLED');
+      const probeJob = {
+        id: jobIdVal,
+        customerId: customerIdVal || job?.customerId,
+        customerSnapshot: job?.customerSnapshot,
+      };
+      const activeDoc = snap.docs.find((d) => {
+        const data = { id: d.id, ...d.data() } as DocumentType;
+        if (String(data.status ?? "").toUpperCase() === "CANCELLED") return false;
+        return documentMatchesJobCustomer(data, probeJob);
+      });
       if (activeDoc) {
         setExistingActiveDoc({ id: activeDoc.id, ...activeDoc.data() } as DocumentType);
         return false;
@@ -352,29 +426,37 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
     }
   };
 
-  const handleSaveWrapper = async (data: DeliveryNoteFormData, submitForReview: boolean) => {
+  const handleSaveWrapper = async (data: DeliveryNoteFormData, mode: DeliveryNoteSaveMode) => {
     if (isProcessing) return;
     const currentJobId = data.jobId || effectiveJobId || docToEdit?.jobId;
     try {
       if (currentJobId) {
-        const ok = await checkUniqueness(currentJobId);
+        const ok = await checkUniqueness(currentJobId, data.customerId);
         if (!ok) {
           setPendingFormData({ ...data, jobId: currentJobId });
-          setIsReviewSubmission(submitForReview);
+          setPendingSaveMode(mode);
           setShowDuplicateDialog(true);
           return;
         }
       }
-      if (submitForReview) { 
+      if (mode === "review") {
+          if (docStatusKey !== "FINAL") {
+            toast({
+              variant: "destructive",
+              title: "ยังเป็นฉบับร่าง",
+              description: "บันทึกฉบับจริงก่อน จึงจะพิมพ์หรือส่งบัญชีได้",
+            });
+            return;
+          }
           setPendingFormData({ ...data, jobId: currentJobId }); 
-          setIsReviewSubmission(true); 
+          setPendingSaveMode("review"); 
           if (suggestedPayments.length === 1 && suggestedPayments[0].amount === 0) {
               setSuggestedPayments([{accountId: accounts.find(a=>a.type==='CASH')?.id || '', amount: data.grandTotal}]);
           }
           setShowReviewConfirm(true); 
           return; 
       }
-      await executeSave({ ...data, jobId: currentJobId }, false);
+      await executeSave({ ...data, jobId: currentJobId }, mode);
     } catch (e) {}
   };
 
@@ -396,7 +478,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
         setShowDuplicateDialog(false);
         setExistingActiveDoc(null);
         
-        await executeSave(finalData, isReviewSubmission);
+        await executeSave(finalData, pendingSaveMode);
     } catch(e: any) { 
         toast({ variant: 'destructive', title: "Error", description: e.message }); 
         setIsProcessing(false);
@@ -487,16 +569,42 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
           <div className="flex justify-between items-center">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}><ArrowLeft className="mr-2 h-4 w-4"/> กลับ</Button>
             <div className="flex gap-2">
-              <Button type="button" variant="secondary" onClick={form.handleSubmit((d) => handleSaveWrapper(d, false))} disabled={isLocked || isProcessing}>
+              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isProcessing}>
+                ยกเลิก
+              </Button>
+              <Button type="button" variant="secondary" onClick={form.handleSubmit((d) => handleSaveWrapper(d, keepIssuedStatus || isOfficialUnsent ? "official" : "draft"))} disabled={isLocked || isProcessing || isCancelled}>
                 {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Save className="mr-2 h-4 w-4" />}
-                บันทึกฉบับร่าง
+                {keepIssuedStatus || isOfficialUnsent ? "บันทึก" : "บันทึกฉบับร่าง"}
               </Button>
-              <Button type="button" onClick={form.handleSubmit((d) => handleSaveWrapper(d, true))} disabled={isLocked || isProcessing}>
-                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
-                ส่งบัญชีตรวจสอบ
-              </Button>
+              {canSaveOfficial && !keepIssuedStatus && !isOfficialUnsent && (
+                <Button type="button" variant="outline" onClick={form.handleSubmit((d) => handleSaveWrapper(d, "official"))} disabled={isLocked || isProcessing || isCancelled} className="border-primary text-primary">
+                  {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <FileCheck className="mr-2 h-4 w-4" />}
+                  บันทึกฉบับจริง
+                </Button>
+              )}
+              {alreadySentForReview ? (
+                <Button type="button" disabled className="font-bold">
+                  <Send className="mr-2 h-4 w-4" />
+                  ส่งบัญชีแล้ว — รอตรวจสอบ
+                </Button>
+              ) : (
+                <Button type="button" onClick={form.handleSubmit((d) => handleSaveWrapper(d, "review"))} disabled={!canSendForAccountingReview || isLocked || isProcessing || isCancelled}>
+                  {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4" />}
+                  ส่งบัญชีตรวจสอบ
+                </Button>
+              )}
             </div>
           </div>
+
+          {(!isEditing || docStatusKey === "DRAFT") && !isCancelled && (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>ฉบับร่าง — ดูภายในได้อย่างเดียว</AlertTitle>
+              <AlertDescription>
+                บันทึกฉบับร่างยังพิมพ์หรือส่งบัญชีไม่ได้ เมื่อกดบันทึกฉบับจริงแล้ว จึงพิมพ์และส่งบัญชีได้ตามปกติ
+              </AlertDescription>
+            </Alert>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 border rounded-lg bg-card shadow-sm">
             <div className="lg:col-span-2 space-y-2">
@@ -685,7 +793,7 @@ export default function DeliveryNoteForm({ jobId: jobIdProp, editDocId: editDocI
                 <div className="pt-4 border-t"><div className={cn("flex justify-between items-center p-3 rounded-md border", remainingAmount > 0.01 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200")}><span className="text-sm font-bold">ยอดเงินที่ยังไม่ได้รับ:</span><span className={cn("text-lg font-black", remainingAmount > 0.01 ? "text-amber-600" : "text-green-600")}>฿{formatCurrency(remainingAmount)}</span></div>
                 {remainingAmount > 0.01 && (<div className="mt-4 space-y-4 animate-in fade-in"><div className="flex items-center space-x-2"><Checkbox id="r-credit" checked={recordRemainingAsCredit} onCheckedChange={(v: any) => setRecordRemainingAsCredit(v)} /><Label htmlFor="r-credit" className="font-bold text-amber-700 cursor-pointer">บันทึกยอดคงเหลือเป็นลูกหนี้ (Credit)</Label></div>{recordRemainingAsCredit && (<div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20"><div className="space-y-2"><Label className="text-xs">วันครบกำหนดชำระ</Label><Input type="date" value={submitDueDate} onChange={e => setSubmitDueDate(e.target.value)} className="h-9" /></div><div className="flex items-center space-x-2 pt-6"><Checkbox id="r-billing" checked={submitBillingRequired} onCheckedChange={(v: any) => setSubmitBillingRequired(v)} /><Label htmlFor="r-billing" className="text-xs font-normal cursor-pointer">ต้องวางบิลรวม</Label></div></div>)}</div>)}</div>
               </div>
-              <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { if(isProcessing) return; const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingFormData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, true); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
+              <DialogFooter className="bg-muted/30 p-6 border-t gap-2"><Button variant="outline" onClick={() => setShowReviewConfirm(false)}>ยกเลิก</Button><Button onClick={() => { if(isProcessing) return; const validPayments = suggestedPayments.filter(p => p.amount > 0 && p.accountId); const firstAcc = accounts.find(a => a.id === validPayments[0]?.accountId); const finalPayload = { ...pendingFormData!, paymentTerms: recordRemainingAsCredit ? 'CREDIT' as const : 'CASH' as const, suggestedPayments: validPayments.map(p => { const acc = accounts.find(a => a.id === p.accountId); return { ...p, amount: Math.round(p.amount * 100) / 100, method: acc?.type === 'CASH' ? 'CASH' : 'TRANSFER' }; }), suggestedAccountId: validPayments[0]?.accountId || '', suggestedPaymentMethod: firstAcc?.type === 'CASH' ? 'CASH' : 'TRANSFER' as any, billingRequired: recordRemainingAsCredit ? submitBillingRequired : false, dueDate: recordRemainingAsCredit ? submitDueDate : null }; executeSave(finalPayload, "review"); setShowReviewConfirm(false); }} disabled={isProcessing || (remainingAmount > 0.01 && !recordRemainingAsCredit) || (suggestedPayments.some(p => p.amount > 0 && !p.accountId))} className="bg-green-600 hover:bg-green-700 font-bold">{isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Send className="mr-2" />} ยืนยันและส่งให้บัญชี</Button></DialogFooter>
             </DialogContent>
           </Dialog>
         </form>
